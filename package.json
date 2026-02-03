@@ -81,6 +81,7 @@
     "@types/react-dom": "^19.0.0",
     "concurrently": "^9.2.1",
     "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "npm-run-all2": "^8.0.4",
     "postcss": "^8.4.49",
     "tailwindcss": "^4.0.0",
@@ -88,5 +89,13 @@
   },
   "engines": {
     "node": ">=20.9.0"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "biome check --write --no-errors-on-unmatched"
+    ],
+    "*.{json,md}": [
+      "biome format --write --no-errors-on-unmatched"
+    ]
   }
 }

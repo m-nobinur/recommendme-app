@@ -1,4 +1,9 @@
+#!/bin/sh
+
 echo "🚀 Running pre-push validation..."
+
+remote="$1"
+url="$2"
 
 echo "🔍 Type checking..."
 bun run typecheck || exit 1
@@ -6,9 +11,29 @@ bun run typecheck || exit 1
 echo "🔧 Running Biome checks..."
 bun run check:ci || exit 1
 
-if git diff --cached --name-only | xargs grep -l "TODO\|FIXME" > /dev/null 2>&1; then
-  echo "⚠️  Warning: Found TODO/FIXME comments in your changes"
-  echo "   Consider addressing them before pushing to remote"
+current_branch=$(git rev-parse --abbrev-ref HEAD)
+remote_branch="origin/$current_branch"
+
+if git rev-parse --verify "$remote_branch" > /dev/null 2>&1; then
+  changed_files=$(git diff --name-only "$remote_branch"...HEAD -- '*.ts' '*.tsx' 2>/dev/null)
+  
+  if [ -n "$changed_files" ]; then
+    # Check for console.log statements (excluding console.error, console.warn)
+    if echo "$changed_files" | xargs grep -l "console\.log" 2>/dev/null | grep -v "node_modules"; then
+      echo ""
+      echo "⚠️  Warning: Found console.log statements in your changes"
+      echo "   Consider removing them before pushing to production"
+      echo ""
+    fi
+    
+    # Check for TODO/FIXME comments
+    if echo "$changed_files" | xargs grep -lE "TODO|FIXME" 2>/dev/null | grep -v "node_modules"; then
+      echo ""
+      echo "⚠️  Warning: Found TODO/FIXME comments in your changes"
+      echo "   Consider addressing them before pushing"
+      echo ""
+    fi
+  fi
 fi
 
 echo "✅ Pre-push checks passed!"
