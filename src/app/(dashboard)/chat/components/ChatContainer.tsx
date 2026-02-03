@@ -4,7 +4,7 @@ import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { ChevronDown } from 'lucide-react'
 import dynamic from 'next/dynamic'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 // Direct imports instead of barrel - bundle-barrel-imports optimization
 import ChatInput from '@/components/chat/ChatInput'
 import TypingIndicator from '@/components/chat/TypingIndicator'
@@ -16,23 +16,39 @@ import type { MessagePart } from '@/types'
 
 // Dynamic import for MessageBubble - bundle-dynamic-imports optimization
 // This component is heavy due to MarkdownRenderer and AI suggestions
+// Using null loading to avoid skeleton flash - TypingIndicator handles the loading state
 const MessageBubble = dynamic(() => import('@/components/chat/MessageBubble'), {
-  loading: () => <MessageBubbleSkeleton />,
+  loading: () => null,
   ssr: false,
 })
 
-// Lightweight skeleton for message loading
-function MessageBubbleSkeleton() {
+// Lightweight inline user message - shows instantly while MessageBubble loads
+// This ensures user messages appear immediately without waiting for dynamic import
+// Memoized to prevent unnecessary re-renders when other messages stream (rerender-memo)
+const InlineUserMessage = memo(function InlineUserMessage({
+  content,
+  createdAt,
+}: {
+  content: string
+  createdAt: Date
+}) {
+  const formattedTime = createdAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return (
-    <div className="flex w-full justify-start mb-6 animate-pulse">
-      <div className="h-10 w-10 rounded-full bg-surface-muted mr-3" />
-      <div className="flex flex-col max-w-[75%] gap-2">
-        <div className="h-4 w-24 rounded bg-surface-muted" />
-        <div className="h-20 w-64 rounded-2xl bg-surface-muted" />
+    <div className="flex w-full justify-end fade-in slide-in-from-bottom-2 group mb-6 animate-in duration-300">
+      <div className="flex max-w-[85%] flex-col md:max-w-[75%]">
+        <div className="relative overflow-hidden rounded-2xl rounded-tr-none border border-[#252525] bg-linear-to-br from-surface-muted to-[#111] text-[15px] leading-relaxed text-gray-100">
+          <div className="relative px-5 py-3.5">
+            <p className="text-gray-100">{content}</p>
+          </div>
+        </div>
+        <div className="mt-1.5 mr-1 flex items-center justify-end gap-2">
+          <span className="font-medium text-[11px] text-gray-500">{formattedTime}</span>
+          <span className="text-[10px] text-emerald-500/70">✓✓</span>
+        </div>
       </div>
     </div>
   )
-}
+})
 
 // Suggestion prompts - hoisted outside component (rendering-hoist-jsx)
 const SUGGESTIONS = [
@@ -58,10 +74,14 @@ export function ChatContainer() {
   const chatContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  const [isNearBottom, setIsNearBottom] = useState(true)
   const lastScrollTop = useRef(0)
   const isAutoScrolling = useRef(false)
   const { setIsHeaderVisible } = useHeader()
+
+  // Track if user has manually scrolled away from bottom
+  const userScrolledAway = useRef(false)
+  // Track previous status to detect when response completes
+  const prevStatusRef = useRef<string>('')
 
   const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({
@@ -73,8 +93,11 @@ export function ChatContainer() {
   })
 
   const isLoading = status === 'submitted' || status === 'streaming'
+  // Only show typing indicator when waiting for response, not during streaming
+  // During streaming, the message itself shows the content progressively
+  const showTypingIndicator = status === 'submitted'
 
-  // Check if user is near the bottom of the chat
+  // Check if user is near the bottom of the chat (for scroll button visibility)
   const checkIfNearBottom = useCallback(() => {
     if (!chatContainerRef.current) return true
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current
@@ -83,60 +106,159 @@ export function ChatContainer() {
   }, [])
 
   // Handle scroll events - controls header visibility based on scroll direction
-  // Handle scroll events - controls header visibility based on scroll direction
+  // Use debounced, velocity-based approach to prevent shaking
+  const isHeaderHidden = useRef(false)
+
   useEffect(() => {
     const container = chatContainerRef.current
     if (!container) return
+
+    let lastScrollY = container.scrollTop
+    let ticking = false
+
+    const updateHeader = () => {
+      const currentScrollTop = container.scrollTop
+      const scrollDiff = currentScrollTop - lastScrollY
+      const maxScroll = container.scrollHeight - container.clientHeight
+
+      // Check if we're at or very near the bottom (within 20px)
+      const isAtBottom = maxScroll - currentScrollTop < 20
+
+      // Always show header at the very top
+      if (currentScrollTop <= 10) {
+        if (isHeaderHidden.current) {
+          isHeaderHidden.current = false
+          setIsHeaderVisible(true)
+        }
+      }
+      // Scrolling down - hide header (only if scrolled past 60px and moving down significantly)
+      else if (scrollDiff > 5 && currentScrollTop > 60) {
+        if (!isHeaderHidden.current) {
+          isHeaderHidden.current = true
+          setIsHeaderVisible(false)
+        }
+      }
+      // Scrolling up - show header
+      // BUT ignore small upward movements when at bottom (bounce-back effect)
+      else if (scrollDiff < -10 && !isAtBottom) {
+        if (isHeaderHidden.current) {
+          isHeaderHidden.current = false
+          setIsHeaderVisible(true)
+        }
+      }
+      // If scrolling up significantly (more than 30px) even at bottom, show header
+      // This allows intentional scroll-up from bottom to show header
+      else if (scrollDiff < -30) {
+        if (isHeaderHidden.current) {
+          isHeaderHidden.current = false
+          setIsHeaderVisible(true)
+        }
+      }
+
+      lastScrollY = currentScrollTop
+      ticking = false
+    }
 
     const handleScroll = () => {
       // Ignore programmatic scrolls
       if (isAutoScrolling.current) return
 
-      const currentScrollTop = container.scrollTop
+      // Track that user manually scrolled (for auto-scroll logic)
       const nearBottom = checkIfNearBottom()
-      setIsNearBottom(nearBottom)
+      if (!nearBottom) {
+        userScrolledAway.current = true
+      } else {
+        userScrolledAway.current = false
+      }
       setShowScrollButton(!nearBottom)
 
-      // Header visibility logic
-      // Always show header at the very top (handles bounce too)
-      if (currentScrollTop <= 0) {
-        setIsHeaderVisible(true)
-      } else {
-        const scrollDiff = currentScrollTop - lastScrollTop.current
-        const SCROLL_THRESHOLD = 0 // Sensitive hiding for slow scrolls
+      // Update last scroll position for other logic
+      lastScrollTop.current = Math.max(0, container.scrollTop)
 
-        // Scrolling down significantly - hide header
-        if (scrollDiff > SCROLL_THRESHOLD && currentScrollTop > 60) {
-          setIsHeaderVisible(false)
-        }
-        // ANY upward scroll should show the header immediately
-        else if (scrollDiff < 0) {
-          setIsHeaderVisible(true)
-        }
+      // Throttle header visibility updates using requestAnimationFrame
+      if (!ticking) {
+        requestAnimationFrame(updateHeader)
+        ticking = true
       }
-
-      // Update last scroll position (clamp to 0)
-      lastScrollTop.current = Math.max(0, currentScrollTop)
     }
 
     container.addEventListener('scroll', handleScroll, { passive: true })
-    return () => container.removeEventListener('scroll', handleScroll)
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+    }
   }, [checkIfNearBottom, setIsHeaderVisible])
 
-  // Auto-scroll when new messages arrive
-  useEffect(() => {
-    if (isNearBottom) {
-      isAutoScrolling.current = true
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-      // Reset after animation
-      setTimeout(() => {
+  // Scroll to bottom helper - used for programmatic scrolling
+  const scrollToBottomInstant = useCallback(() => {
+    const container = chatContainerRef.current
+    if (!container) return
+
+    // Calculate the actual maximum scroll position
+    const maxScrollTop = container.scrollHeight - container.clientHeight
+
+    // Don't scroll if already at or very close to bottom (within 5px)
+    if (maxScrollTop - container.scrollTop <= 5) return
+
+    isAutoScrolling.current = true
+    container.scrollTop = maxScrollTop
+    lastScrollTop.current = container.scrollTop
+
+    // Reset flag after scroll completes
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
         isAutoScrolling.current = false
-        if (chatContainerRef.current) {
-          lastScrollTop.current = chatContainerRef.current.scrollTop
-        }
-      }, 1000)
+      })
+    })
+  }, [])
+
+  // Auto-scroll when user sends a new message
+  // Reset userScrolledAway and scroll to bottom
+  useEffect(() => {
+    if (status === 'submitted' && prevStatusRef.current !== 'submitted') {
+      // User just sent a message - always scroll to bottom
+      userScrolledAway.current = false
+      setShowScrollButton(false)
+      // Force scroll even if at bottom
+      const container = chatContainerRef.current
+      if (container) {
+        isAutoScrolling.current = true
+        container.scrollTop = container.scrollHeight - container.clientHeight
+        lastScrollTop.current = container.scrollTop
+        requestAnimationFrame(() => {
+          isAutoScrolling.current = false
+        })
+      }
     }
-  }, [isNearBottom])
+    prevStatusRef.current = status
+  }, [status])
+
+  // Auto-scroll as AI response streams in
+  // Only scroll if user hasn't manually scrolled away
+  const lastContentLength = useRef(0)
+
+  useEffect(() => {
+    // Skip if user has scrolled away
+    if (userScrolledAway.current) return
+
+    // Skip if not streaming
+    if (status !== 'streaming') {
+      lastContentLength.current = 0
+      return
+    }
+
+    const currentLastMessage = messages[messages.length - 1]
+    if (!currentLastMessage || currentLastMessage.role !== 'assistant') return
+
+    const currentContent = extractTextFromParts(currentLastMessage.parts)
+    const contentLength = currentContent.length
+
+    // Only scroll if content actually grew (not just re-render)
+    if (contentLength <= lastContentLength.current) return
+    lastContentLength.current = contentLength
+
+    // Scroll to bottom
+    scrollToBottomInstant()
+  }, [messages, status, scrollToBottomInstant])
 
   // Scroll to bottom function
   const scrollToBottom = useCallback(() => {
@@ -234,9 +356,17 @@ export function ChatContainer() {
                     ? new Date(message.metadata.createdAt as number)
                     : new Date()
 
+                // User messages use lightweight inline component for instant rendering
+                // This avoids waiting for dynamic MessageBubble import
+                if (message.role === 'user') {
+                  return (
+                    <InlineUserMessage key={message.id} content={content} createdAt={createdAt} />
+                  )
+                }
+
                 // Find the previous user message for AI context
                 let previousUserMessage: string | undefined
-                if (message.role === 'assistant' && index > 0) {
+                if (index > 0) {
                   for (let i = index - 1; i >= 0; i--) {
                     if (messages[i].role === 'user') {
                       previousUserMessage = extractTextFromParts(messages[i].parts)
@@ -245,6 +375,7 @@ export function ChatContainer() {
                   }
                 }
 
+                // AI messages use full MessageBubble with markdown rendering
                 return (
                   <MessageBubble
                     key={message.id}
@@ -260,7 +391,7 @@ export function ChatContainer() {
                   />
                 )
               })}
-              {isLoading && <TypingIndicator />}
+              {showTypingIndicator && <TypingIndicator />}
               {errorUI}
 
               {/* Bottom padding for input area */}

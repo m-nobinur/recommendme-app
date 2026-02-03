@@ -74,6 +74,12 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
     onSend(finalMessage)
     setText('')
     setActiveShortcut(null)
+
+    // Keep focus on the input after sending
+    // Use setTimeout to ensure focus happens after React state updates
+    setTimeout(() => {
+      textareaRef.current?.focus()
+    }, 0)
   }, [text, disabled, isLoading, onSend, activeShortcut])
 
   const handleKeyDown = useCallback(
@@ -86,14 +92,36 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
     [handleSubmit]
   )
 
-  // Auto-resize textarea when text changes - intentionally depends on text value
-  // biome-ignore lint/correctness/useExhaustiveDependencies: text dependency is intentional to trigger resize on content change
+  // Auto-resize textarea using callback in onChange (no effect needed)
+  const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const textarea = e.target
+    setText(textarea.value)
+    // Auto-resize: reset height, then set to scrollHeight (capped at 120px)
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`
+  }, [])
+
+  // Track previous loading state to detect when response completes
+  const prevIsLoading = useRef(isLoading)
+
+  // Refocus input when loading completes (AI response finished)
   useEffect(() => {
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 120)}px`
+    // When loading transitions from true to false, refocus the input
+    if (prevIsLoading.current && !isLoading && !disabled) {
+      // Small delay to ensure UI has settled
+      setTimeout(() => {
+        textareaRef.current?.focus()
+      }, 50)
     }
-  }, [text])
+    prevIsLoading.current = isLoading
+  }, [isLoading, disabled])
+
+  // Initial focus on mount
+  useEffect(() => {
+    if (!disabled) {
+      textareaRef.current?.focus()
+    }
+  }, [disabled])
 
   // Find active shortcut data efficiently (js-index-maps)
   const activeShortcutData = useMemo(
@@ -123,7 +151,7 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
       <textarea
         ref={textareaRef}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={handleTextChange}
         onKeyDown={handleKeyDown}
         placeholder={
           activeShortcut ? `Ask about ${activeShortcut.toLowerCase()}...` : 'Type your message...'
