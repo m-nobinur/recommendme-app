@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Husky 9.1.7 for Git hooks automation
+- Pre-commit hook: Type checking + Biome checks
+- Commit message validation (Conventional Commits)
+- Pre-push hook: Full validation before remote push
+- `validate` script for quick validation
+
 ## [2.0.0] - 2026-02-03
 
 ### Added

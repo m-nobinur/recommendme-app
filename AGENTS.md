@@ -1,7 +1,7 @@
 # AGENTS.md - AI Agent Guidelines for recommendme-app
 
 ## Project Overview
-AI-powered CRM assistant with Next.js 16.1.6, React 19.0.0, Convex 1.31.7 backend, and Vercel AI SDK 6.0.68.
+AI-powered assistant with Next.js 16.1.6, React 19.0.0, Convex 1.31.7 backend, and Vercel AI SDK 6.0.68.
 
 ## Build, Lint, and Test Commands
 
@@ -21,11 +21,27 @@ bun lint:fix             # Auto-fix lint issues
 bun format               # Format code with Biome
 bun format:check         # Check code formatting
 bun typecheck            # TypeScript type checker
+bun validate             # Run typecheck + lint (quick validation)
 bun check:all            # Full validation (typecheck + lint) - run before commits
 bun convex:dev           # Start Convex dev server
 bun convex:deploy        # Deploy Convex to production
 bun convex:logs          # View Convex logs
 bun convex:dashboard     # Open Convex dashboard
+```
+
+### Git Hooks (Husky 9.1.7)
+
+Automated quality gates enforce code standards:
+
+- **pre-commit**: Runs `typecheck` + `check:ci` before each commit
+- **commit-msg**: Validates Conventional Commits format
+- **pre-push**: Full validation before pushing to remote
+
+**Commit Message Format** (enforced):
+```
+<type>(<scope>): <subject>
+
+Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
 ```
 
 ### Testing
@@ -125,7 +141,7 @@ src/
 - `@convex/*` → `./src/convex/*`
 
 ### Tech Stack
-Next.js 16.1.6 | React 19.0.0 | Convex 1.31.7 | better-auth 1.4.18 | Vercel AI SDK 6.0.68 | Tailwind v4.0.0 | Biome 2.3.13 | Zustand 5.0.11 | Zod 4.0.1 | TypeScript 5.7.0
+Next.js 16.1.6 | React 19.0.0 | Convex 1.31.7 | better-auth 1.4.18 | Vercel AI SDK 6.0.68 | Tailwind v4.0.0 | Biome 2.3.13 | Husky 9.1.7 | Zustand 5.0.11 | Zod 4.0.1 | TypeScript 5.7.0
 
 ## Convex Backend
 

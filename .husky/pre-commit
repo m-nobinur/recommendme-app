@@ -1,0 +1,8 @@
+
+echo "🔍 Running type check..."
+bun run typecheck || exit 1
+
+echo "🔧 Running Biome checks..."
+bun run check:ci || exit 1
+
+echo "✅ Pre-commit checks passed!"

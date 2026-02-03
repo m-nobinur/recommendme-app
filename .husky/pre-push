@@ -1,0 +1,14 @@
+echo "🚀 Running pre-push validation..."
+
+echo "🔍 Type checking..."
+bun run typecheck || exit 1
+
+echo "🔧 Running Biome checks..."
+bun run check:ci || exit 1
+
+if git diff --cached --name-only | xargs grep -l "TODO\|FIXME" > /dev/null 2>&1; then
+  echo "⚠️  Warning: Found TODO/FIXME comments in your changes"
+  echo "   Consider addressing them before pushing to remote"
+fi
+
+echo "✅ Pre-push checks passed!"

@@ -229,12 +229,33 @@ The AI assistant understands natural language. Here are some example commands:
 
 ## Code Quality
 
-This project uses [Biome](https://biomejs.dev/) for linting and formatting:
+This project uses [Biome](https://biomejs.dev/) for linting and formatting, with [Husky](https://typicode.github.io/husky/) for Git hooks:
 
 - **Linting**: `bun lint` (fix with `bun lint:fix`)
 - **Formatting**: `bun format` (check with `bun format:check`)
 - **Type checking**: `bun typecheck`
+- **Full validation**: `bun validate` (typecheck + lint)
 - **Full check**: `bun check:all` (run before commits)
+
+### Git Hooks (Husky)
+
+Automated quality checks run on:
+
+- **pre-commit**: Type checking + Biome checks (prevents commits with errors)
+- **commit-msg**: Validates Conventional Commits format
+- **pre-push**: Full validation before pushing to remote
+
+**Commit Message Format:**
+```
+<type>(<scope>): <subject>
+
+Examples:
+  feat: add user authentication
+  fix(api): resolve token expiration bug
+  docs: update installation guide
+```
+
+**Types:** `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`
 
 See [AGENTS.md](AGENTS.md) for code style guidelines.
 

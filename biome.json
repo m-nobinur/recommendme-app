@@ -82,6 +82,9 @@
   "overrides": [
     {
       "includes": ["_generated/**", "src/convex/_generated/**"],
+      "formatter": {
+        "enabled": false
+      },
       "linter": {
         "enabled": false
       }
