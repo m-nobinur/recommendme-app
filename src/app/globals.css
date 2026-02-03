@@ -1,0 +1,234 @@
+@import 'tailwindcss';
+
+/* Geist Font Family (from fontsource) */
+@import '@fontsource/geist-sans/400.css';
+@import '@fontsource/geist-sans/500.css';
+@import '@fontsource/geist-sans/600.css';
+@import '@fontsource/geist-mono/400.css';
+
+/* Tailwind v4 Theme Configuration */
+@theme {
+  /* Brand Colors */
+  --color-brand: #f59e0b;
+  --color-brand-secondary: #ea580c;
+  --color-brand-accent: #d97706;
+  --color-brand-muted: rgba(245, 158, 11, 0.15);
+
+  /* Surface/Background Colors */
+  --color-surface-primary: #020202;
+  --color-surface-secondary: #050505;
+  --color-surface-tertiary: #0a0a0a;
+  --color-surface-elevated: #111111;
+  --color-surface-muted: #1a1a1a;
+
+  /* Border Colors */
+  --color-border-subtle: #161616;
+  --color-border: #222222;
+  --color-border-strong: #333333;
+
+  /* Text Colors */
+  --color-text-primary: #e5e5e5;
+  --color-text-secondary: #9ca3af;
+  --color-text-muted: #6b7280;
+  --color-text-disabled: #4b5563;
+
+  /* Status Colors */
+  --color-status-new: #3b82f6;
+  --color-status-qualified: #10b981;
+  --color-status-booked: #a855f7;
+  --color-status-draft: #f59e0b;
+  --color-status-sent: #3b82f6;
+  --color-status-paid: #10b981;
+  --color-status-error: #ef4444;
+  --color-status-success: #22c55e;
+  --color-status-warning: #eab308;
+  --color-status-info: #3b82f6;
+
+  /* Font Families */
+  --font-sans: 'Geist Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
+
+  /* Animations */
+  --animate-slide-in: slide-in 0.3s ease-out forwards;
+  --animate-fade-in: fade-in 0.5s ease-out forwards;
+  --animate-slide-in-right: slide-in-right 0.3s ease-out forwards;
+  --animate-slide-in-left: slide-in-left 0.3s ease-out forwards;
+  --animate-pulse-subtle: pulse-subtle 2s ease-in-out infinite;
+  --animate-shimmer: shimmer 1.5s infinite;
+
+  /* Keyframes */
+  @keyframes slide-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slide-in-right {
+    from {
+      opacity: 0;
+      transform: translateX(20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes slide-in-left {
+    from {
+      opacity: 0;
+      transform: translateX(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes pulse-subtle {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.7;
+    }
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+
+  @keyframes fadeSlideUp {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+}
+
+/* Base Styles */
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--color-surface-primary);
+    color: var(--color-text-primary);
+  }
+}
+
+/* Custom Scrollbar */
+@layer utilities {
+  .custom-scrollbar {
+    scroll-behavior: smooth;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Animation Utility Classes - matching original Vite app */
+  .animate-slideIn {
+    animation: slide-in 0.3s ease-out forwards;
+  }
+
+  .animate-fadeIn {
+    animation: fade-in 0.5s ease-out forwards;
+  }
+
+  .animate-slideInRight {
+    animation: slide-in-right 0.3s ease-out forwards;
+  }
+
+  .animate-slideInLeft {
+    animation: slide-in-left 0.3s ease-out forwards;
+  }
+
+  /* Mask for linear fade effect */
+  .mask-linear-fade {
+    mask-image: linear-gradient(to right, black 90%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, black 90%, transparent 100%);
+  }
+
+  /* Shimmer skeleton animation */
+  .shimmer-skeleton {
+    background: linear-gradient(
+      90deg,
+      #0a0a0a 0%,
+      #161616 25%,
+      #1a1a1a 50%,
+      #161616 75%,
+      #0a0a0a 100%
+    );
+    background-size: 400% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+  }
+
+  /* Amber shimmer for branded loading */
+  .shimmer-amber {
+    background: linear-gradient(
+      90deg,
+      rgba(245, 158, 11, 0.05) 0%,
+      rgba(245, 158, 11, 0.12) 25%,
+      rgba(245, 158, 11, 0.18) 50%,
+      rgba(245, 158, 11, 0.12) 75%,
+      rgba(245, 158, 11, 0.05) 100%
+    );
+    background-size: 400% 100%;
+    animation: shimmer 1.8s ease-in-out infinite;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+
+/* Selection styling */
+::selection {
+  background-color: rgba(245, 158, 11, 0.3);
+}

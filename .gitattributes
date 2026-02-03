@@ -1,0 +1,6 @@
+src/convex/_generated/* linguist-generated=true
+src/convex/_generated/api.d.ts linguist-generated=true
+src/convex/_generated/dataModel.d.ts linguist-generated=true
+src/convex/_generated/server.d.ts linguist-generated=true
+src/convex/_generated/server.js linguist-generated=true
+src/convex/_generated/api.js linguist-generated=true

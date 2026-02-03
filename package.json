@@ -1,0 +1,90 @@
+{
+  "name": "recommendme-app",
+  "version": "2.0.0",
+  "private": true,
+  "description": "AI-powered CRM assistant with natural language interface for lead management, appointments, and invoicing",
+  "author": {
+    "name": "RecommendMe Team"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/recommendme-app"
+  },
+  "keywords": [
+    "crm",
+    "ai",
+    "nextjs",
+    "convex",
+    "lead-management",
+    "appointments",
+    "invoicing",
+    "chatbot"
+  ],
+  "scripts": {
+    "dev": "concurrently -n next,convex -c blue,yellow \"next dev\" \"convex dev\"",
+    "dev:next": "next dev",
+    "dev:convex": "convex dev",
+    "build": "next build",
+    "build:all": "convex deploy && next build",
+    "start": "next start",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "typecheck": "tsc --noEmit",
+    "check": "biome check .",
+    "check:fix": "biome check --write .",
+    "check:ci": "biome ci .",
+    "check:all": "run-p typecheck check:ci",
+    "test": "echo \"No tests configured yet\"",
+    "clean": "rm -rf .next node_modules/.cache",
+    "clean:all": "rm -rf .next node_modules",
+    "preinstall": "npx only-allow bun",
+    "prepare": "echo 'Project ready'",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy",
+    "convex:logs": "convex logs",
+    "convex:dashboard": "convex dashboard"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^3.0.20",
+    "@ai-sdk/groq": "^3.0.21",
+    "@ai-sdk/openai": "^3.0.25",
+    "@ai-sdk/react": "^3.0.70",
+    "@convex-dev/better-auth": "^0.10.10",
+    "@fontsource/geist-mono": "^5.2.7",
+    "@fontsource/geist-sans": "^5.2.5",
+    "@openrouter/ai-sdk-provider": "^2.1.1",
+    "@vercel/toolbar": "^0.2.1",
+    "ai": "^6.0.68",
+    "better-auth": "^1.4.18",
+    "clsx": "^2.1.1",
+    "convex": "^1.31.7",
+    "geist": "^1.5.1",
+    "lucide-react": "^0.563.0",
+    "next": "^16.1.6",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tailwind-merge": "^3.0.0",
+    "zod": "^4.0.1",
+    "zustand": "^5.0.11"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.13",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@types/node": "^22.19.8",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.0.0",
+    "concurrently": "^9.2.1",
+    "npm-run-all2": "^8.0.4",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

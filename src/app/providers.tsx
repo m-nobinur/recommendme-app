@@ -1,0 +1,46 @@
+'use client'
+
+import { ConvexBetterAuthProvider } from '@convex-dev/better-auth/react'
+import { ConvexReactClient } from 'convex/react'
+import { type ReactNode, useMemo } from 'react'
+import { HeaderProvider } from '@/contexts'
+import { authClient } from '@/lib/auth/client'
+
+/**
+ * Convex Providers with Better Auth integration
+ *
+ * Optimizations:
+ * - unsavedChangesWarning disabled for better UX
+ * - initialToken support for faster client authentication
+ * - Proper error handling for missing configuration
+ */
+export function Providers({
+  children,
+  initialToken,
+}: {
+  children: ReactNode
+  initialToken?: string | null
+}) {
+  const convex = useMemo(() => {
+    const url = process.env.NEXT_PUBLIC_CONVEX_URL
+    if (!url) {
+      // Return null during build or if URL is not configured
+      return null
+    }
+    return new ConvexReactClient(url, {
+      unsavedChangesWarning: false, // Disable warnings for better UX
+    })
+  }, [])
+
+  // If Convex is not configured, render children without provider
+  // This allows the build to pass without env vars
+  if (!convex) {
+    return <HeaderProvider>{children}</HeaderProvider>
+  }
+
+  return (
+    <ConvexBetterAuthProvider client={convex} authClient={authClient} initialToken={initialToken}>
+      <HeaderProvider>{children}</HeaderProvider>
+    </ConvexBetterAuthProvider>
+  )
+}

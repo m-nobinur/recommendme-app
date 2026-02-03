@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180">
+  <defs>
+    <linearGradient id="appleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f59e0b"/>
+      <stop offset="100%" style="stop-color:#ea580c"/>
+    </linearGradient>
+  </defs>
+  <rect width="180" height="180" rx="40" fill="url(#appleGrad)"/>
+  <path d="M45 70h90M45 90h70M45 110h80" stroke="#020202" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="135" cy="110" r="15" fill="#020202"/>
+</svg>

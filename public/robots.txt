@@ -1,0 +1,10 @@
+# RecommendMe AI - robots.txt
+
+User-agent: *
+Allow: /
+
+# Disallow API routes
+Disallow: /api/
+
+# Sitemap
+Sitemap: https://recommendme.ai/sitemap.xml
