@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils/cn'
 
 export interface IconButtonProps extends Omit<ButtonProps, 'leftIcon' | 'rightIcon'> {
   icon: React.ReactNode
-  label: string // Accessibility label is required
+  label: string
 }
 
 export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(

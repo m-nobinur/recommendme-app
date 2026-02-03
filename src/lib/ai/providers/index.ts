@@ -24,9 +24,6 @@ export {
   PROVIDER_CONFIGS,
   TIER_INFO,
 } from '@/lib/ai/providers/config'
-/**
- * Re-export types for external use
- */
 export type { AIProvider, ModelConfig, ModelTier, ProviderConfig } from '@/lib/ai/providers/types'
 
 /**
@@ -66,23 +63,19 @@ export function createAIProvider(
     )
   }
 
-  // Get provider config
   const providerConfig = PROVIDER_CONFIGS[provider]
   if (!providerConfig) {
     throw new Error(`Configuration not found for provider: ${provider}`)
   }
 
-  // Validate tier
   if (!(tier in providerConfig.models)) {
     throw new Error(
       `Invalid tier: ${String(tier)}. Valid tiers: ${Object.keys(providerConfig.models).join(', ')}`
     )
   }
 
-  // Get model ID for the tier
   const modelId = providerConfig.models[tier].id
 
-  // Create provider instance using factory
   const factory = PROVIDER_FACTORIES[provider]
   return factory(modelId)
 }
@@ -174,7 +167,7 @@ export const providerConfigs = {
  */
 export function hasApiKey(provider: keyof typeof PROVIDER_FACTORIES): boolean {
   const config = PROVIDER_CONFIGS[provider]
-  if (!config?.apiKeyEnvVar) return true // No API key required
+  if (!config?.apiKeyEnvVar) return true
 
   const apiKey = process.env[config.apiKeyEnvVar]
   return Boolean(apiKey && apiKey.length > 0)

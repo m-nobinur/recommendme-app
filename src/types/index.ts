@@ -1,8 +1,3 @@
-/**
- * Centralized Type Definitions
- * All shared types for the application
- */
-
 import type { Id } from '@convex/_generated/dataModel'
 
 // ============================================

@@ -1,8 +1,3 @@
-/**
- * System Prompts Configuration
- * Version-controlled prompts for the AI assistant
- */
-
 export interface PromptVersion {
   version: string
   description: string

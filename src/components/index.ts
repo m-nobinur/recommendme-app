@@ -1,8 +1,3 @@
-/**
- * Component Barrel Exports
- * Central export point for all reusable components
- */
-
 // ============================================
 // CHAT COMPONENTS
 // ============================================

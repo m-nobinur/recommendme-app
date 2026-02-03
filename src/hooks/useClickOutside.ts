@@ -14,7 +14,6 @@ export function useClickOutside<T extends HTMLElement = HTMLElement>(
   const ref = useRef<T>(null)
   const handlerRef = useRef(handler)
 
-  // Update handler ref to latest version
   useEffect(() => {
     handlerRef.current = handler
   }, [handler])
@@ -25,7 +24,6 @@ export function useClickOutside<T extends HTMLElement = HTMLElement>(
     const listener = (event: MouseEvent | TouchEvent) => {
       const el = ref.current
 
-      // Do nothing if clicking ref's element or descendent elements
       if (!el || el.contains(event.target as Node)) {
         return
       }

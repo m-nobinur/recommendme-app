@@ -102,7 +102,7 @@ export function createCRMTools(ctx: ToolContext) {
       inputSchema: z.object({
         name: z.string().describe('Full name of the lead'),
         phone: z.string().optional().describe('Phone number'),
-        email: z.string().email().optional().describe('Email address'),
+        email: z.email().optional().describe('Email address'),
         notes: z.string().optional().describe('Initial requirements or notes about the lead'),
         tags: z
           .array(z.string())
@@ -147,7 +147,7 @@ export function createCRMTools(ctx: ToolContext) {
         nameOrId: z.string().describe('Name or ID of the lead to update (will fuzzy match)'),
         status: leadStatusSchema.optional().describe('New status for the lead'),
         phone: z.string().optional().describe('Updated phone number'),
-        email: z.string().email().optional().describe('Updated email address'),
+        email: z.email().optional().describe('Updated email address'),
         notes: z.string().optional().describe('Additional notes to append'),
         addTags: z.array(z.string()).optional().describe('New tags to add to the lead'),
         value: z.number().optional().describe('Updated deal value'),

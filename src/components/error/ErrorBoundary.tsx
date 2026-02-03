@@ -74,7 +74,7 @@ interface ChatErrorFallbackProps {
 export function ChatErrorFallback({ error, onReset }: ChatErrorFallbackProps) {
   return (
     <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-      <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-red-500/20 bg-gradient-to-br from-red-500/10 to-red-900/10">
+      <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-red-500/20 bg-linear-to-br from-red-500/10 to-red-900/10">
         <Logo size={48} />
       </div>
       <h2 className="mb-2 text-xl font-semibold text-gray-100">Chat Error</h2>

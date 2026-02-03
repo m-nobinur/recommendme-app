@@ -17,11 +17,9 @@ export interface ProviderConfig {
   docsUrl: string
   requiresApiKey: boolean
   apiKeyEnvVar?: string
-  // Models mapped by brain tier
   models: Record<ModelTier, ModelConfig>
 }
 
-// Brain tier display info
 export const BRAIN_TIERS: Record<
   ModelTier,
   { label: string; description: string; icon: 'sparkles' | 'zap' | 'bolt' }
@@ -43,7 +41,6 @@ export const BRAIN_TIERS: Record<
   },
 }
 
-// Provider configurations with models per brain tier
 export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
   gateway: {
     id: 'gateway',
@@ -171,20 +168,16 @@ export const PROVIDERS: Record<AIProvider, ProviderConfig> = {
   },
 }
 
-// Default values
 const DEFAULT_PROVIDER: AIProvider = 'gemini'
 const DEFAULT_BRAIN_TIER: ModelTier = 'smart'
 
 interface ModelState {
-  // Current selections
   provider: AIProvider
   brainTier: ModelTier
 
-  // Actions
   setProvider: (provider: AIProvider) => void
   setBrainTier: (tier: ModelTier) => void
 
-  // Derived getters
   getCurrentProvider: () => ProviderConfig
   getCurrentModel: () => ModelConfig
   getCurrentModelId: () => string

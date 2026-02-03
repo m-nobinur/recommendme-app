@@ -43,16 +43,13 @@ export const {
 } = convexBetterAuthNextJs({
   convexUrl,
   convexSiteUrl,
-  // Optional: Enable JWT caching for faster page loads (experimental)
   jwtCache: {
     enabled: true,
-    expirationToleranceSeconds: 60, // Cache JWT for 60 seconds past expiry
+    expirationToleranceSeconds: 60,
     isAuthError: (error) => {
-      // Function to detect authentication errors for retry logic
       return error instanceof Error && error.message.includes('Unauthenticated')
     },
   },
 })
 
-// Re-export for compatibility
 export { handler as auth }

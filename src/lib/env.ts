@@ -9,31 +9,25 @@ import { z } from 'zod'
 
 // Server-side environment variables
 const serverEnvSchema = z.object({
-  // Database & Backend
   CONVEX_DEPLOYMENT: z.string().optional(),
 
-  // Authentication
   BETTER_AUTH_SECRET: z.string().min(32, 'BETTER_AUTH_SECRET must be at least 32 characters'),
   BETTER_AUTH_URL: z.string().url().optional(),
 
-  // Development: Disable authentication (NEVER use in production!)
   DISABLE_AUTH_IN_DEV: z
     .string()
     .optional()
     .transform((val) => val === 'true'),
 
-  // AI Providers (at least one should be configured)
   OPENROUTER_API_KEY: z.string().optional(),
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
 
-  // Environment
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
 
-// Client-side environment variables
 const clientEnvSchema = z.object({
-  NEXT_PUBLIC_CONVEX_URL: z.string().url('NEXT_PUBLIC_CONVEX_URL must be a valid URL'),
-  NEXT_PUBLIC_APP_URL: z.string().url().optional(),
+  NEXT_PUBLIC_CONVEX_URL: z.url('NEXT_PUBLIC_CONVEX_URL must be a valid URL'),
+  NEXT_PUBLIC_APP_URL: z.url().optional(),
 })
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>
@@ -56,7 +50,6 @@ export function validateServerEnv(): ServerEnv {
 
     console.error(`Invalid server environment variables:\n${errorMessages}`)
 
-    // In development, throw to make it obvious
     if (process.env.NODE_ENV === 'development') {
       throw new Error(`Invalid server environment variables:\n${errorMessages}`)
     }

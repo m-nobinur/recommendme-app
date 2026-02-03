@@ -9,7 +9,7 @@ export const AI_GATEWAY_CONFIG: ProviderConfig = {
   name: 'AI Gateway',
   description: 'Vercel AI Gateway with multi-provider support and automatic fallback',
   docsUrl: 'https://vercel.com/docs/ai-gateway',
-  requiresApiKey: false, // Auto-authenticated on Vercel, optional API key
+  requiresApiKey: false,
   apiKeyEnvVar: 'AI_GATEWAY_API_KEY',
   baseURL: 'https://ai-gateway.vercel.sh/v3/ai',
   models: {

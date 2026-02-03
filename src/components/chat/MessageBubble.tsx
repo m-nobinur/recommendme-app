@@ -1,28 +1,11 @@
 'use client'
 
-import dynamic from 'next/dynamic'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { generateSuggestions } from '@/app/actions/suggestions'
-// Direct import instead of barrel for Logo (bundle-barrel-imports)
 import { Logo } from '@/components/ui/Logo'
 import { TIMING } from '@/lib/constants'
 import type { ChatMessage } from '@/types'
-
-// Dynamic import for MarkdownRenderer - heavy component with remark/rehype (bundle-dynamic-imports)
-const MarkdownRenderer = dynamic(() => import('./MarkdownRenderer'), {
-  loading: () => <MarkdownSkeleton />,
-  ssr: false,
-})
-
-// Lightweight skeleton for markdown loading
-function MarkdownSkeleton() {
-  return (
-    <div className="animate-pulse space-y-2">
-      <div className="h-4 w-full rounded bg-surface-muted" />
-      <div className="h-4 w-3/4 rounded bg-surface-muted" />
-    </div>
-  )
-}
+import MarkdownRenderer from './MarkdownRenderer'
 
 interface Props {
   message: ChatMessage
@@ -30,10 +13,8 @@ interface Props {
   onSuggestionClick?: (suggestion: string) => void
 }
 
-// Skeleton data hoisted outside component (rendering-hoist-jsx)
 const SKELETON_WIDTHS = [{ width: 'w-28' }, { width: 'w-36' }, { width: 'w-24' }] as const
 
-// Shimmer skeleton for suggestions - matches actual button height to prevent layout shift
 const SuggestionSkeleton = memo(function SuggestionSkeleton() {
   return (
     <div className="flex gap-2 overflow-hidden h-8">
@@ -119,7 +100,6 @@ function MessageBubbleComponent({ message, previousUserMessage, onSuggestionClic
           setSuggestions(generatedSuggestions)
         }
         setIsLoadingSuggestions(false)
-        // Small delay before showing to ensure smooth transition
         setTimeout(() => {
           setShowSuggestions(true)
         }, TIMING.SUGGESTION_SHOW_DELAY)

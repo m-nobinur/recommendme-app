@@ -144,7 +144,7 @@ export function AuthHeader({ title, subtitle, logo }: AuthHeaderProps) {
   return (
     <div className="mb-8 text-center">
       {logo && <div className="mb-4 flex justify-center">{logo}</div>}
-      <h1 className="bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text font-bold text-2xl text-transparent">
+      <h1 className="bg-linear-to-r from-amber-400 to-orange-500 bg-clip-text font-bold text-2xl text-transparent">
         {title}
       </h1>
       {subtitle && <p className="mt-2 text-gray-500">{subtitle}</p>}

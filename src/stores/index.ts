@@ -1,4 +1,3 @@
-// Model store exports
 export {
   BRAIN_TIERS,
   type ModelConfig,

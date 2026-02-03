@@ -73,21 +73,18 @@ export const getServerSession = cache(async (): Promise<AuthSession | null> => {
   }
 
   try {
-    // Check if user is authenticated using the Convex Better Auth utility
     const authenticated = await isAuthenticated()
 
     if (!authenticated) {
       return null
     }
 
-    // Fetch the current user from Convex
     const user = await fetchAuthQuery(api.auth.getCurrentUser, {})
 
     if (!user) {
       return null
     }
 
-    // Map the Convex user to our session format
     return {
       user: {
         id: user._id,
@@ -129,8 +126,6 @@ export async function requireAuth(): Promise<AuthSession> {
   const session = await getServerSession()
 
   if (!session) {
-    // In dev mode with auth disabled, this should never happen
-    // because getServerSession returns a mock session
     if (isAuthDisabledInDev()) {
       console.warn('⚠️  [DEV MODE] requireAuth called but no mock session found - creating one')
       return createMockSession()

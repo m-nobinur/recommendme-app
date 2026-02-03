@@ -3,7 +3,6 @@
 import { Calendar, ChevronLeft, FileText, LogOut, Mail, Phone, Settings, Users } from 'lucide-react'
 import Link from 'next/link'
 import { memo, useState } from 'react'
-// Direct imports instead of barrel (bundle-barrel-imports)
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
 import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, LeadStatus, User } from '@/types'
@@ -70,7 +69,7 @@ function LeadDetail({ lead, onBack }: LeadDetailProps) {
       </div>
       <div className="flex-1 overflow-y-auto p-4 space-y-6">
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-gradient-to-br from-amber-900/50 to-amber-700/20 border border-amber-900/50 flex items-center justify-center text-amber-500 text-lg font-bold">
+          <div className="w-12 h-12 rounded-full bg-linear-to-br from-amber-900/50 to-amber-700/20 border border-amber-900/50 flex items-center justify-center text-amber-500 text-lg font-bold">
             {lead.name.charAt(0)}
           </div>
           <div className="flex-1 min-w-0">
@@ -137,7 +136,7 @@ function LeadDetail({ lead, onBack }: LeadDetailProps) {
 }
 
 // ============================================
-// TAB CONTENT COMPONENTS (Memoized for performance)
+// TAB CONTENT COMPONENTS
 // ============================================
 
 interface LeadsTabProps {
@@ -146,7 +145,6 @@ interface LeadsTabProps {
   onSelectLead: (lead: LeadDisplay) => void
 }
 
-// Memoized LeadsTab component (rerender-memo)
 const LeadsTab = memo(function LeadsTab({ leads, direction, onSelectLead }: LeadsTabProps) {
   const animationClass = direction === 'right' ? 'animate-slideInRight' : 'animate-slideInLeft'
 
@@ -203,7 +201,6 @@ interface ScheduleTabProps {
   direction: SlideDirection
 }
 
-// Memoized ScheduleTab component (rerender-memo)
 const ScheduleTab = memo(function ScheduleTab({ appointments, direction }: ScheduleTabProps) {
   const animationClass = direction === 'right' ? 'animate-slideInRight' : 'animate-slideInLeft'
 
@@ -245,7 +242,6 @@ interface InvoicesTabProps {
   direction: SlideDirection
 }
 
-// Memoized InvoicesTab component (rerender-memo)
 const InvoicesTab = memo(function InvoicesTab({ invoices, direction }: InvoicesTabProps) {
   const animationClass = direction === 'right' ? 'animate-slideInRight' : 'animate-slideInLeft'
 
@@ -326,7 +322,6 @@ export function DashboardView({
       {/* Tabs */}
       <div className="px-4 pt-4 pb-4">
         <div className="relative flex p-1 bg-surface-elevated rounded-lg border border-surface-muted">
-          {/* Animated Pill Background */}
           <div
             className="absolute top-1 bottom-1 rounded-md bg-[#222] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.25,0.1,0.25,1)]"
             style={{
@@ -379,7 +374,7 @@ export function DashboardView({
         <div className="p-3">
           <div className="flex items-center gap-3 p-2 rounded-xl bg-surface-tertiary border border-border-subtle">
             {/* Avatar */}
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-amber-900/40 to-amber-700/20 border border-amber-900/40 flex items-center justify-center text-amber-500 text-xs font-bold shrink-0">
+            <div className="w-9 h-9 rounded-full bg-linear-to-br from-amber-900/40 to-amber-700/20 border border-amber-900/40 flex items-center justify-center text-amber-500 text-xs font-bold shrink-0">
               {(user.name || user.email).charAt(0).toUpperCase()}
             </div>
 

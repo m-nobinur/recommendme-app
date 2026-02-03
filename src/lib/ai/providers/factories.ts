@@ -32,7 +32,6 @@ export function createGatewayProvider(modelId: string): LanguageModel {
   }
 
   // AI Gateway can work without an API key on Vercel (OIDC auth)
-  // But we'll check if one is provided
   const envVar = AI_GATEWAY_CONFIG.apiKeyEnvVar
   const apiKey = envVar ? process.env[envVar] : undefined
 
@@ -139,8 +138,6 @@ export function createOpenRouterProvider(modelId: string): LanguageModel {
     apiKey,
   })
 
-  // OpenRouter supports both chat and completion models
-  // Using chat() as it's the recommended approach
   return openrouter.chat(modelId)
 }
 
