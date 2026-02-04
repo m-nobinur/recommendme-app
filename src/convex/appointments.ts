@@ -55,7 +55,6 @@ export const createByLeadName = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Find lead by name
     const leads = await ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))

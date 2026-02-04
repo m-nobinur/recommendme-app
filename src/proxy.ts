@@ -1,10 +1,11 @@
 import { type NextRequest, NextResponse } from 'next/server'
+import { ROUTES } from '@/lib/constants'
 
 // Routes that require authentication
-const protectedRoutes = ['/chat', '/settings']
+const protectedRoutes = [ROUTES.CHAT, ROUTES.SETTINGS]
 
 // Routes that should redirect to /chat if already authenticated
-const authRoutes = ['/login', '/register']
+const authRoutes = [ROUTES.LOGIN, ROUTES.REGISTER]
 
 export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -25,26 +26,24 @@ export default function proxy(request: NextRequest) {
 
   const isAuthenticated = !!sessionToken
 
-  // Check if the current path is protected
   const isProtectedRoute = protectedRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   )
 
-  // Check if current path is an auth route
   const isAuthRoute = authRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   )
 
-  // Redirect unauthenticated users from protected routes to login
+  // Redirect unauthenticated users to login
   if (isProtectedRoute && !isAuthenticated) {
-    const loginUrl = new URL('/login', request.url)
+    const loginUrl = new URL(ROUTES.LOGIN, request.url)
     loginUrl.searchParams.set('callbackUrl', pathname)
     return NextResponse.redirect(loginUrl)
   }
 
-  // Redirect authenticated users from auth routes to chat
+  // Redirect authenticated users to chat
   if (isAuthRoute && isAuthenticated) {
-    return NextResponse.redirect(new URL('/chat', request.url))
+    return NextResponse.redirect(new URL(ROUTES.CHAT, request.url))
   }
 
   return NextResponse.next()

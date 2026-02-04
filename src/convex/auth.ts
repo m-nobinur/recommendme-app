@@ -26,7 +26,7 @@ const authFunctions: AuthFunctions = internal.auth
  */
 export const authComponent = createClient<DataModel>(components.betterAuth, {
   authFunctions,
-  verbose: true,
+  verbose: process.env.NODE_ENV !== 'production',
   triggers: {
     user: {
       /**
@@ -34,7 +34,9 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
        * Runs in the same transaction as user signup
        */
       onCreate: async (ctx, authUser) => {
-        console.log('[Auth Trigger] Creating appUser for new user:', authUser.email)
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[Auth Trigger] Creating appUser for new user:', authUser.email)
+        }
 
         // Get or create default organization for new users
         let defaultOrg = await ctx.db
@@ -43,7 +45,9 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
           .first()
 
         if (!defaultOrg) {
-          console.log('[Auth Trigger] Creating default organization')
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[Auth Trigger] Creating default organization')
+          }
           const orgId = await ctx.db.insert('organizations', {
             name: 'Default Organization',
             slug: 'default',
@@ -70,7 +74,9 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
           updatedAt: Date.now(),
         })
 
-        console.log('[Auth Trigger] Created appUser:', appUserId)
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[Auth Trigger] Created appUser:', appUserId)
+        }
       },
 
       /**
@@ -78,7 +84,9 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
        * Runs in the same transaction as user update
        */
       onUpdate: async (ctx, newUser, _oldUser) => {
-        console.log('[Auth Trigger] User updated:', newUser.email)
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[Auth Trigger] User updated:', newUser.email)
+        }
 
         // Find the corresponding appUser
         const appUser = await ctx.db
@@ -91,9 +99,13 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
           await ctx.db.patch(appUser._id, {
             updatedAt: Date.now(),
           })
-          console.log('[Auth Trigger] Updated appUser:', appUser._id)
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[Auth Trigger] Updated appUser:', appUser._id)
+          }
         } else {
-          console.warn('[Auth Trigger] AppUser not found for user:', newUser._id)
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[Auth Trigger] AppUser not found for user:', newUser._id)
+          }
         }
       },
 
@@ -102,7 +114,9 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
        * Runs in the same transaction as user deletion
        */
       onDelete: async (ctx, user) => {
-        console.log('[Auth Trigger] Deleting appUser for user:', user.email)
+        if (process.env.NODE_ENV !== 'production') {
+          console.log('[Auth Trigger] Deleting appUser for user:', user.email)
+        }
 
         // Find and delete the corresponding appUser
         const appUser = await ctx.db
@@ -112,9 +126,13 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
 
         if (appUser) {
           await ctx.db.delete(appUser._id)
-          console.log('[Auth Trigger] Deleted appUser:', appUser._id)
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[Auth Trigger] Deleted appUser:', appUser._id)
+          }
         } else {
-          console.warn('[Auth Trigger] AppUser not found for deletion:', user._id)
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[Auth Trigger] AppUser not found for deletion:', user._id)
+          }
         }
       },
     },
@@ -174,7 +192,7 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
     rateLimit: {
       enabled: true,
       window: 60, // 1 minute window
-      max: 10, // Maximum 10 requests per window per IP
+      max: 30, // Maximum 30 requests per window per IP (increased to accommodate JWKS validation)
       storage: 'database', // Store rate limits in database for distributed systems
     },
 

@@ -2,6 +2,7 @@
 
 import { convexClient } from '@convex-dev/better-auth/client/plugins'
 import { createAuthClient } from 'better-auth/react'
+import { ROUTES } from '@/lib/constants'
 
 /**
  * Better Auth React client
@@ -42,7 +43,7 @@ export async function signOut() {
   await authClient.signOut({
     fetchOptions: {
       onSuccess: () => {
-        window.location.href = '/login'
+        window.location.href = ROUTES.LOGIN
       },
     },
   })

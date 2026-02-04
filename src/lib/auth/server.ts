@@ -1,6 +1,7 @@
 import { api } from '@convex/_generated/api'
 import { redirect } from 'next/navigation'
 import { cache } from 'react'
+import { ROUTES } from '@/lib/constants'
 import { isAuthDisabledInDev } from '../env'
 import { fetchAuthQuery, isAuthenticated } from './index'
 
@@ -66,7 +67,6 @@ function createMockSession(): AuthSession {
  * This ensures we only fetch the session once per request even if called multiple times
  */
 export const getServerSession = cache(async (): Promise<AuthSession | null> => {
-  // Check if auth is disabled in development
   if (isAuthDisabledInDev()) {
     console.log('🔓 [DEV MODE] Returning mock session')
     return createMockSession()
@@ -130,7 +130,7 @@ export async function requireAuth(): Promise<AuthSession> {
       console.warn('⚠️  [DEV MODE] requireAuth called but no mock session found - creating one')
       return createMockSession()
     }
-    redirect('/login')
+    redirect(ROUTES.LOGIN)
   }
 
   return session
