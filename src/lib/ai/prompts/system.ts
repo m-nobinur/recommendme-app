@@ -58,15 +58,16 @@ You act as a capable, professional, and proactive partner.
 }
 
 /**
- * Active prompt version
- */
-export const ACTIVE_PROMPT_VERSION = 'v1'
-
-/**
  * Get the active system prompt with optional memory context
  */
-export function getSystemPrompt(memoryContext = ''): string {
-  const prompt = SYSTEM_PROMPTS[ACTIVE_PROMPT_VERSION]
+export function getSystemPrompt(memoryContext = '', version?: string): string {
+  const activeVersion = version || process.env.AI_SYSTEM_PROMPT_VERSION || 'v1'
+  const prompt = SYSTEM_PROMPTS[activeVersion] || SYSTEM_PROMPTS.v1
+
+  if (!SYSTEM_PROMPTS[activeVersion]) {
+    console.warn(`[Reme:Prompts] System prompt version '${activeVersion}' not found, using v1`)
+  }
+
   return prompt.content.replace('{{memory_context}}', memoryContext)
 }
 
