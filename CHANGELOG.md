@@ -29,8 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Automated linting, type checking, and formatting validation
 - Build verification for Next.js application
 - Security audit integration
-- CD workflow for automated Convex and Vercel deployments
-- Post-deployment health checks
+- Fast feedback loop (< 5 minutes typical)
+- Vercel handles automatic deployments on push to main
 
 #### Code Quality & Developer Experience
 - Husky 9.1.7 for Git hooks automation

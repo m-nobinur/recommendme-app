@@ -240,72 +240,65 @@ The AI assistant understands natural language. Here are some example commands:
 
 ## Deployment
 
-### Automated Deployment (CI/CD)
+### Automated CI/CD
 
-This project includes GitHub Actions workflows for automated deployment:
+This project uses GitHub Actions for continuous integration:
 
 - **CI Pipeline** (`.github/workflows/ci.yml`)
-  - Runs on every pull request and push
-  - Performs linting, type checking, formatting validation
+  - Runs automatically on every pull request and push
+  - Performs linting with Biome
+  - Runs TypeScript type checking
+  - Validates code formatting
   - Builds the application to verify integrity
   - Runs security audits
+  - Provides fast feedback (typically < 5 minutes)
 
-- **CD Pipeline** (`.github/workflows/deploy.yml`)
-  - Deploys to production on pushes to `main` branch
-  - Automatically deploys Convex backend
-  - Deploys frontend to Vercel
-  - Runs post-deployment health checks
+### Vercel Deployment
 
-#### GitHub Secrets Required
+Vercel automatically deploys your application when you push to GitHub:
 
-Configure these secrets in your GitHub repository settings:
+- **Automatic Deployments**: Every push to `main` triggers a production deployment
+- **Preview Deployments**: Every pull request gets a unique preview URL
+- **Environment Variables**: Configure in Vercel dashboard
+- **Convex Integration**: Deploy Convex separately, then add URL to Vercel env vars
 
-- `CONVEX_DEPLOY_KEY` - Convex deployment key
-- `NEXT_PUBLIC_CONVEX_URL` - Production Convex URL
-- `VERCEL_TOKEN` - Vercel authentication token
-- `VERCEL_ORG_ID` - Vercel organization ID
-- `VERCEL_PROJECT_ID` - Vercel project ID
-- `BETTER_AUTH_SECRET` - Production auth secret
-- `BETTER_AUTH_URL` - Production domain URL
+### Setup Deployment
 
-### Manual Deployment
+1. **Connect to Vercel**
+   - Visit [vercel.com](https://vercel.com/) and sign in
+   - Click "New Project" and import your GitHub repository
+   - Vercel will detect Next.js automatically
 
-If you prefer manual deployment:
-
-1. **Push your code to GitHub**
-
-   ```bash
-   git push origin main
-   ```
-
-2. **Import project in Vercel**
-   - Visit [vercel.com](https://vercel.com/)
-   - Import your GitHub repository
-   - Configure environment variables (see [Environment Variables](#environment-variables))
-
-3. **Deploy Convex first**
+2. **Deploy Convex Backend**
 
    ```bash
    bun convex:deploy
    ```
 
-   Copy the production Convex URL to your Vercel environment variables.
+   This creates your production Convex deployment and provides a URL.
 
-4. **Deploy to Vercel**
-   - Click "Deploy" in Vercel dashboard
-   - Vercel will build and deploy automatically
+3. **Configure Environment Variables in Vercel**
+   - Add all required environment variables (see [Environment Variables](#environment-variables))
+   - Crucially, set `NEXT_PUBLIC_CONVEX_URL` to your production Convex URL
+   - Set `BETTER_AUTH_URL` to your Vercel domain (e.g., `https://your-app.vercel.app`)
+
+4. **Deploy**
+   - Vercel will automatically deploy on first setup
+   - Future pushes to `main` will trigger automatic deployments
+   - Pull requests will get preview deployments
 
 ### Production Checklist
 
-- [ ] Set all environment variables in Vercel and GitHub Secrets
-- [ ] Deploy Convex with `bun convex:deploy` or via CI/CD
-- [ ] Update `NEXT_PUBLIC_CONVEX_URL` with production URL
-- [ ] Set `BETTER_AUTH_URL` to your production domain
-- [ ] Verify CI/CD pipelines are running successfully
-- [ ] Enable email verification (see SECURITY.md)
-- [ ] Configure CORS for production domain
+- [ ] Connect GitHub repository to Vercel
+- [ ] Deploy Convex backend with `bun convex:deploy`
+- [ ] Set all environment variables in Vercel dashboard
+- [ ] Update `NEXT_PUBLIC_CONVEX_URL` with production Convex URL
+- [ ] Set `BETTER_AUTH_URL` to your Vercel domain
+- [ ] Verify first deployment succeeded
+- [ ] Test the production application
+- [ ] Enable email verification in better-auth (optional, see SECURITY.md)
 - [ ] Review security headers in `next.config.ts`
-- [ ] Test deployment health checks
+- [ ] Monitor Convex logs via `bun convex:logs`
 
 ## Code Quality
 
