@@ -4,17 +4,15 @@ import { Calendar, Database, FileText, Send, Users, X } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import type React from 'react'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-// Direct imports instead of barrel (bundle-barrel-imports)
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
+import { UI } from '@/lib/constants'
 
-// Dynamic import for BrainSwitcher - heavy component with dropdown (bundle-dynamic-imports)
 const BrainSwitcher = dynamic(() => import('@/components/layout/BrainSwitcher'), {
   loading: () => <BrainSwitcherSkeleton />,
   ssr: false,
 })
 
-// Lightweight skeleton for brain switcher
 function BrainSwitcherSkeleton() {
   return <div className="h-7 w-24 animate-pulse rounded-lg bg-surface-muted" />
 }
@@ -25,7 +23,6 @@ interface Props {
   isLoading?: boolean
 }
 
-// Shortcuts config hoisted outside component (rendering-hoist-jsx)
 const SHORTCUTS = [
   { label: 'CRM', icon: 'db' },
   { label: 'Invoice', icon: 'file' },
@@ -35,7 +32,6 @@ const SHORTCUTS = [
 
 type ShortcutIcon = (typeof SHORTCUTS)[number]['icon']
 
-// Icon map for efficient lookup (js-set-map-lookups)
 const ICON_COMPONENTS: Record<ShortcutIcon, React.FC<{ className: string }>> = {
   db: Database,
   file: FileText,
@@ -43,7 +39,6 @@ const ICON_COMPONENTS: Record<ShortcutIcon, React.FC<{ className: string }>> = {
   user: Users,
 }
 
-// Memoized shortcut icon component (rerender-memo)
 const ShortcutIcon = memo(function ShortcutIcon({
   icon,
   className,
@@ -66,7 +61,6 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
     const messageContent = text.trim()
     if (!(messageContent || activeShortcut)) return
 
-    // Combine shortcut with text if present
     const finalMessage = activeShortcut
       ? `Show me ${activeShortcut.toLowerCase()} ${messageContent}`.trim()
       : messageContent
@@ -75,8 +69,6 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
     setText('')
     setActiveShortcut(null)
 
-    // Keep focus on the input after sending
-    // Use setTimeout to ensure focus happens after React state updates
     setTimeout(() => {
       textareaRef.current?.focus()
     }, 0)
@@ -92,23 +84,17 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
     [handleSubmit]
   )
 
-  // Auto-resize textarea using callback in onChange (no effect needed)
   const handleTextChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const textarea = e.target
     setText(textarea.value)
-    // Auto-resize: reset height, then set to scrollHeight (capped at 120px)
     textarea.style.height = 'auto'
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 120)}px`
+    textarea.style.height = `${Math.min(textarea.scrollHeight, UI.CHAT_INPUT_MAX_HEIGHT)}px`
   }, [])
 
-  // Track previous loading state to detect when response completes
   const prevIsLoading = useRef(isLoading)
 
-  // Refocus input when loading completes (AI response finished)
   useEffect(() => {
-    // When loading transitions from true to false, refocus the input
     if (prevIsLoading.current && !isLoading && !disabled) {
-      // Small delay to ensure UI has settled
       setTimeout(() => {
         textareaRef.current?.focus()
       }, 50)
@@ -116,14 +102,12 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
     prevIsLoading.current = isLoading
   }, [isLoading, disabled])
 
-  // Initial focus on mount
   useEffect(() => {
     if (!disabled) {
       textareaRef.current?.focus()
     }
   }, [disabled])
 
-  // Find active shortcut data efficiently (js-index-maps)
   const activeShortcutData = useMemo(
     () => SHORTCUTS.find((s) => s.label === activeShortcut),
     [activeShortcut]
@@ -157,7 +141,7 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
           activeShortcut ? `Ask about ${activeShortcut.toLowerCase()}...` : 'Type your message...'
         }
         disabled={disabled || isLoading}
-        className="max-h-[120px] min-h-[40px] w-full resize-none bg-transparent text-[15px] text-gray-200 leading-relaxed placeholder-gray-600 focus:outline-none"
+        className={`max-h-[${UI.CHAT_INPUT_MAX_HEIGHT}px] min-h-[40px] w-full resize-none bg-transparent text-[15px] text-gray-200 leading-relaxed placeholder-gray-600 focus:outline-none`}
         rows={1}
       />
 

@@ -2,7 +2,7 @@ export function DashboardSkeleton() {
   return (
     <div className="flex h-screen flex-col bg-surface-secondary">
       {/* Header skeleton */}
-      <header className="h-16 flex-shrink-0 border-border border-b bg-surface-tertiary/80">
+      <header className="h-16 shrink-0 border-border border-b bg-surface-tertiary/80">
         <div className="flex h-full items-center justify-between px-4">
           <div className="flex items-center gap-3">
             <div className="h-9 w-9 animate-pulse rounded-lg bg-surface-muted" />

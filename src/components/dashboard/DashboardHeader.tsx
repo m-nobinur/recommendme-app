@@ -6,6 +6,7 @@ import { useState } from 'react'
 import NotificationDropdown from '@/components/layout/NotificationDropdown'
 import { Logo } from '@/components/ui/Logo'
 import { useClickOutside } from '@/hooks'
+import { Z_INDEX } from '@/lib/constants'
 import type { Notification } from '@/types'
 
 interface DashboardHeaderProps {
@@ -28,14 +29,21 @@ export function DashboardHeader({
 
   return (
     <div className="group">
-      {!isVisible && <div className="fixed top-0 left-0 right-0 h-4 z-40" aria-hidden="true" />}
+      {!isVisible && (
+        <div
+          className="fixed top-0 left-0 right-0 h-4"
+          style={{ zIndex: Z_INDEX.SIDEBAR }}
+          aria-hidden="true"
+        />
+      )}
 
       <header
-        className={`absolute top-0 left-0 right-0 flex justify-between items-center px-8 z-30 shrink-0 border-b border-transparent hover:border-[#111] transition-all duration-300 ease-in-out ${
+        className={`absolute top-0 left-0 right-0 flex justify-between items-center px-8 shrink-0 border-b border-transparent hover:border-[#111] transition-all duration-300 ease-in-out ${
           isVisible
             ? 'h-16 opacity-100 py-4 translate-y-0 pointer-events-auto'
             : 'h-16 opacity-0 py-4 -translate-y-full pointer-events-none group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto'
         }`}
+        style={{ zIndex: Z_INDEX.HEADER }}
       >
         {/* Left: Brand */}
         <div className="flex items-center gap-3 opacity-90 hover:opacity-100 transition-opacity select-none cursor-default">

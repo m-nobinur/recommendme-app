@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers/types'
+import { STORAGE_KEYS } from '@/lib/constants'
 
 export interface ModelConfig {
   id: string
@@ -177,27 +178,19 @@ interface ModelState {
 
   setProvider: (provider: AIProvider) => void
   setBrainTier: (tier: ModelTier) => void
-
-  getCurrentProvider: () => ProviderConfig
-  getCurrentModel: () => ModelConfig
-  getCurrentModelId: () => string
 }
 
 export const useModelStore = create<ModelState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       provider: DEFAULT_PROVIDER,
       brainTier: DEFAULT_BRAIN_TIER,
 
       setProvider: (provider) => set({ provider }),
       setBrainTier: (tier) => set({ brainTier: tier }),
-
-      getCurrentProvider: () => PROVIDERS[get().provider],
-      getCurrentModel: () => PROVIDERS[get().provider].models[get().brainTier],
-      getCurrentModelId: () => PROVIDERS[get().provider].models[get().brainTier].id,
     }),
     {
-      name: 'reme-model-config',
+      name: STORAGE_KEYS.MODEL_CONFIG,
     }
   )
 )

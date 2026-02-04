@@ -5,26 +5,20 @@ import { DefaultChatTransport } from 'ai'
 import { ChevronDown } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-// Direct imports instead of barrel - bundle-barrel-imports optimization
 import ChatInput from '@/components/chat/ChatInput'
 import TypingIndicator from '@/components/chat/TypingIndicator'
 import { IconButton } from '@/components/ui/IconButton'
 import { Logo } from '@/components/ui/Logo'
 import { useHeader } from '@/contexts/HeaderContext'
-import { UI } from '@/lib/constants'
+import { API, UI, Z_INDEX } from '@/lib/constants'
+import { useModelStore } from '@/stores'
 import type { MessagePart } from '@/types'
 
-// Dynamic import for MessageBubble - bundle-dynamic-imports optimization
-// This component is heavy due to MarkdownRenderer and AI suggestions
-// Using null loading to avoid skeleton flash - TypingIndicator handles the loading state
 const MessageBubble = dynamic(() => import('@/components/chat/MessageBubble'), {
   loading: () => null,
   ssr: false,
 })
 
-// Lightweight inline user message - shows instantly while MessageBubble loads
-// This ensures user messages appear immediately without waiting for dynamic import
-// Memoized to prevent unnecessary re-renders when other messages stream (rerender-memo)
 const InlineUserMessage = memo(function InlineUserMessage({
   content,
   createdAt,
@@ -50,7 +44,6 @@ const InlineUserMessage = memo(function InlineUserMessage({
   )
 })
 
-// Suggestion prompts - hoisted outside component (rendering-hoist-jsx)
 const SUGGESTIONS = [
   'Add a new lead named John Smith',
   'Show me my schedule for today',
@@ -58,7 +51,6 @@ const SUGGESTIONS = [
   'List all my leads',
 ] as const
 
-// Helper to extract text content from message parts - hoisted outside component (js-cache-function-results)
 function extractTextFromParts(parts: Array<{ type?: string; text?: string }> | undefined): string {
   if (!parts) return ''
   return parts
@@ -78,14 +70,19 @@ export function ChatContainer() {
   const isAutoScrolling = useRef(false)
   const { setIsHeaderVisible } = useHeader()
 
-  // Track if user has manually scrolled away from bottom
+  const provider = useModelStore((s) => s.provider)
+  const brainTier = useModelStore((s) => s.brainTier)
+
   const userScrolledAway = useRef(false)
-  // Track previous status to detect when response completes
   const prevStatusRef = useRef<string>('')
 
   const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({
-      api: '/api/chat',
+      api: API.CHAT_ENDPOINT,
+      body: {
+        provider,
+        tier: brainTier,
+      },
     }),
     onError: (error) => {
       console.error('Chat error:', error)
@@ -93,11 +90,8 @@ export function ChatContainer() {
   })
 
   const isLoading = status === 'submitted' || status === 'streaming'
-  // Only show typing indicator when waiting for response, not during streaming
-  // During streaming, the message itself shows the content progressively
   const showTypingIndicator = status === 'submitted'
 
-  // Check if user is near the bottom of the chat (for scroll button visibility)
   const checkIfNearBottom = useCallback(() => {
     if (!chatContainerRef.current) return true
     const { scrollTop, scrollHeight, clientHeight } = chatContainerRef.current
@@ -105,8 +99,6 @@ export function ChatContainer() {
     return scrollHeight - scrollTop - clientHeight < threshold
   }, [])
 
-  // Handle scroll events - controls header visibility based on scroll direction
-  // Use debounced, velocity-based approach to prevent shaking
   const isHeaderHidden = useRef(false)
 
   useEffect(() => {
@@ -121,34 +113,24 @@ export function ChatContainer() {
       const scrollDiff = currentScrollTop - lastScrollY
       const maxScroll = container.scrollHeight - container.clientHeight
 
-      // Check if we're at or very near the bottom (within 20px)
       const isAtBottom = maxScroll - currentScrollTop < 20
 
-      // Always show header at the very top
       if (currentScrollTop <= 10) {
         if (isHeaderHidden.current) {
           isHeaderHidden.current = false
           setIsHeaderVisible(true)
         }
-      }
-      // Scrolling down - hide header (only if scrolled past 60px and moving down significantly)
-      else if (scrollDiff > 5 && currentScrollTop > 60) {
+      } else if (scrollDiff > 5 && currentScrollTop > 60) {
         if (!isHeaderHidden.current) {
           isHeaderHidden.current = true
           setIsHeaderVisible(false)
         }
-      }
-      // Scrolling up - show header
-      // BUT ignore small upward movements when at bottom (bounce-back effect)
-      else if (scrollDiff < -10 && !isAtBottom) {
+      } else if (scrollDiff < -10 && !isAtBottom) {
         if (isHeaderHidden.current) {
           isHeaderHidden.current = false
           setIsHeaderVisible(true)
         }
-      }
-      // If scrolling up significantly (more than 30px) even at bottom, show header
-      // This allows intentional scroll-up from bottom to show header
-      else if (scrollDiff < -30) {
+      } else if (scrollDiff < -30) {
         if (isHeaderHidden.current) {
           isHeaderHidden.current = false
           setIsHeaderVisible(true)
@@ -160,10 +142,8 @@ export function ChatContainer() {
     }
 
     const handleScroll = () => {
-      // Ignore programmatic scrolls
       if (isAutoScrolling.current) return
 
-      // Track that user manually scrolled (for auto-scroll logic)
       const nearBottom = checkIfNearBottom()
       if (!nearBottom) {
         userScrolledAway.current = true
@@ -172,10 +152,8 @@ export function ChatContainer() {
       }
       setShowScrollButton(!nearBottom)
 
-      // Update last scroll position for other logic
       lastScrollTop.current = Math.max(0, container.scrollTop)
 
-      // Throttle header visibility updates using requestAnimationFrame
       if (!ticking) {
         requestAnimationFrame(updateHeader)
         ticking = true
@@ -188,22 +166,18 @@ export function ChatContainer() {
     }
   }, [checkIfNearBottom, setIsHeaderVisible])
 
-  // Scroll to bottom helper - used for programmatic scrolling
   const scrollToBottomInstant = useCallback(() => {
     const container = chatContainerRef.current
     if (!container) return
 
-    // Calculate the actual maximum scroll position
     const maxScrollTop = container.scrollHeight - container.clientHeight
 
-    // Don't scroll if already at or very close to bottom (within 5px)
     if (maxScrollTop - container.scrollTop <= 5) return
 
     isAutoScrolling.current = true
     container.scrollTop = maxScrollTop
     lastScrollTop.current = container.scrollTop
 
-    // Reset flag after scroll completes
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         isAutoScrolling.current = false
@@ -211,14 +185,10 @@ export function ChatContainer() {
     })
   }, [])
 
-  // Auto-scroll when user sends a new message
-  // Reset userScrolledAway and scroll to bottom
   useEffect(() => {
     if (status === 'submitted' && prevStatusRef.current !== 'submitted') {
-      // User just sent a message - always scroll to bottom
       userScrolledAway.current = false
       setShowScrollButton(false)
-      // Force scroll even if at bottom
       const container = chatContainerRef.current
       if (container) {
         isAutoScrolling.current = true
@@ -232,15 +202,11 @@ export function ChatContainer() {
     prevStatusRef.current = status
   }, [status])
 
-  // Auto-scroll as AI response streams in
-  // Only scroll if user hasn't manually scrolled away
   const lastContentLength = useRef(0)
 
   useEffect(() => {
-    // Skip if user has scrolled away
     if (userScrolledAway.current) return
 
-    // Skip if not streaming
     if (status !== 'streaming') {
       lastContentLength.current = 0
       return
@@ -252,15 +218,12 @@ export function ChatContainer() {
     const currentContent = extractTextFromParts(currentLastMessage.parts)
     const contentLength = currentContent.length
 
-    // Only scroll if content actually grew (not just re-render)
     if (contentLength <= lastContentLength.current) return
     lastContentLength.current = contentLength
 
-    // Scroll to bottom
     scrollToBottomInstant()
   }, [messages, status, scrollToBottomInstant])
 
-  // Scroll to bottom function
   const scrollToBottom = useCallback(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTo({
@@ -278,7 +241,6 @@ export function ChatContainer() {
     [sendMessage]
   )
 
-  // Handle suggestion clicks
   const handleSuggestionClick = useCallback(
     (suggestion: string) => {
       handleSend(suggestion)
@@ -286,14 +248,13 @@ export function ChatContainer() {
     [handleSend]
   )
 
-  // Memoize the empty state UI
   const emptyStateUI = useMemo(
     () => (
       <div className="flex h-full min-h-[60vh] flex-col items-center justify-center text-center">
-        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-border bg-gradient-to-br from-[#121212] to-[#1a1a1a] shadow-xl">
+        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-border bg-linear-to-br from-[#121212] to-surface-muted shadow-xl">
           <Logo size={48} />
         </div>
-        <h2 className="mb-3 bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text font-bold text-2xl text-transparent">
+        <h2 className="mb-3 bg-linear-to-r from-amber-400 to-orange-500 bg-clip-text font-bold text-2xl text-transparent">
           Welcome to Reme
         </h2>
         <p className="mb-8 max-w-md text-gray-500">
@@ -317,7 +278,6 @@ export function ChatContainer() {
     [handleSend]
   )
 
-  // Memoize error UI
   const errorUI = useMemo(
     () =>
       error ? (
@@ -330,7 +290,6 @@ export function ChatContainer() {
 
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
-      {/* Messages area with mask gradient */}
       <div
         ref={chatContainerRef}
         className="custom-scrollbar flex-1 overflow-y-auto px-4 pt-6 md:px-0"
@@ -345,10 +304,8 @@ export function ChatContainer() {
           ) : (
             <>
               {messages.map((message, index) => {
-                // Extract content using hoisted helper (js-cache-function-results)
                 const content = extractTextFromParts(message.parts)
 
-                // Extract createdAt from metadata if available
                 const createdAt =
                   message.metadata &&
                   typeof message.metadata === 'object' &&
@@ -356,15 +313,12 @@ export function ChatContainer() {
                     ? new Date(message.metadata.createdAt as number)
                     : new Date()
 
-                // User messages use lightweight inline component for instant rendering
-                // This avoids waiting for dynamic MessageBubble import
                 if (message.role === 'user') {
                   return (
                     <InlineUserMessage key={message.id} content={content} createdAt={createdAt} />
                   )
                 }
 
-                // Find the previous user message for AI context
                 let previousUserMessage: string | undefined
                 if (index > 0) {
                   for (let i = index - 1; i >= 0; i--) {
@@ -375,7 +329,6 @@ export function ChatContainer() {
                   }
                 }
 
-                // AI messages use full MessageBubble with markdown rendering
                 return (
                   <MessageBubble
                     key={message.id}
@@ -394,7 +347,6 @@ export function ChatContainer() {
               {showTypingIndicator && <TypingIndicator />}
               {errorUI}
 
-              {/* Bottom padding for input area */}
               <div className="h-40" />
               <div ref={messagesEndRef} />
             </>
@@ -403,7 +355,10 @@ export function ChatContainer() {
       </div>
 
       {/* Bottom Gradient Overlay */}
-      <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-40 bg-gradient-to-t from-black via-black/80 to-transparent z-10" />
+      <div
+        className="pointer-events-none absolute bottom-0 left-0 right-0 h-40 bg-linear-to-t from-black via-black/80 to-transparent"
+        style={{ zIndex: Z_INDEX.BASE }}
+      />
 
       {/* Scroll to bottom button */}
       {showScrollButton && (
@@ -412,12 +367,16 @@ export function ChatContainer() {
           label="Scroll to bottom"
           onClick={scrollToBottom}
           variant="glass"
-          className="absolute bottom-40 right-6 z-30"
+          className="absolute bottom-40 right-6"
+          style={{ zIndex: Z_INDEX.HEADER }}
         />
       )}
 
       {/* Input area - Floating Glass Effect */}
-      <div className="pointer-events-none absolute bottom-4 left-0 right-0 z-20 px-4">
+      <div
+        className="pointer-events-none absolute bottom-4 left-0 right-0 px-4"
+        style={{ zIndex: Z_INDEX.OVERLAY }}
+      >
         <div className="pointer-events-auto mx-auto w-full max-w-3xl">
           <ChatInput onSend={handleSend} disabled={false} isLoading={isLoading} />
         </div>

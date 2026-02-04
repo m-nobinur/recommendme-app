@@ -8,7 +8,7 @@ import { DashboardSidebarToggle } from '@/components/dashboard/DashboardSidebarT
 import { DashboardView } from '@/components/dashboard/DashboardView'
 import { useHeader } from '@/contexts'
 import { signOut } from '@/lib/auth/client'
-import { UI } from '@/lib/constants'
+import { ROUTES, UI, Z_INDEX } from '@/lib/constants'
 import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, Notification, User } from '@/types'
 
 interface DashboardShellProps {
@@ -30,7 +30,7 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const router = useRouter()
   const pathname = usePathname()
-  const isOnChat = pathname === '/chat' || pathname.startsWith('/chat/')
+  const isOnChat = pathname === ROUTES.CHAT || pathname.startsWith(`${ROUTES.CHAT}/`)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>(initialNotifications)
@@ -40,7 +40,7 @@ export function DashboardShell({
     setIsSigningOut(true)
     try {
       await signOut()
-      router.push('/login')
+      router.push(ROUTES.LOGIN)
     } catch (error) {
       console.error('Sign out failed:', error)
       setIsSigningOut(false)
@@ -67,10 +67,13 @@ export function DashboardShell({
 
       {/* Sidebar */}
       <div
-        className={`fixed inset-y-0 left-0 z-40 w-80 transform transition-all duration-300 ease-out border-r border-border bg-surface-secondary ${
+        className={`fixed inset-y-0 left-0 w-80 transform transition-all duration-300 ease-out border-r border-border bg-surface-secondary ${
           sidebarOpen ? 'translate-x-0 opacity-100' : '-translate-x-full opacity-0'
         }`}
-        style={{ top: isHeaderVisible ? `${UI.HEADER_HEIGHT}px` : '0px' }}
+        style={{
+          top: isHeaderVisible ? `${UI.HEADER_HEIGHT}px` : '0px',
+          zIndex: Z_INDEX.SIDEBAR,
+        }}
       >
         <div className="h-full w-80">
           <DashboardView
@@ -95,7 +98,10 @@ export function DashboardShell({
       </div>
 
       {/* Bottom Floating Controls */}
-      <div className="fixed bottom-4 left-0 right-0 px-8 flex justify-between items-end pointer-events-none z-50">
+      <div
+        className="fixed bottom-4 left-0 right-0 px-8 flex justify-between items-end pointer-events-none"
+        style={{ zIndex: Z_INDEX.DROPDOWN }}
+      >
         {/* Left: Sidebar Toggle */}
         <DashboardSidebarToggle isOpen={sidebarOpen} onToggle={toggleSidebar} />
 

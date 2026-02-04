@@ -34,7 +34,6 @@ const SuggestionSkeleton = memo(function SuggestionSkeleton() {
   )
 })
 
-// Time format options hoisted outside component (rendering-hoist-jsx)
 const TIME_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
   hour: '2-digit',
   minute: '2-digit',
@@ -48,7 +47,6 @@ function MessageBubbleComponent({ message, previousUserMessage, onSuggestionClic
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
   const hasGeneratedRef = useRef(false)
 
-  // Extract content from parts array or fall back to content string (rerender-memo optimization)
   const content = useMemo(() => {
     if (message.parts && message.parts.length > 0) {
       return message.parts
@@ -70,15 +68,12 @@ function MessageBubbleComponent({ message, previousUserMessage, onSuggestionClic
     return message.content || ''
   }, [message.parts, message.content])
 
-  // Format timestamp once (rerender-lazy-state-init)
   const formattedTime = useMemo(
     () => timestamp.toLocaleTimeString([], TIME_FORMAT_OPTIONS),
     [timestamp]
   )
 
-  // Generate AI-powered suggestions after AI message is shown
   useEffect(() => {
-    // Skip if already generated or not an AI message or no content
     if (hasGeneratedRef.current || !isAi || !content || message.suggestions?.length) {
       if (message.suggestions?.length) {
         setSuggestions(message.suggestions)
@@ -87,11 +82,9 @@ function MessageBubbleComponent({ message, previousUserMessage, onSuggestionClic
       return
     }
 
-    // Mark as generating to prevent duplicate calls
     hasGeneratedRef.current = true
     setIsLoadingSuggestions(true)
 
-    // Call the server action to generate suggestions
     const userQuery = previousUserMessage || 'Hello'
 
     generateSuggestions(userQuery, content)

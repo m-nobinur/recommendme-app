@@ -8,23 +8,14 @@ interface TypingIndicatorProps {
   text?: string | null
 }
 
-const THINKING_STATES = [
-  'Let me see...',
-  'Working on it...',
-  'Checking that for you...',
-  'Just a moment...',
-  "I'm on it...",
-  'Processing...',
-]
+const THINKING_STATES = ['Working on it...', 'Just a moment...', "I'm on it...", 'Processing...']
 
 const TypingIndicator: React.FC<TypingIndicatorProps> = memo(({ text }) => {
-  // Initialize with a random message to feel more organic
   const [loadingText, setLoadingText] = useState(
     () => THINKING_STATES[Math.floor(Math.random() * THINKING_STATES.length)]
   )
 
   useEffect(() => {
-    // If external text is provided, don't cycle states
     if (text) return
 
     let currentIndex = THINKING_STATES.indexOf(loadingText)
@@ -32,10 +23,9 @@ const TypingIndicator: React.FC<TypingIndicatorProps> = memo(({ text }) => {
     const interval = setInterval(() => {
       currentIndex = (currentIndex + 1) % THINKING_STATES.length
       setLoadingText(THINKING_STATES[currentIndex])
-    }, 2000) // Cycle every 2 seconds
+    }, 4000) // Cycle every 4 seconds
 
     return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text, loadingText])
 
   const displayText = text || loadingText
@@ -50,7 +40,6 @@ const TypingIndicator: React.FC<TypingIndicatorProps> = memo(({ text }) => {
           </div>
         </div>
 
-        {/* Dynamic Text with fade effect - key change forces re-render/animation */}
         <div className="flex h-5 items-center overflow-hidden">
           <span
             key={displayText}

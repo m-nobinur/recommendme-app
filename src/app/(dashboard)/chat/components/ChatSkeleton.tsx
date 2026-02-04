@@ -27,7 +27,7 @@ export function ChatSkeleton() {
       </div>
 
       {/* Input area skeleton */}
-      <div className="flex-shrink-0 p-4 pt-0 md:p-6">
+      <div className="shrink-0 p-4 pt-0 md:p-6">
         <div className="mx-auto max-w-3xl">
           <div className="h-14 animate-pulse rounded-2xl border border-border bg-surface-muted" />
         </div>
