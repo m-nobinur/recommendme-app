@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { Suspense } from 'react'
 import { getServerSession } from '@/lib/auth/server'
+import { ROUTES } from '@/lib/constants'
 import { DashboardShell } from './components/DashboardShell'
 import { DashboardSkeleton } from './components/DashboardSkeleton'
 
@@ -11,7 +12,6 @@ export const metadata: Metadata = {
   description: 'Your AI-powered CRM assistant dashboard',
 }
 
-// Dynamic rendering - auth check happens on every request
 export const dynamic = 'force-dynamic'
 
 interface DashboardLayoutProps {
@@ -19,12 +19,10 @@ interface DashboardLayoutProps {
 }
 
 export default async function DashboardLayout({ children }: DashboardLayoutProps) {
-  // Server-side auth check with redirect
   const session = await getServerSession()
 
   if (!session) {
-    // Redirect to login without callback URL to avoid redirect loops
-    redirect('/login')
+    redirect(ROUTES.LOGIN)
   }
 
   return (

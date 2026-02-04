@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/Form'
 import { Logo } from '@/components/ui/Logo'
 import { signUp } from '@/lib/auth/client'
+import { LIMITS, ROUTES } from '@/lib/constants'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -23,19 +24,17 @@ export default function RegisterPage() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault()
     setError('')
 
-    // Validate passwords match
     if (password !== confirmPassword) {
       setError('Passwords do not match')
       return
     }
 
-    // Validate password length
-    if (password.length < 8) {
-      setError('Password must be at least 8 characters')
+    if (password.length < LIMITS.MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${LIMITS.MIN_PASSWORD_LENGTH} characters`)
       return
     }
 
@@ -55,8 +54,7 @@ export default function RegisterPage() {
       }
 
       if (result.data) {
-        // Redirect to chat page after successful registration
-        router.push('/chat')
+        router.push(ROUTES.CHAT)
       }
     } catch (err: unknown) {
       console.error('[Register] Error:', err)
@@ -110,7 +108,7 @@ export default function RegisterPage() {
             value={password}
             onChange={setPassword}
             required
-            minLength={8}
+            minLength={LIMITS.MIN_PASSWORD_LENGTH}
             placeholder="At least 8 characters"
           />
 
@@ -130,7 +128,7 @@ export default function RegisterPage() {
         </Button>
       </form>
 
-      <AuthFooterLink text="Already have an account?" linkText="Sign in" href="/login" />
+      <AuthFooterLink text="Already have an account?" linkText="Sign in" href={ROUTES.LOGIN} />
     </AuthContainer>
   )
 }

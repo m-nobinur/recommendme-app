@@ -2,16 +2,15 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Logo } from '@/components/ui/Logo'
 import { getServerSession } from '@/lib/auth/server'
+import { ROUTES } from '@/lib/constants'
 
-// Force dynamic rendering to prevent caching of auth state
 export const dynamic = 'force-dynamic'
 
 export default async function HomePage() {
-  // Check if user is already authenticated
   const session = await getServerSession()
 
   if (session) {
-    redirect('/chat')
+    redirect(ROUTES.CHAT)
   }
 
   return (
@@ -31,7 +30,7 @@ export default async function HomePage() {
         </div>
 
         {/* Title */}
-        <h1 className="mb-4 bg-gradient-to-r from-brand to-brand-secondary bg-clip-text font-bold text-4xl text-transparent tracking-tight sm:text-5xl">
+        <h1 className="mb-4 bg-linear-to-r from-brand to-brand-secondary bg-clip-text font-bold text-4xl text-transparent tracking-tight sm:text-5xl">
           RecommendMe AI
         </h1>
 
@@ -45,13 +44,13 @@ export default async function HomePage() {
         {/* CTA Buttons */}
         <div className="flex flex-col gap-4 sm:flex-row sm:justify-center">
           <Link
-            href="/register"
+            href={ROUTES.REGISTER}
             className="inline-flex items-center justify-center rounded-lg bg-brand px-8 py-3 font-semibold text-surface-primary transition-all hover:bg-brand-accent hover:shadow-brand/20 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
           >
             Get Started
           </Link>
           <Link
-            href="/login"
+            href={ROUTES.LOGIN}
             className="inline-flex items-center justify-center rounded-lg border border-border bg-surface-elevated px-8 py-3 font-semibold text-text-primary transition-colors hover:bg-surface-muted focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
           >
             Sign In

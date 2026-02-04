@@ -4,6 +4,7 @@ import { Check, ChevronDown, ExternalLink, Globe, Sparkles, Zap } from 'lucide-r
 import { useCallback, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers/types'
+import { Z_INDEX } from '@/lib/constants'
 import { cn } from '@/lib/utils/cn'
 import { BRAIN_TIERS, PROVIDERS, useModelStore } from '@/stores'
 
@@ -201,7 +202,10 @@ export function SettingsForm() {
           </button>
 
           {isBrainDropdownOpen && (
-            <div className="absolute z-10 mt-2 w-full rounded-xl border border-border bg-surface-tertiary py-2 shadow-lg">
+            <div
+              className="absolute mt-2 w-full rounded-xl border border-border bg-surface-tertiary py-2 shadow-lg"
+              style={{ zIndex: Z_INDEX.DROPDOWN }}
+            >
               {tiers.map((tier) => {
                 const tierInfo = BRAIN_TIERS[tier]
                 const model = currentProvider.models[tier]

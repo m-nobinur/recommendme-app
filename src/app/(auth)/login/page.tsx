@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/Form'
 import { Logo } from '@/components/ui/Logo'
 import { signIn } from '@/lib/auth/client'
+import { ROUTES } from '@/lib/constants'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -23,7 +24,7 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.SubmitEvent) => {
     e.preventDefault()
     setError('')
     setIsLoading(true)
@@ -44,7 +45,7 @@ export default function LoginPage() {
         if (callbackUrl) {
           window.location.href = callbackUrl
         } else {
-          router.push('/chat')
+          router.push(ROUTES.CHAT)
         }
       }
     } catch (err: unknown) {
@@ -94,7 +95,7 @@ export default function LoginPage() {
         </Button>
       </form>
 
-      <AuthFooterLink text="Don't have an account?" linkText="Create one" href="/register" />
+      <AuthFooterLink text="Don't have an account?" linkText="Create one" href={ROUTES.REGISTER} />
     </AuthContainer>
   )
 }

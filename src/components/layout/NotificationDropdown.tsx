@@ -3,6 +3,7 @@
 import { Bell, CheckCheck, X } from 'lucide-react'
 import type React from 'react'
 import { memo, useState } from 'react'
+import { Z_INDEX } from '@/lib/constants'
 
 interface Notification {
   id: string
@@ -33,7 +34,10 @@ const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
   }
 
   return (
-    <div className="absolute right-0 top-12 w-80 bg-surface-tertiary border border-border rounded-xl shadow-2xl z-50 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right">
+    <div
+      className="absolute right-0 top-12 w-80 bg-surface-tertiary border border-border rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top-right"
+      style={{ zIndex: Z_INDEX.DROPDOWN }}
+    >
       <div className="px-4 py-3 border-b border-[#1f1f22] flex justify-between items-center bg-surface-elevated">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-gray-200">Notifications</h3>

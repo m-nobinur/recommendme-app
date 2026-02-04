@@ -24,7 +24,6 @@ export function Providers({
   const convex = useMemo(() => {
     const url = process.env.NEXT_PUBLIC_CONVEX_URL
     if (!url) {
-      // Return null during build or if URL is not configured
       return null
     }
     return new ConvexReactClient(url, {
@@ -32,8 +31,6 @@ export function Providers({
     })
   }, [])
 
-  // If Convex is not configured, render children without provider
-  // This allows the build to pass without env vars
   if (!convex) {
     return <HeaderProvider>{children}</HeaderProvider>
   }
