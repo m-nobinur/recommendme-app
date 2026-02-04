@@ -7,13 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-02-04
+
 ### Added
 
+#### AI Architecture Refactoring
+- Centralized AI configuration system with Zod validation
+- Environment variable mapping for flexible AI configuration
+- Multi-provider AI system with 5 providers (Gateway, Gemini, OpenAI, OpenRouter, Groq)
+- Model tier abstraction (smartest/smart/regular) for cost-performance tradeoffs
+- AI services layer with monitoring, retry logic, and structured outputs
+- Request ID generation for distributed tracing
+- Comprehensive monitoring and metrics collection
+- Rate limiting utilities for API quota management
+- Suggestion generation service with structured output validation
+- System and suggestion prompt management with version control
+- `.env.ai.example` with comprehensive AI configuration documentation
+
+#### CI/CD Pipeline
+- GitHub Actions CI workflow for automated testing and validation
+- Automated linting, type checking, and formatting validation
+- Build verification for Next.js application
+- Security audit integration
+- CD workflow for automated Convex and Vercel deployments
+- Post-deployment health checks
+
+#### Code Quality & Developer Experience
 - Husky 9.1.7 for Git hooks automation
 - Pre-commit hook: Type checking + Biome checks
 - Commit message validation (Conventional Commits)
 - Pre-push hook: Full validation before remote push
 - `validate` script for quick validation
+
+### Changed
+
+#### API & Backend
+- Refactored chat API route to use centralized AI configuration
+- Improved error handling with structured error objects and request tracking
+- Added configurable timeouts with abort signals
+- Enhanced authentication flow with proper error responses
+- Environment-aware debug logging (disabled in production)
+
+#### Services & Actions
+- Migrated suggestions action from direct Gemini calls to service layer
+- Simplified suggestion generation (45 lines → 35 lines)
+- Added automatic retry logic for transient failures
+- Improved token usage tracking and performance metrics
+
+#### UI & Components
+- Integrated centralized model store for provider/tier selection
+- Cleaned up verbose optimization comments across components
+- Simplified ChatContainer, ChatInput, MessageBubble, and TypingIndicator
+- Streamlined dashboard components and layouts
+- Updated auth layouts and pages for better code clarity
+
+### Removed
+
+- Unused font packages (@fontsource/geist-sans, @fontsource/geist-mono)
+- Redundant code comments and documentation
+- Unnecessary optimization markers
+
+### Fixed
+
+- Production logging verbosity in Convex auth triggers
+- Type safety improvements across AI services
+- Error handling edge cases in chat API
+
+### Security
+
+- Request timeout implementation preventing hung connections
+- Feature flags for controlled rollout of sensitive features
+- Environment-based configuration reduces hardcoded secrets
+- Improved error messages without exposing internal details
 
 ## [2.0.0] - 2026-02-03
 

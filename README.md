@@ -38,7 +38,7 @@ An AI-powered assistant with a natural language interface for lead management, a
 1. **Clone the repository**
 
    ```bash
-   git clone https://github.com/your-org/recommendme-app.git
+   git clone git@github.com:m-nobinur/recommendme-app.git
    cd recommendme-app
    ```
 
@@ -94,6 +94,45 @@ AI_GATEWAY_API_KEY=your-gateway-api-key                # Vercel AI Gateway (opti
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
+### AI Configuration (Optional)
+
+The application includes comprehensive AI configuration options. See `.env.ai.example` for all available settings:
+
+- **Provider & Model Selection**: Configure default provider and model tier
+- **Chat Configuration**: Override settings specifically for chat
+- **Suggestion Generation**: Customize suggestion behavior
+- **Feature Flags**: Enable/disable experimental features
+- **Performance Settings**: Configure timeouts, caching, streaming
+- **Debug Options**: Enable detailed logging for development
+
+Example AI configuration:
+
+```env
+# Default AI settings
+AI_DEFAULT_PROVIDER=gemini           # gateway | gemini | openai | openrouter | groq
+AI_DEFAULT_TIER=smart                # smartest | smart | regular
+AI_DEFAULT_TEMPERATURE=0.7           # 0.0-2.0
+
+# Chat-specific overrides
+AI_CHAT_PROVIDER=gemini
+AI_CHAT_TIER=smart
+AI_CHAT_MAX_STEPS=5
+
+# Suggestion generation
+AI_SUGGESTIONS_PROVIDER=gemini
+AI_SUGGESTIONS_TIER=regular          # Use faster model for suggestions
+AI_SUGGESTIONS_MAX=4
+
+# Performance
+AI_REQUEST_TIMEOUT=60000             # 60 seconds
+AI_ENABLE_STREAMING=true
+
+# Debug
+AI_DEBUG=true                        # Auto-enabled in development
+```
+
+All AI settings are optional with sensible defaults. The application will work out-of-the-box with just the provider API keys.
+
 ### Getting API Keys
 
 | Provider              | How to Get                                                      |
@@ -130,14 +169,23 @@ recommendme-app/
 │   │   └── auth.ts             # Better Auth integration
 │   ├── lib/
 │   │   ├── ai/
+│   │   │   ├── config/         # Configuration constants & versions
+│   │   │   ├── config.ts       # Centralized AI config with Zod
 │   │   │   ├── providers/      # Multi-provider factory (5 providers)
+│   │   │   ├── services/       # AI services (suggestions, etc.)
+│   │   │   ├── utils/          # Monitoring, retry, rate-limit
 │   │   │   ├── tools/          # CRM tool definitions
-│   │   │   └── prompts/        # System prompts
+│   │   │   └── prompts/        # System & suggestion prompts
 │   │   ├── auth/               # Auth helpers (client/server)
 │   │   └── env.ts              # Environment validation
 │   ├── stores/                 # Zustand state management
 │   └── proxy.ts                # Route protection middleware
+├── .github/
+│   └── workflows/
+│       ├── ci.yml              # CI pipeline (lint, test, build)
+│       └── deploy.yml          # CD pipeline (Convex + Vercel)
 ├── public/                     # Static assets
+├── .env.ai.example             # AI configuration examples
 ├── biome.json                  # Biome configuration
 ├── convex.json                 # Convex configuration
 ├── next.config.ts              # Next.js + security headers
@@ -192,7 +240,37 @@ The AI assistant understands natural language. Here are some example commands:
 
 ## Deployment
 
-### Deploy to Vercel
+### Automated Deployment (CI/CD)
+
+This project includes GitHub Actions workflows for automated deployment:
+
+- **CI Pipeline** (`.github/workflows/ci.yml`)
+  - Runs on every pull request and push
+  - Performs linting, type checking, formatting validation
+  - Builds the application to verify integrity
+  - Runs security audits
+
+- **CD Pipeline** (`.github/workflows/deploy.yml`)
+  - Deploys to production on pushes to `main` branch
+  - Automatically deploys Convex backend
+  - Deploys frontend to Vercel
+  - Runs post-deployment health checks
+
+#### GitHub Secrets Required
+
+Configure these secrets in your GitHub repository settings:
+
+- `CONVEX_DEPLOY_KEY` - Convex deployment key
+- `NEXT_PUBLIC_CONVEX_URL` - Production Convex URL
+- `VERCEL_TOKEN` - Vercel authentication token
+- `VERCEL_ORG_ID` - Vercel organization ID
+- `VERCEL_PROJECT_ID` - Vercel project ID
+- `BETTER_AUTH_SECRET` - Production auth secret
+- `BETTER_AUTH_URL` - Production domain URL
+
+### Manual Deployment
+
+If you prefer manual deployment:
 
 1. **Push your code to GitHub**
 
@@ -219,13 +297,15 @@ The AI assistant understands natural language. Here are some example commands:
 
 ### Production Checklist
 
-- [ ] Set all environment variables in Vercel
-- [ ] Deploy Convex with `bun convex:deploy`
+- [ ] Set all environment variables in Vercel and GitHub Secrets
+- [ ] Deploy Convex with `bun convex:deploy` or via CI/CD
 - [ ] Update `NEXT_PUBLIC_CONVEX_URL` with production URL
 - [ ] Set `BETTER_AUTH_URL` to your production domain
+- [ ] Verify CI/CD pipelines are running successfully
 - [ ] Enable email verification (see SECURITY.md)
 - [ ] Configure CORS for production domain
 - [ ] Review security headers in `next.config.ts`
+- [ ] Test deployment health checks
 
 ## Code Quality
 

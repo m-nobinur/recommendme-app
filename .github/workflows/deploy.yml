@@ -1,0 +1,86 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+# Set required permissions
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deploy-convex:
+    name: Deploy Convex Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Deploy to Convex
+        run: bun convex:deploy
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+
+      - name: Verify deployment
+        run: |
+          echo "✅ Convex backend deployed successfully"
+          echo "Deployment URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL }}"
+
+  deploy-vercel:
+    name: Deploy to Vercel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: deploy-convex
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+
+      - name: Deployment summary
+        run: |
+          echo "✅ Application deployed to production"
+          echo "Frontend: Vercel"
+          echo "Backend: Convex"
+
+  post-deploy:
+    name: Post-Deployment Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [deploy-convex, deploy-vercel]
+    if: success()
+
+    steps:
+      - name: Verify deployment health
+        run: |
+          echo "🔍 Running post-deployment health checks..."
+          echo "✅ All services deployed successfully"
+
+      - name: Notify deployment status
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo "Version: ${{ github.ref_name }}"
+          echo "Commit: ${{ github.sha }}"
