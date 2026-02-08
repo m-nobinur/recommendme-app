@@ -41,14 +41,14 @@ const InlineUserMessage = memo(function InlineUserMessage({
       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 80px' }}
     >
       <div className="flex max-w-[85%] flex-col md:max-w-[75%]">
-        <div className="relative overflow-hidden rounded-2xl rounded-tr-none border border-[#252525] bg-linear-to-br from-surface-muted to-[#111] text-[15px] leading-relaxed text-gray-100">
+        <div className="relative overflow-hidden rounded-2xl rounded-tr-none border border-border bubble-user text-[15px] leading-relaxed text-text-primary">
           <div className="relative px-5 py-3.5">
-            <p className="text-gray-100">{content}</p>
+            <p className="text-text-primary">{content}</p>
           </div>
         </div>
         <div className="mt-1.5 mr-1 flex items-center justify-end gap-2">
-          <span className="font-medium text-[11px] text-gray-500">{formattedTime}</span>
-          <span className="text-[10px] text-emerald-500/70">✓✓</span>
+          <span className="font-medium text-[11px] text-text-muted">{formattedTime}</span>
+          <span className="text-[10px] text-status-success/70">✓✓</span>
         </div>
       </div>
     </div>
@@ -58,13 +58,11 @@ const InlineUserMessage = memo(function InlineUserMessage({
 const EmptyState = memo(function EmptyState({ onSend }: { onSend: (message: string) => void }) {
   return (
     <div className="flex h-full min-h-[60vh] flex-col items-center justify-center text-center animate-in fade-in duration-500">
-      <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-border bg-linear-to-br from-[#121212] to-surface-muted shadow-xl">
+      <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-border logo-container shadow-xl">
         <Logo size={48} />
       </div>
-      <h2 className="mb-3 bg-linear-to-r from-amber-400 to-orange-500 bg-clip-text font-bold text-2xl text-transparent">
-        Welcome to Reme
-      </h2>
-      <p className="mb-8 max-w-md text-gray-500">
+      <h2 className="mb-3 text-gradient-brand font-bold text-2xl">Welcome to Reme</h2>
+      <p className="mb-8 max-w-md text-text-muted">
         Your AI-powered business assistant. I can help you manage leads, schedule appointments, and
         create invoices through natural conversation.
       </p>
@@ -74,7 +72,7 @@ const EmptyState = memo(function EmptyState({ onSend }: { onSend: (message: stri
             type="button"
             key={suggestion}
             onClick={() => onSend(suggestion)}
-            className="rounded-xl border border-border bg-surface-tertiary px-4 py-3 text-left text-gray-400 text-sm transition-all duration-200 hover:border-amber-500/40 hover:bg-surface-elevated hover:text-amber-400"
+            className="rounded-xl border border-border bg-surface-tertiary px-4 py-3 text-left text-text-secondary text-sm brand-hover"
           >
             {suggestion}
           </button>
@@ -385,7 +383,7 @@ export function ChatContainer() {
   )
 
   const errorUI = error ? (
-    <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-red-400 text-sm">
+    <div className="mb-4 rounded-xl border border-status-error/20 bg-status-error/10 p-4 text-status-error text-sm">
       Error: {error.message}
     </div>
   ) : null
@@ -417,11 +415,11 @@ export function ChatContainer() {
                     type="button"
                     onClick={loadMoreMessages}
                     disabled={isLoadingMore}
-                    className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface-tertiary px-4 py-2 text-gray-400 text-sm transition-all duration-200 hover:border-amber-500/40 hover:text-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface-tertiary px-4 py-2 text-text-secondary text-sm brand-hover disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isLoadingMore ? (
                       <>
-                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-amber-500/30 border-t-amber-500" />
+                        <span className="h-3 w-3 animate-spin rounded-full border-2 border-brand/30 border-t-brand" />
                         Loading...
                       </>
                     ) : (
@@ -448,7 +446,7 @@ export function ChatContainer() {
 
       {/* Bottom Gradient Overlay */}
       <div
-        className="pointer-events-none absolute bottom-0 left-0 right-0 h-40 bg-linear-to-t from-black via-black/80 to-transparent"
+        className="pointer-events-none absolute bottom-0 left-0 right-0 h-40 fade-overlay-bottom"
         style={{ zIndex: Z_INDEX.BASE }}
       />
 

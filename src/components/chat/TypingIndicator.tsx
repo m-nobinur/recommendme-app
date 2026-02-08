@@ -32,7 +32,7 @@ const TypingIndicator: React.FC<TypingIndicatorProps> = memo(({ text }) => {
   return (
     <div className="mb-4 flex w-full flex-col items-start px-4 md:px-0">
       <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-[#121212] shadow-lg shadow-black/40">
+        <div className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-surface-card shadow-lg shadow-black/40">
           <div className="relative flex h-full w-full items-center justify-center">
             <Logo size={16} className="animate-pulse" />
           </div>
@@ -41,7 +41,7 @@ const TypingIndicator: React.FC<TypingIndicatorProps> = memo(({ text }) => {
         <div className="flex h-5 items-center overflow-hidden">
           <span
             key={displayText}
-            className="fade-in slide-in-from-bottom-2 animate-in font-mono text-[11px] text-amber-500/80 duration-300"
+            className="fade-in slide-in-from-bottom-2 animate-in font-mono text-[11px] text-brand/80 duration-300"
           >
             {displayText}
           </span>

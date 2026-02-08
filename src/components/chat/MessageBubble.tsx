@@ -120,7 +120,7 @@ function MessageBubbleComponent({
       style={{ contentVisibility: 'auto', containIntrinsicSize: '0 120px' }}
     >
       {isAi && (
-        <div className="mt-1 mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-linear-to-tr from-[#121212] to-surface-muted shadow-black/40 shadow-lg">
+        <div className="mt-1 mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-linear-to-tr from-surface-card to-surface-muted shadow-black/40 shadow-lg">
           <Logo size={20} />
         </div>
       )}
@@ -129,31 +129,27 @@ function MessageBubbleComponent({
         {/* AI label + timestamp */}
         {isAi && (
           <div className="mb-2 ml-1 flex items-center gap-2">
-            <span className="bg-linear-to-r from-amber-400 to-orange-500 bg-clip-text font-semibold text-transparent text-xs tracking-wide">
-              REME
-            </span>
-            <span className="h-1 w-1 rounded-full bg-gray-600" />
-            <span className="font-medium text-[11px] text-gray-500">{formattedTime}</span>
+            <span className="text-gradient-brand font-semibold text-xs tracking-wide">REME</span>
+            <span className="h-1 w-1 rounded-full bg-text-disabled" />
+            <span className="font-medium text-[11px] text-text-muted">{formattedTime}</span>
           </div>
         )}
 
         {/* Message bubble */}
         <div
-          className={`relative overflow-hidden rounded-2xl text-[15px] leading-relaxed ${
+          className={`relative overflow-hidden rounded-2xl text-[15px] leading-relaxed text-text-primary ${
             isAi
-              ? 'rounded-tl-none border border-surface-muted bg-linear-to-br from-[#111] to-surface-tertiary text-gray-200 shadow-black/20 shadow-xl'
-              : 'rounded-tr-none border border-[#252525] bg-linear-to-br from-surface-muted to-[#111] text-gray-100'
+              ? 'rounded-tl-none border border-surface-muted bubble-ai shadow-black/20 shadow-xl'
+              : 'rounded-tr-none border border-border bubble-user'
           }`}
         >
-          {isAi && (
-            <div className="pointer-events-none absolute inset-0 bg-linear-to-br from-amber-500/2 to-transparent" />
-          )}
+          {isAi && <div className="pointer-events-none absolute inset-0 brand-overlay" />}
 
           <div className={`relative ${isAi ? 'px-5 py-4' : 'px-5 py-3.5'}`}>
             {isAi ? (
               <MarkdownRenderer content={content} />
             ) : (
-              <p className="text-gray-100">{content}</p>
+              <p className="text-text-primary">{content}</p>
             )}
           </div>
         </div>
@@ -171,8 +167,8 @@ function MessageBubbleComponent({
         {/* User message timestamp */}
         {!isAi && (
           <div className="mt-1.5 mr-1 flex items-center justify-end gap-2">
-            <span className="font-medium text-[11px] text-gray-500">{formattedTime}</span>
-            <span className="text-[10px] text-emerald-500/70">✓✓</span>
+            <span className="font-medium text-[11px] text-text-muted">{formattedTime}</span>
+            <span className="text-[10px] text-status-success/70">✓✓</span>
           </div>
         )}
       </div>
@@ -216,7 +212,7 @@ const SuggestionsArea = memo(function SuggestionsArea({
             key={`${suggestion}-${idx}`}
             type="button"
             onClick={() => onSuggestionClick?.(suggestion)}
-            className="h-[30px] px-3 py-1.5 text-xs text-gray-400 bg-surface-tertiary border border-border rounded-full hover:text-amber-400 hover:border-amber-500/40 hover:bg-surface-elevated transition-all duration-200 cursor-pointer whitespace-nowrap shrink-0 focus:outline-none focus:ring-2 focus:ring-amber-500/40 focus:ring-offset-1 focus:ring-offset-black"
+            className="h-[30px] px-3 py-1.5 text-xs text-text-secondary bg-surface-tertiary border border-border rounded-full brand-hover cursor-pointer whitespace-nowrap shrink-0 focus-ring"
             style={{
               animation: showSuggestions
                 ? `fadeSlideUp 0.3s ease-out ${idx * 50}ms backwards`

@@ -34,7 +34,7 @@ function UserBubbleSkeleton({ width, delay = 0 }: { width: string; delay?: numbe
   return (
     <div className="flex w-full justify-end mb-6" style={{ animationDelay: `${delay}ms` }}>
       <div className="flex max-w-[85%] flex-col md:max-w-[75%]">
-        <div className="relative overflow-hidden rounded-2xl rounded-tr-none border border-[#252525] bg-linear-to-br from-surface-muted to-[#111]">
+        <div className="relative overflow-hidden rounded-2xl rounded-tr-none border border-border bubble-user">
           <div className="px-5 py-3.5">
             <Skeleton className={`h-4 ${width} rounded bg-surface-muted`} />
           </div>
@@ -57,19 +57,19 @@ function AssistantBubbleSkeleton({
 }) {
   return (
     <div className="flex w-full justify-start mb-6" style={{ animationDelay: `${delay}ms` }}>
-      <div className="mt-1 mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-linear-to-tr from-[#121212] to-surface-muted shadow-black/40 shadow-lg">
+      <div className="mt-1 mr-3 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-linear-to-tr from-surface-card to-surface-muted shadow-black/40 shadow-lg">
         <Skeleton className="h-5 w-5 rounded bg-transparent" />
       </div>
 
       <div className="flex max-w-[85%] flex-col md:max-w-[75%]">
         <div className="mb-2 ml-1 flex items-center gap-2">
           <Skeleton className="h-3 w-10 rounded-full" />
-          <span className="h-1 w-1 rounded-full bg-gray-600/40" />
+          <span className="h-1 w-1 rounded-full bg-text-disabled/40" />
           <Skeleton className="h-2.5 w-10 rounded-full" />
         </div>
 
-        <div className="relative overflow-hidden rounded-2xl rounded-tl-none border border-surface-muted bg-linear-to-br from-[#111] to-surface-tertiary shadow-black/20 shadow-xl">
-          <div className="pointer-events-none absolute inset-0 bg-linear-to-br from-amber-500/2 to-transparent" />
+        <div className="relative overflow-hidden rounded-2xl rounded-tl-none border border-surface-muted bubble-ai shadow-black/20 shadow-xl">
+          <div className="pointer-events-none absolute inset-0 brand-overlay" />
           <div className="relative px-5 py-4 space-y-2.5">
             {lines.map((line, i) => (
               <Skeleton
