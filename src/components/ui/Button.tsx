@@ -30,16 +30,16 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
 
     const variants = {
       primary:
-        'bg-amber-600 text-white hover:bg-amber-500 hover:shadow-lg hover:shadow-amber-900/20 border border-transparent',
+        'bg-brand text-white hover:bg-brand-accent hover:shadow-lg hover:shadow-brand/20 border border-transparent',
       secondary:
-        'bg-[#222] text-gray-200 hover:bg-[#2a2a2a] hover:text-white border border-border-strong',
-      ghost: 'bg-transparent text-gray-400 hover:text-white hover:bg-surface-muted',
+        'bg-border text-text-primary hover:bg-border-strong hover:text-white border border-border-strong',
+      ghost: 'bg-transparent text-text-secondary hover:text-white hover:bg-surface-muted',
       glass:
-        'backdrop-blur-md bg-surface-muted/80 border border-border-strong text-gray-200 hover:bg-[#252525] hover:border-amber-500/30 hover:shadow-lg hover:shadow-black/50',
+        'backdrop-blur-md bg-surface-muted/80 border border-border-strong text-text-primary hover:bg-border hover:border-brand/30 hover:shadow-lg hover:shadow-black/50',
       outline:
-        'bg-transparent border border-border-strong text-gray-300 hover:border-amber-500/50 hover:text-amber-500',
+        'bg-transparent border border-border-strong text-text-primary hover:border-brand/50 hover:text-brand',
       danger:
-        'bg-red-900/20 text-red-500 border border-red-900/50 hover:bg-red-900/30 hover:border-red-500/50',
+        'bg-status-error/20 text-status-error border border-status-error/50 hover:bg-status-error/30 hover:border-status-error/50',
     }
 
     const sizes = {

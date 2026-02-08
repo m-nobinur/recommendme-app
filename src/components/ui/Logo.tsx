@@ -30,8 +30,8 @@ export const Logo: React.FC<LogoProps> = memo(({ className, size = 24, variant =
           y2="22"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#F59E0B" />
-          <stop offset="1" stopColor="#EA580C" />
+          <stop stopColor="var(--color-brand)" />
+          <stop offset="1" stopColor="var(--color-brand-secondary)" />
         </linearGradient>
         <linearGradient
           id="reme-glow"
@@ -41,8 +41,8 @@ export const Logo: React.FC<LogoProps> = memo(({ className, size = 24, variant =
           y2="19"
           gradientUnits="userSpaceOnUse"
         >
-          <stop stopColor="#F59E0B" stopOpacity="0.8" />
-          <stop offset="1" stopColor="#EA580C" stopOpacity="0.2" />
+          <stop stopColor="var(--color-brand)" stopOpacity="0.8" />
+          <stop offset="1" stopColor="var(--color-brand-secondary)" stopOpacity="0.2" />
         </linearGradient>
       </defs>
 
@@ -72,7 +72,7 @@ export const Logo: React.FC<LogoProps> = memo(({ className, size = 24, variant =
           cy="17"
           r="1.5"
           stroke="none"
-          fill={variant === 'color' ? '#F59E0B' : 'currentColor'}
+          fill={variant === 'color' ? 'var(--color-brand)' : 'currentColor'}
           opacity="0.9"
         />
 
@@ -83,7 +83,7 @@ export const Logo: React.FC<LogoProps> = memo(({ className, size = 24, variant =
           cy="17"
           r="1.5"
           stroke="none"
-          fill={variant === 'color' ? '#EA580C' : 'currentColor'}
+          fill={variant === 'color' ? 'var(--color-brand-secondary)' : 'currentColor'}
           opacity="0.9"
         />
 

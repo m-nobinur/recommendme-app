@@ -18,7 +18,7 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
   ({ label, error, id, className, onChange, ...props }, ref) => {
     return (
       <div className="space-y-1.5">
-        <label htmlFor={id} className="block font-medium text-gray-300 text-sm">
+        <label htmlFor={id} className="block font-medium text-text-primary text-sm">
           {label}
         </label>
         <input
@@ -26,15 +26,16 @@ export const FormInput = forwardRef<HTMLInputElement, FormInputProps>(
           id={id}
           className={cn(
             'w-full rounded-xl border border-border bg-surface-elevated px-4 py-3',
-            'text-gray-100 placeholder-gray-600 transition-all',
-            'focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/20',
-            error && 'border-red-500/50 focus:border-red-500/50 focus:ring-red-500/20',
+            'text-text-primary placeholder-text-disabled transition-all',
+            'focus:border-brand/50 focus:outline-none focus:ring-1 focus:ring-brand/20',
+            error &&
+              'border-status-error/50 focus:border-status-error/50 focus:ring-status-error/20',
             className
           )}
           onChange={(e) => onChange?.(e.target.value)}
           {...props}
         />
-        {error && <p className="text-red-400 text-xs">{error}</p>}
+        {error && <p className="text-status-error text-xs">{error}</p>}
       </div>
     )
   }
@@ -57,7 +58,7 @@ export const FormTextarea = forwardRef<HTMLTextAreaElement, FormTextareaProps>(
   ({ label, error, id, className, onChange, ...props }, ref) => {
     return (
       <div className="space-y-1.5">
-        <label htmlFor={id} className="block font-medium text-gray-300 text-sm">
+        <label htmlFor={id} className="block font-medium text-text-primary text-sm">
           {label}
         </label>
         <textarea
@@ -65,15 +66,16 @@ export const FormTextarea = forwardRef<HTMLTextAreaElement, FormTextareaProps>(
           id={id}
           className={cn(
             'w-full rounded-xl border border-border bg-surface-elevated px-4 py-3',
-            'text-gray-100 placeholder-gray-600 transition-all resize-none',
-            'focus:border-amber-500/50 focus:outline-none focus:ring-1 focus:ring-amber-500/20',
-            error && 'border-red-500/50 focus:border-red-500/50 focus:ring-red-500/20',
+            'text-text-primary placeholder-text-disabled transition-all resize-none',
+            'focus:border-brand/50 focus:outline-none focus:ring-1 focus:ring-brand/20',
+            error &&
+              'border-status-error/50 focus:border-status-error/50 focus:ring-status-error/20',
             className
           )}
           onChange={(e) => onChange?.(e.target.value)}
           {...props}
         />
-        {error && <p className="text-red-400 text-xs">{error}</p>}
+        {error && <p className="text-status-error text-xs">{error}</p>}
       </div>
     )
   }
@@ -93,7 +95,7 @@ export function FormError({ message }: FormErrorProps) {
   if (!message) return null
 
   return (
-    <div className="rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-red-400 text-sm">
+    <div className="rounded-lg border border-status-error/20 bg-status-error/10 p-3 text-status-error text-sm">
       {message}
     </div>
   )
@@ -111,7 +113,7 @@ export function FormSuccess({ message }: FormSuccessProps) {
   if (!message) return null
 
   return (
-    <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-emerald-400 text-sm">
+    <div className="rounded-lg border border-status-success/20 bg-status-success/10 p-3 text-status-success text-sm">
       {message}
     </div>
   )
@@ -144,10 +146,8 @@ export function AuthHeader({ title, subtitle, logo }: AuthHeaderProps) {
   return (
     <div className="mb-8 text-center">
       {logo && <div className="mb-4 flex justify-center">{logo}</div>}
-      <h1 className="bg-linear-to-r from-amber-400 to-orange-500 bg-clip-text font-bold text-2xl text-transparent">
-        {title}
-      </h1>
-      {subtitle && <p className="mt-2 text-gray-500">{subtitle}</p>}
+      <h1 className="text-gradient-brand font-bold text-2xl">{title}</h1>
+      {subtitle && <p className="mt-2 text-text-muted">{subtitle}</p>}
     </div>
   )
 }
@@ -172,9 +172,9 @@ interface AuthFooterLinkProps {
 
 export function AuthFooterLink({ text, linkText, href }: AuthFooterLinkProps) {
   return (
-    <p className="mt-6 text-center text-gray-500">
+    <p className="mt-6 text-center text-text-muted">
       {text}{' '}
-      <a href={href} className="font-medium text-amber-500 hover:text-amber-400">
+      <a href={href} className="font-medium text-brand hover:text-brand-accent">
         {linkText}
       </a>
     </p>
