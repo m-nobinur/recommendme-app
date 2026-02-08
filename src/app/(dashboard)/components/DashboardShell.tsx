@@ -1,6 +1,6 @@
 'use client'
 
-import { usePathname, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { useCallback, useState } from 'react'
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader'
@@ -29,8 +29,6 @@ export function DashboardShell({
   notifications: initialNotifications = [],
 }: DashboardShellProps) {
   const router = useRouter()
-  const pathname = usePathname()
-  const isOnChat = pathname === ROUTES.CHAT || pathname.startsWith(`${ROUTES.CHAT}/`)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>(initialNotifications)
@@ -60,7 +58,6 @@ export function DashboardShell({
       {/* Header */}
       <DashboardHeader
         isVisible={isHeaderVisible}
-        isOnChat={isOnChat}
         notifications={notifications}
         onMarkAllRead={handleMarkAllRead}
       />

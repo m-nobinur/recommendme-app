@@ -1,10 +1,23 @@
 'use client'
 
-import { Calendar, ChevronLeft, FileText, LogOut, Mail, Phone, Settings, Users } from 'lucide-react'
+import {
+  Calendar,
+  ChevronLeft,
+  FileText,
+  LogOut,
+  Mail,
+  MessageSquarePlus,
+  Phone,
+  Settings,
+  Users,
+} from 'lucide-react'
 import Link from 'next/link'
-import { memo, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { memo, useCallback, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
+import { ROUTES } from '@/lib/constants'
+import { useChatStore } from '@/stores'
 import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, LeadStatus, User } from '@/types'
 
 // ============================================
@@ -281,6 +294,31 @@ const InvoicesTab = memo(function InvoicesTab({ invoices, direction }: InvoicesT
 })
 
 // ============================================
+// NEW CHAT BUTTON
+// ============================================
+
+const NewChatButton = memo(function NewChatButton() {
+  const router = useRouter()
+  const newConversation = useChatStore((s) => s.newConversation)
+
+  const handleNewChat = useCallback(() => {
+    newConversation()
+    router.push(ROUTES.CHAT)
+  }, [newConversation, router])
+
+  return (
+    <button
+      type="button"
+      onClick={handleNewChat}
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-border-subtle bg-surface-tertiary text-sm font-medium text-gray-300 transition-all duration-200 hover:border-amber-500/40 hover:bg-surface-elevated hover:text-amber-400"
+    >
+      <MessageSquarePlus className="w-4 h-4" />
+      New Chat
+    </button>
+  )
+})
+
+// ============================================
 // MAIN DASHBOARD VIEW
 // ============================================
 
@@ -369,9 +407,10 @@ export function DashboardView({
         {activeTab === 'invoices' && <InvoicesTab invoices={invoices} direction={direction} />}
       </div>
 
-      {/* Bottom: User Profile & Actions */}
+      {/* New Chat + User Profile */}
       <div className="border-t border-border-subtle mt-auto">
-        <div className="p-3">
+        <div className="p-3 space-y-2">
+          <NewChatButton />
           <div className="flex items-center gap-3 p-2 rounded-xl bg-surface-tertiary border border-border-subtle">
             {/* Avatar */}
             <div className="w-9 h-9 rounded-full bg-linear-to-br from-amber-900/40 to-amber-700/20 border border-amber-900/40 flex items-center justify-center text-amber-500 text-xs font-bold shrink-0">

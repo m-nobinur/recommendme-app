@@ -1,7 +1,6 @@
 'use client'
 
-import { Bell, MessageSquare } from 'lucide-react'
-import Link from 'next/link'
+import { Bell } from 'lucide-react'
 import { useState } from 'react'
 import NotificationDropdown from '@/components/layout/NotificationDropdown'
 import { Logo } from '@/components/ui/Logo'
@@ -11,17 +10,11 @@ import type { Notification } from '@/types'
 
 interface DashboardHeaderProps {
   isVisible: boolean
-  isOnChat: boolean
   notifications: Notification[]
   onMarkAllRead: () => void
 }
 
-export function DashboardHeader({
-  isVisible,
-  isOnChat,
-  notifications,
-  onMarkAllRead,
-}: DashboardHeaderProps) {
+export function DashboardHeader({ isVisible, notifications, onMarkAllRead }: DashboardHeaderProps) {
   const [showNotifications, setShowNotifications] = useState(false)
   const notificationRef = useClickOutside<HTMLDivElement>(() => setShowNotifications(false))
 
@@ -55,17 +48,8 @@ export function DashboardHeader({
           </div>
         </div>
 
-        {/* Right: Chat Link + Notification Bell */}
+        {/* Right: Notification Bell */}
         <div className="flex items-center gap-3 relative" ref={notificationRef}>
-          {!isOnChat && (
-            <Link
-              href="/chat"
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium text-gray-400 hover:text-amber-500 hover:bg-surface-elevated transition-all duration-200"
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span className="hidden sm:inline">Chat with Reme</span>
-            </Link>
-          )}
           <div className="relative">
             <button
               type="button"
