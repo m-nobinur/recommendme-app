@@ -17,7 +17,7 @@ export default function DashboardNotFound() {
 
         <Link
           href="/chat"
-          className="inline-block rounded-lg bg-brand px-5 py-2 font-medium text-surface-primary transition-colors hover:bg-brand-accent focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
+          className="inline-block rounded-lg bg-brand px-5 py-2 font-medium text-surface-primary transition-colors hover:bg-brand-accent focus-ring"
         >
           Back to Chat
         </Link>
