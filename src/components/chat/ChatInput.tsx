@@ -3,7 +3,7 @@
 import { Calendar, Database, FileText, Send, Users, X } from 'lucide-react'
 import dynamic from 'next/dynamic'
 import type React from 'react'
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { IconButton } from '@/components/ui/IconButton'
 import { UI } from '@/lib/constants'
@@ -58,21 +58,22 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
   const handleSubmit = useCallback(() => {
     if (disabled || isLoading) return
 
-    const messageContent = text.trim()
-    if (!(messageContent || activeShortcut)) return
+    setText((currentText) => {
+      setActiveShortcut((currentShortcut) => {
+        const messageContent = currentText.trim()
+        if (!(messageContent || currentShortcut)) return currentShortcut
 
-    const finalMessage = activeShortcut
-      ? `Show me ${activeShortcut.toLowerCase()} ${messageContent}`.trim()
-      : messageContent
+        const finalMessage = currentShortcut
+          ? `Show me ${currentShortcut.toLowerCase()} ${messageContent}`.trim()
+          : messageContent
 
-    onSend(finalMessage)
-    setText('')
-    setActiveShortcut(null)
-
-    setTimeout(() => {
-      textareaRef.current?.focus()
-    }, 0)
-  }, [text, disabled, isLoading, onSend, activeShortcut])
+        onSend(finalMessage)
+        setTimeout(() => textareaRef.current?.focus(), 0)
+        return null
+      })
+      return ''
+    })
+  }, [disabled, isLoading, onSend])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -95,9 +96,7 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
 
   useEffect(() => {
     if (prevIsLoading.current && !isLoading && !disabled) {
-      setTimeout(() => {
-        textareaRef.current?.focus()
-      }, 50)
+      setTimeout(() => textareaRef.current?.focus(), 50)
     }
     prevIsLoading.current = isLoading
   }, [isLoading, disabled])
@@ -108,10 +107,11 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
     }
   }, [disabled])
 
-  const activeShortcutData = useMemo(
-    () => SHORTCUTS.find((s) => s.label === activeShortcut),
-    [activeShortcut]
-  )
+  const activeShortcutData = activeShortcut
+    ? SHORTCUTS.find((s) => s.label === activeShortcut)
+    : undefined
+
+  const canSend = !!(text.trim() || activeShortcut) && !disabled && !isLoading
 
   return (
     <div className="group relative rounded-2xl border border-white/10 bg-black/40 p-3 shadow-sm backdrop-blur-xl transition-all duration-300 hover:border-white/20 hover:bg-black/50 focus-within:border-amber-500/30 focus-within:bg-black/60 focus-within:ring-1 focus-within:ring-amber-500/20 focus-within:hover:border-amber-500/40">
@@ -147,12 +147,8 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
 
       <div className="mt-2 flex items-center justify-between border-white/5 border-t pt-2">
         <div className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1">
-          {/* Brain Switcher - First Item */}
           <BrainSwitcher />
-
-          {/* Divider */}
           <div className="mx-1 h-5 w-px bg-gray-800" />
-
           {SHORTCUTS.map((s) => {
             const isActive = activeShortcut === s.label
             return (
@@ -160,13 +156,7 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
                 key={s.label}
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  if (isActive) {
-                    setActiveShortcut(null)
-                  } else {
-                    setActiveShortcut(s.label)
-                  }
-                }}
+                onClick={() => setActiveShortcut((prev) => (prev === s.label ? null : s.label))}
                 className={`h-7 border font-medium text-xs transition-all duration-200 ${
                   isActive
                     ? 'border-amber-500/20 bg-amber-500/10 text-amber-500'
@@ -184,13 +174,13 @@ const ChatInput: React.FC<Props> = ({ onSend, disabled, isLoading }) => {
 
         <IconButton
           onClick={handleSubmit}
-          disabled={!(text.trim() || activeShortcut) || disabled || isLoading}
+          disabled={!canSend}
           variant="primary"
           size="sm"
           label="Send message"
           icon={<Send className="h-4 w-4" />}
           className={
-            !(text.trim() || activeShortcut) || disabled || isLoading
+            !canSend
               ? 'cursor-not-allowed bg-surface-muted text-gray-600 opacity-50 hover:bg-surface-muted'
               : ''
           }
