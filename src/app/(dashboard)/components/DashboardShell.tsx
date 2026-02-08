@@ -54,7 +54,7 @@ export function DashboardShell({
   }, [])
 
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-surface-primary text-gray-200 font-sans selection:bg-amber-500/30 relative">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-surface-primary text-text-primary font-sans selection:bg-brand/30 relative">
       {/* Header */}
       <DashboardHeader
         isVisible={isHeaderVisible}

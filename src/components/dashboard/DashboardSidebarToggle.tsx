@@ -22,7 +22,7 @@ export function DashboardSidebarToggle({ isOpen, onToggle }: DashboardSidebarTog
       className={`pointer-events-auto transition-all duration-300 ${!isOpen ? 'opacity-50 hover:opacity-100 hover:scale-110' : ''}`}
       icon={
         <PanelLeft
-          className={`w-5 h-5 transition-transform duration-300 ${isOpen ? 'rotate-180 text-amber-500' : 'text-gray-400'}`}
+          className={`w-5 h-5 transition-transform duration-300 ${isOpen ? 'rotate-180 text-brand' : 'text-text-secondary'}`}
         />
       }
     />

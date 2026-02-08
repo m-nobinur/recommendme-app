@@ -21,7 +21,7 @@ interface RatingBarProps {
 function RatingBar({ value, label, color }: RatingBarProps) {
   return (
     <div className="flex items-center gap-2">
-      <span className="text-[9px] text-gray-500 uppercase tracking-wide w-12">{label}</span>
+      <span className="text-[9px] text-text-muted uppercase tracking-wide w-12">{label}</span>
       <div className="flex gap-0.5">
         {[1, 2, 3, 4, 5].map((i) => (
           <div
@@ -121,7 +121,7 @@ function BrainSwitcherComponent() {
   )
 
   const getIcon = (iconType: string, isSelected: boolean) => {
-    const className = `w-4 h-4 ${isSelected ? 'text-amber-400' : 'text-gray-500'}`
+    const className = `w-4 h-4 ${isSelected ? 'text-brand' : 'text-text-muted'}`
 
     if (iconType === 'sparkles') return <Sparkles className={className} />
     if (iconType === 'zap') return <Zap className={className} />
@@ -136,11 +136,11 @@ function BrainSwitcherComponent() {
     >
       <div className="px-4 py-3 border-b border-surface-muted">
         <div className="flex items-center gap-2">
-          <Brain className="w-4 h-4 text-amber-500" />
-          <span className="text-sm font-medium text-gray-200">Reme's Brain</span>
+          <Brain className="w-4 h-4 text-brand" />
+          <span className="text-sm font-medium text-text-primary">Reme's Brain</span>
         </div>
-        <p className="mt-1 text-[11px] text-gray-500">
-          Powered by <span className="text-amber-500/80">{currentProvider.name}</span>
+        <p className="mt-1 text-[11px] text-text-muted">
+          Powered by <span className="text-brand/80">{currentProvider.name}</span>
         </p>
       </div>
 
@@ -157,13 +157,13 @@ function BrainSwitcherComponent() {
               type="button"
               onClick={() => handleSelect(tier)}
               className={`w-full px-4 py-3 flex items-start gap-3 transition-all duration-150 ${
-                isSelected ? 'bg-amber-500/10' : 'hover:bg-surface-elevated'
+                isSelected ? 'bg-brand/10' : 'hover:bg-surface-elevated'
               }`}
             >
               <div
                 className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
                   isSelected
-                    ? 'bg-amber-500/20 border border-amber-500/30'
+                    ? 'bg-brand/20 border border-brand/30'
                     : 'bg-border-subtle border border-surface-muted'
                 }`}
               >
@@ -173,32 +173,32 @@ function BrainSwitcherComponent() {
               <div className="flex-1 text-left min-w-0">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`text-sm font-medium ${isSelected ? 'text-amber-400' : 'text-gray-200'}`}
+                    className={`text-sm font-medium ${isSelected ? 'text-brand' : 'text-text-primary'}`}
                   >
                     {info.label}
                   </span>
                   {tier === 'smart' && (
-                    <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider rounded bg-amber-500/15 text-amber-500/80">
+                    <span className="px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider rounded bg-brand/15 text-brand/80">
                       Default
                     </span>
                   )}
                 </div>
-                <p className="text-[11px] text-gray-500 mt-0.5">{model.name}</p>
+                <p className="text-[11px] text-text-muted mt-0.5">{model.name}</p>
 
                 <div className="mt-2 flex flex-col gap-1">
-                  <RatingBar value={ratings.intelligence} label="Smart" color="bg-amber-500" />
-                  <RatingBar value={ratings.speed} label="Speed" color="bg-emerald-500" />
+                  <RatingBar value={ratings.intelligence} label="Smart" color="bg-brand" />
+                  <RatingBar value={ratings.speed} label="Speed" color="bg-status-qualified" />
                 </div>
               </div>
 
-              {isSelected && <Check className="w-4 h-4 text-amber-500 shrink-0 mt-1" />}
+              {isSelected && <Check className="w-4 h-4 text-brand shrink-0 mt-1" />}
             </button>
           )
         })}
       </div>
 
       <div className="px-4 py-2 border-t border-surface-muted">
-        <span className="text-[10px] text-gray-600">Change provider in Settings</span>
+        <span className="text-[10px] text-text-disabled">Change provider in Settings</span>
       </div>
     </div>
   )
@@ -211,11 +211,11 @@ function BrainSwitcherComponent() {
         onClick={() => setIsOpen(!isOpen)}
         className={`flex items-center gap-2 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-all duration-200 ${
           isOpen
-            ? 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-            : 'border-transparent bg-surface-elevated text-gray-400 hover:border-border hover:bg-[#151515] hover:text-gray-300'
+            ? 'brand-active'
+            : 'border-transparent bg-surface-elevated text-text-secondary hover:border-border hover:bg-surface-card hover:text-text-primary'
         }`}
       >
-        <Brain className={`w-3.5 h-3.5 ${isOpen ? 'text-amber-400' : 'text-amber-500'}`} />
+        <Brain className={`w-3.5 h-3.5 ${isOpen ? 'text-brand' : 'text-brand'}`} />
         <span className="hidden sm:inline">{tierInfo.label}</span>
         <ChevronDown
           className={`w-3 h-3 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
