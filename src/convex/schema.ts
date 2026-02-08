@@ -128,6 +128,7 @@ export default defineSchema({
     organizationId: v.id('organizations'),
     userId: v.id('appUsers'),
     conversationId: v.string(),
+    messageId: v.optional(v.string()),
     role: v.union(v.literal('user'), v.literal('assistant'), v.literal('system')),
     content: v.string(),
     toolCalls: v.optional(
@@ -135,7 +136,7 @@ export default defineSchema({
         v.object({
           id: v.string(),
           name: v.string(),
-          args: v.any(),
+          args: v.string(),
           result: v.optional(v.string()),
         })
       )
@@ -146,13 +147,15 @@ export default defineSchema({
         provider: v.optional(v.string()),
         tokenCount: v.optional(v.number()),
         latencyMs: v.optional(v.number()),
+        finishReason: v.optional(v.string()),
       })
     ),
     createdAt: v.number(),
   })
     .index('by_conversation', ['conversationId', 'createdAt'])
     .index('by_user', ['userId', 'createdAt'])
-    .index('by_org', ['organizationId', 'createdAt']),
+    .index('by_org', ['organizationId', 'createdAt'])
+    .index('by_org_conversation', ['organizationId', 'conversationId']),
 
   // ============================================
   // MEMORY: Agent Memory (mem0 backup)
@@ -169,7 +172,16 @@ export default defineSchema({
     ),
     content: v.string(),
     embedding: v.optional(v.array(v.float64())),
-    metadata: v.optional(v.any()),
+    metadata: v.optional(
+      v.object({
+        confidence: v.optional(v.number()),
+        source: v.optional(v.string()),
+        tags: v.optional(v.array(v.string())),
+        category: v.optional(v.string()),
+        lastAccessedAt: v.optional(v.number()),
+        accessCount: v.optional(v.number()),
+      })
+    ),
     source: v.optional(v.string()), // "mem0" or "convex"
     externalId: v.optional(v.string()), // mem0 memory ID
     createdAt: v.number(),
