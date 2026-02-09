@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
 
@@ -112,6 +113,12 @@ export const create = mutation({
       version: 1,
       createdAt: now,
       updatedAt: now,
+    })
+
+    await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
+      tableName: 'businessMemories' as const,
+      documentId: id,
+      content: args.content,
     })
 
     return id
@@ -266,14 +273,22 @@ export const update = mutation({
     )
 
     const newVersion = updates.content !== undefined ? existing.version + 1 : existing.version
+    const contentChanged = updates.content !== undefined
 
     if (Object.keys(filteredUpdates).length > 0) {
       await ctx.db.patch(id, {
         ...filteredUpdates,
         version: newVersion,
-        previousVersionId:
-          updates.content !== undefined ? existing._id : existing.previousVersionId,
+        previousVersionId: contentChanged ? existing._id : existing.previousVersionId,
         updatedAt: Date.now(),
+      })
+    }
+
+    if (contentChanged && updates.content) {
+      await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
+        tableName: 'businessMemories' as const,
+        documentId: id,
+        content: updates.content,
       })
     }
 

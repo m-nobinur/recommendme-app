@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, query } from './_generated/server'
 
@@ -77,6 +78,12 @@ export const create = internalMutation({
       isActive: true,
       createdAt: now,
       updatedAt: now,
+    })
+
+    await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
+      tableName: 'platformMemories' as const,
+      documentId: id,
+      content: args.content,
     })
 
     return id
@@ -169,10 +176,20 @@ export const update = internalMutation({
       Object.entries(updates).filter(([_, val]) => val !== undefined)
     )
 
+    const contentChanged = updates.content !== undefined
+
     if (Object.keys(filteredUpdates).length > 0) {
       await ctx.db.patch(id, {
         ...filteredUpdates,
         updatedAt: Date.now(),
+      })
+    }
+
+    if (contentChanged && updates.content) {
+      await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
+        tableName: 'platformMemories' as const,
+        documentId: id,
+        content: updates.content,
       })
     }
 
