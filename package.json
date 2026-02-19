@@ -39,6 +39,8 @@
     "check:all": "run-p typecheck check:ci",
     "test": "echo \"No tests configured yet\"",
     "validate": "run-p typecheck check:ci",
+    "setup:dev": "./scripts/dev-setup.sh",
+    "validate:memory": "./scripts/validate-memory.sh",
     "clean": "rm -rf .next node_modules/.cache",
     "clean:all": "rm -rf .next node_modules",
     "preinstall": "npx only-allow bun",
