@@ -123,6 +123,7 @@ export const hybridSearchBusinessMemories = internalAction({
   args: {
     query: v.string(),
     organizationId: v.id('organizations'),
+    embedding: v.optional(v.array(v.float64())),
     type: v.optional(
       v.union(
         v.literal('fact'),
@@ -150,9 +151,9 @@ export const hybridSearchBusinessMemories = internalAction({
   > => {
     const limit = Math.min(args.limit ?? 20, 100)
 
-    const embedding: number[] = await ctx.runAction(internal.embedding.generateEmbedding, {
-      text: args.query,
-    })
+    const embedding: number[] =
+      args.embedding ??
+      (await ctx.runAction(internal.embedding.generateEmbedding, { text: args.query }))
 
     const [vectorResults, keywordResults] = await Promise.all([
       ctx.runAction(internal.vectorSearch.searchBusinessMemories, {

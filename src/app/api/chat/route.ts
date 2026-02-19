@@ -290,10 +290,12 @@ export async function POST(req: Request) {
           }
 
           if (featureFlags.enableMemory && organizationId && validConversationId && convex) {
+            const orgId = organizationId as Id<'organizations'>
+
             after(async () => {
               try {
                 await convex.mutation(api.memoryEvents.create, {
-                  organizationId: organizationId as Id<'organizations'>,
+                  organizationId: orgId,
                   eventType: 'conversation_end' as const,
                   sourceType: 'message' as const,
                   sourceId: validConversationId,
@@ -313,6 +315,36 @@ export async function POST(req: Request) {
                 })
               }
             })
+
+            const toolCallParts = extractToolCalls(responseMessage)
+            if (toolCallParts.length > 0) {
+              after(async () => {
+                for (const tc of toolCallParts) {
+                  const hasError = tc.result?.includes('"error"') || tc.result?.includes('Error')
+                  try {
+                    await convex.mutation(api.memoryEvents.create, {
+                      organizationId: orgId,
+                      eventType: hasError ? ('tool_failure' as const) : ('tool_success' as const),
+                      sourceType: 'tool_call' as const,
+                      sourceId: tc.id,
+                      data: {
+                        type: 'tool_result' as const,
+                        toolName: tc.name,
+                        args: tc.args?.slice(0, 500),
+                        result: tc.result?.slice(0, 500),
+                        durationMs: latencyMs,
+                      },
+                    })
+                  } catch (err) {
+                    console.error('[Reme:Chat] Failed to emit tool event:', {
+                      requestId,
+                      toolName: tc.name,
+                      error: err instanceof Error ? err.message : 'Unknown error',
+                    })
+                  }
+                }
+              })
+            }
           }
 
           if (chatConfig.debug) {

@@ -1,5 +1,5 @@
 import { v } from 'convex/values'
-import { internalMutation, mutation, query } from './_generated/server'
+import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 
 /**
  * Memory Events CRUD (Pipeline Trigger Queue)
@@ -179,7 +179,28 @@ export const listUnprocessed = query({
       .withIndex('by_org_unprocessed', (q) =>
         q.eq('organizationId', args.organizationId).eq('processed', false)
       )
-      .order('asc') // Process oldest first (FIFO)
+      .order('asc')
+      .take(pageSize)
+  },
+})
+
+/**
+ * Internal version of listUnprocessed for the extraction worker.
+ */
+export const listUnprocessedInternal = internalQuery({
+  args: {
+    organizationId: v.id('organizations'),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const pageSize = Math.min(args.limit ?? 10, 100)
+
+    return await ctx.db
+      .query('memoryEvents')
+      .withIndex('by_org_unprocessed', (q) =>
+        q.eq('organizationId', args.organizationId).eq('processed', false)
+      )
+      .order('asc')
       .take(pageSize)
   },
 })

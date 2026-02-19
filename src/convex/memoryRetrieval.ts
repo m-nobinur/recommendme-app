@@ -104,29 +104,28 @@ export const retrieveContext = action({
 
     const hasKeywordHints = args.keywordType || args.keywordSubjectType || args.keywordSubjectId
 
-    const [vectorResults, hybridBusinessResults] = await Promise.all([
-      ctx.runAction(internal.vectorSearch.searchAllLayers, {
-        query: args.query,
-        organizationId: args.organizationId,
-        nicheId: args.nicheId,
-        agentType: args.agentType,
-        platformLimit: args.platformLimit,
-        nicheLimit: args.nicheLimit,
-        businessLimit: args.businessLimit,
-        agentLimit: args.agentLimit,
-      }),
+    const vectorResults = await ctx.runAction(internal.vectorSearch.searchAllLayers, {
+      query: args.query,
+      organizationId: args.organizationId,
+      nicheId: args.nicheId,
+      agentType: args.agentType,
+      platformLimit: args.platformLimit,
+      nicheLimit: args.nicheLimit,
+      businessLimit: args.businessLimit,
+      agentLimit: args.agentLimit,
+    })
 
-      hasKeywordHints
-        ? ctx.runAction(internal.hybridSearch.hybridSearchBusinessMemories, {
-            query: args.query,
-            organizationId: args.organizationId,
-            type: args.keywordType,
-            subjectType: args.keywordSubjectType,
-            subjectId: args.keywordSubjectId,
-            limit: args.businessLimit ?? 20,
-          })
-        : Promise.resolve(null),
-    ])
+    const hybridBusinessResults = hasKeywordHints
+      ? await ctx.runAction(internal.hybridSearch.hybridSearchBusinessMemories, {
+          query: args.query,
+          organizationId: args.organizationId,
+          embedding: vectorResults.embedding,
+          type: args.keywordType,
+          subjectType: args.keywordSubjectType,
+          subjectId: args.keywordSubjectId,
+          limit: args.businessLimit ?? 20,
+        })
+      : null
 
     const business: Array<{ document: Doc<'businessMemories'>; score: number }> =
       hybridBusinessResults

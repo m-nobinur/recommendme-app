@@ -41,7 +41,7 @@ import { internalAction, internalQuery } from './_generated/server'
  * Canonical value: must stay in sync with SIMILARITY_THRESHOLD in src/lib/memory/embedding.ts.
  */
 const SIMILARITY_THRESHOLD = 0.2
-3
+
 // ============================================
 // Fetch Results (Internal Queries)
 // ============================================
@@ -294,14 +294,13 @@ export const searchAllLayers = internalAction({
     niche: Array<{ document: Doc<'nicheMemories'>; score: number }>
     business: Array<{ document: Doc<'businessMemories'>; score: number }>
     agent: Array<{ document: Doc<'agentMemories'>; score: number }>
+    embedding: number[]
     totalResults: number
   }> => {
-    // Generate query embedding once
     const embedding: number[] = await ctx.runAction(internal.embedding.generateEmbedding, {
       text: args.query,
     })
 
-    // Search all layers in parallel
     const [platformResults, nicheResults, businessResults, agentResults] = await Promise.all([
       ctx.runAction(internal.vectorSearch.searchPlatformMemories, {
         embedding,
@@ -335,6 +334,7 @@ export const searchAllLayers = internalAction({
       niche: nicheResults,
       business: businessResults,
       agent: agentResults,
+      embedding,
       totalResults:
         platformResults.length + nicheResults.length + businessResults.length + agentResults.length,
     }

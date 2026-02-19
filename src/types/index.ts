@@ -44,6 +44,7 @@ export interface Organization {
 export interface OrganizationSettings {
   defaultAiProvider?: string
   modelTier?: string
+  nicheId?: string
 }
 
 // ============================================

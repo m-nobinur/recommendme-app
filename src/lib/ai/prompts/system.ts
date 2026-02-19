@@ -86,7 +86,9 @@ You are a knowledgeable partner, not a generic chatbot. Present what you know as
  * Get the active system prompt with optional memory context
  */
 export function getSystemPrompt(memoryContext = '', version?: string): string {
-  const activeVersion = version || process.env.AI_SYSTEM_PROMPT_VERSION || 'v1'
+  const envVersion = process.env.AI_SYSTEM_PROMPT_VERSION
+  const autoVersion = memoryContext ? 'v2' : 'v1'
+  const activeVersion = version || envVersion || autoVersion
   const prompt = SYSTEM_PROMPTS[activeVersion] || SYSTEM_PROMPTS.v1
 
   if (!SYSTEM_PROMPTS[activeVersion]) {
