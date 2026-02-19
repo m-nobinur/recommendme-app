@@ -1,3 +1,4 @@
+import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { authComponent } from './auth'
 
@@ -79,6 +80,61 @@ export const cleanupOrphanedAppUsers = mutation({
     return {
       success: true,
       message: '✅ Triggers handle cleanup automatically. No manual action needed.',
+    }
+  },
+})
+
+type MemoryEventDataType =
+  | 'conversation_end'
+  | 'tool_result'
+  | 'user_input'
+  | 'approval'
+  | 'feedback'
+
+const EVENT_TYPE_TO_DATA_TYPE: Record<Doc<'memoryEvents'>['eventType'], MemoryEventDataType> = {
+  conversation_end: 'conversation_end',
+  tool_success: 'tool_result',
+  tool_failure: 'tool_result',
+  user_correction: 'user_input',
+  explicit_instruction: 'user_input',
+  approval_granted: 'approval',
+  approval_rejected: 'approval',
+  feedback: 'feedback',
+}
+
+/**
+ * Backfill `type` discriminator on memoryEvents.data for existing records.
+ *
+ * Run once after deploying the typed memoryEvents.data schema.
+ * Safe to run multiple times — skips records that already have a `type` field.
+ *
+ * Usage: npx convex run migrations:backfillMemoryEventDataType
+ */
+export const backfillMemoryEventDataType = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const events = await ctx.db.query('memoryEvents').take(500)
+    let patched = 0
+
+    for (const event of events) {
+      const data = event.data as Record<string, unknown>
+      if (data && !data.type) {
+        const dataType = EVENT_TYPE_TO_DATA_TYPE[event.eventType]
+        await ctx.db.patch(event._id, {
+          data: { ...data, type: dataType } as any,
+        })
+        patched++
+      }
+    }
+
+    return {
+      success: true,
+      total: events.length,
+      patched,
+      message:
+        patched > 0
+          ? `Backfilled ${patched}/${events.length} memoryEvents with data.type`
+          : 'All memoryEvents already have data.type — no changes needed.',
     }
   },
 })

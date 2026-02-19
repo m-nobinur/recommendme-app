@@ -149,6 +149,7 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
   const aiAnalysisPromise = needsAI ? analyzeQueryAsync(params.query) : null
 
   const firstSubject = regexAnalysis.subjectHints[0]
+  const firstContextType = regexAnalysis.requiredContextTypes[0]
 
   let rawResults: RawSearchResults
 
@@ -159,7 +160,9 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
       organizationId: params.organizationId as Id<'organizations'>,
       nicheId: params.nicheId,
       agentType: params.agentType ?? 'chat',
+      keywordType: firstContextType,
       keywordSubjectType: firstSubject?.subjectType,
+      keywordSubjectId: firstSubject?.subjectId ?? firstSubject?.name,
     })
   } catch (error) {
     console.error('[Reme:Memory] Retrieval failed:', {

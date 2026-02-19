@@ -83,13 +83,49 @@ const eventSourceTypeValues = v.union(
 /**
  * Create a new memory event (tenant-scoped)
  */
+const memoryEventData = v.union(
+  v.object({
+    type: v.literal('conversation_end'),
+    conversationId: v.string(),
+    messageCount: v.number(),
+    lastUserMessage: v.optional(v.string()),
+    finishReason: v.string(),
+    latencyMs: v.optional(v.number()),
+  }),
+  v.object({
+    type: v.literal('tool_result'),
+    toolName: v.string(),
+    args: v.optional(v.string()),
+    result: v.optional(v.string()),
+    error: v.optional(v.string()),
+    durationMs: v.optional(v.number()),
+  }),
+  v.object({
+    type: v.literal('user_input'),
+    content: v.string(),
+    originalContent: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal('approval'),
+    actionDescription: v.string(),
+    approved: v.boolean(),
+    reason: v.optional(v.string()),
+  }),
+  v.object({
+    type: v.literal('feedback'),
+    rating: v.optional(v.number()),
+    comment: v.optional(v.string()),
+    messageId: v.optional(v.string()),
+  })
+)
+
 export const create = mutation({
   args: {
     organizationId: v.id('organizations'),
     eventType: eventTypeValues,
     sourceType: eventSourceTypeValues,
     sourceId: v.string(),
-    data: v.any(),
+    data: memoryEventData,
   },
   handler: async (ctx, args) => {
     const id = await ctx.db.insert('memoryEvents', {

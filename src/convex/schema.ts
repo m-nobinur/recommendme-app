@@ -412,9 +412,41 @@ export default defineSchema({
     ),
     sourceType: v.union(v.literal('message'), v.literal('tool_call'), v.literal('agent_action')),
     sourceId: v.string(),
-    // FIXME(Phase 4): Replace v.any() with a v.union() of typed payload shapes per eventType.
-    // e.g., v.union(v.object({ messages: v.array(...) }), v.object({ toolName: v.string(), ... }))
-    data: v.any(),
+    data: v.union(
+      v.object({
+        type: v.literal('conversation_end'),
+        conversationId: v.string(),
+        messageCount: v.number(),
+        lastUserMessage: v.optional(v.string()),
+        finishReason: v.string(),
+        latencyMs: v.optional(v.number()),
+      }),
+      v.object({
+        type: v.literal('tool_result'),
+        toolName: v.string(),
+        args: v.optional(v.string()),
+        result: v.optional(v.string()),
+        error: v.optional(v.string()),
+        durationMs: v.optional(v.number()),
+      }),
+      v.object({
+        type: v.literal('user_input'),
+        content: v.string(),
+        originalContent: v.optional(v.string()),
+      }),
+      v.object({
+        type: v.literal('approval'),
+        actionDescription: v.string(),
+        approved: v.boolean(),
+        reason: v.optional(v.string()),
+      }),
+      v.object({
+        type: v.literal('feedback'),
+        rating: v.optional(v.number()),
+        comment: v.optional(v.string()),
+        messageId: v.optional(v.string()),
+      })
+    ),
     processed: v.boolean(),
     processedAt: v.optional(v.number()),
     createdAt: v.number(),

@@ -9,9 +9,8 @@ import { isEmbeddingConfigured } from './embedding'
  *
  * Public Convex action that orchestrates:
  *   1. Multi-layer parallel vector search (via searchAllLayers)
- *   2. Keyword search for business memories (when subject hints provided)
- *   3. Merging + deduplication of vector and keyword results
- *   4. Deferred access tracking for business memories (via scheduler)
+ *   2. RRF hybrid search for business memories (when subject hints provided)
+ *   3. Deferred access tracking for business + agent memories (via scheduler)
  *
  * ┌──────────────────────────────────────────────────────────────────┐
  * │  RETRIEVAL FLOW                                                  │
@@ -19,10 +18,10 @@ import { isEmbeddingConfigured } from './embedding'
  * │  Next.js API Route                                               │
  * │    ↓ ConvexHttpClient.action(retrieveContext, args)              │
  * │  retrieveContext (this action)                                   │
- * │    ├ ctx.runAction(searchAllLayers, ...)   ← vector path         │
- * │    └ ctx.runQuery(keywordSearchBusiness)   ← keyword path        │
- * │  Merge + deduplicate business results                            │
- * │    ↓ ctx.scheduler.runAfter(0, recordAccess, ...)               │
+ * │    ├ ctx.runAction(searchAllLayers, ...)        ← vector path    │
+ * │    └ ctx.runAction(hybridSearchBusinessMemories) ← RRF path      │
+ * │  Use hybrid results for business when keyword hints present      │
+ * │    ↓ ctx.scheduler.runAfter(0, recordAccess/recordUse, ...)      │
  * │  Return merged results to Next.js                                │
  * └──────────────────────────────────────────────────────────────────┘
  */
@@ -103,9 +102,9 @@ export const retrieveContext = action({
       return emptyResults
     }
 
-    const hasKeywordHints = args.keywordType || (args.keywordSubjectType && args.keywordSubjectId)
+    const hasKeywordHints = args.keywordType || args.keywordSubjectType || args.keywordSubjectId
 
-    const [vectorResults, keywordResults] = await Promise.all([
+    const [vectorResults, hybridBusinessResults] = await Promise.all([
       ctx.runAction(internal.vectorSearch.searchAllLayers, {
         query: args.query,
         organizationId: args.organizationId,
@@ -118,37 +117,31 @@ export const retrieveContext = action({
       }),
 
       hasKeywordHints
-        ? ctx.runQuery(internal.hybridSearch.keywordSearchBusiness, {
+        ? ctx.runAction(internal.hybridSearch.hybridSearchBusinessMemories, {
+            query: args.query,
             organizationId: args.organizationId,
             type: args.keywordType,
             subjectType: args.keywordSubjectType,
             subjectId: args.keywordSubjectId,
-            limit: 10,
+            limit: args.businessLimit ?? 20,
           })
-        : Promise.resolve([] as Doc<'businessMemories'>[]),
+        : Promise.resolve(null),
     ])
 
-    const mergedBusiness = vectorResults.business
-    if (keywordResults.length > 0) {
-      const vectorIds = new Set(mergedBusiness.map((r) => r.document._id))
-      for (const doc of keywordResults) {
-        if (!vectorIds.has(doc._id)) {
-          mergedBusiness.push({ document: doc, score: 0.5 })
-        }
-      }
-    }
+    const business: Array<{ document: Doc<'businessMemories'>; score: number }> =
+      hybridBusinessResults
+        ? hybridBusinessResults.map((r) => ({ document: r.document, score: r.score }))
+        : vectorResults.business
 
+    const trackingPromises: Promise<unknown>[] = []
     const seenBusinessIds = new Set<string>()
-    const accessTrackingPromises: Promise<unknown>[] = []
 
-    for (const mem of mergedBusiness) {
+    for (const mem of business) {
       const memoryId = mem.document._id
-      if (seenBusinessIds.has(memoryId)) {
-        continue
-      }
+      if (seenBusinessIds.has(memoryId)) continue
       seenBusinessIds.add(memoryId)
 
-      accessTrackingPromises.push(
+      trackingPromises.push(
         ctx.scheduler.runAfter(0, internal.businessMemories.recordAccess, {
           id: memoryId,
           organizationId: args.organizationId,
@@ -156,19 +149,34 @@ export const retrieveContext = action({
       )
     }
 
-    if (accessTrackingPromises.length > 0) {
-      await Promise.allSettled(accessTrackingPromises)
+    const seenAgentIds = new Set<string>()
+    for (const mem of vectorResults.agent) {
+      const memoryId = mem.document._id
+      if (seenAgentIds.has(memoryId)) continue
+      seenAgentIds.add(memoryId)
+
+      trackingPromises.push(
+        ctx.scheduler.runAfter(0, internal.agentMemories.recordUse, {
+          id: memoryId,
+          organizationId: args.organizationId,
+          wasSuccessful: true,
+        })
+      )
+    }
+
+    if (trackingPromises.length > 0) {
+      await Promise.allSettled(trackingPromises)
     }
 
     return {
       platform: vectorResults.platform,
       niche: vectorResults.niche,
-      business: mergedBusiness,
+      business,
       agent: vectorResults.agent,
       totalResults:
         vectorResults.platform.length +
         vectorResults.niche.length +
-        mergedBusiness.length +
+        business.length +
         vectorResults.agent.length,
     }
   },

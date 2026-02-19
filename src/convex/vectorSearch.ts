@@ -24,7 +24,7 @@ import { internalAction, internalQuery } from './_generated/server'
  * │  Ranked IDs + Scores                                                │
  * │    ↓ fetchResults (Promise.all batch document load)                 │
  * │  Full Documents + Scores                                            │
- * │    ↓ filter by similarity threshold (0.5)                           │
+ * │    ↓ filter by similarity threshold (0.2)                           │
  * │  Final Results                                                      │
  * │                                                                     │
  * │  For multi-layer search, all 4 layers are queried in parallel       │
@@ -36,8 +36,12 @@ import { internalAction, internalQuery } from './_generated/server'
 // Constants
 // ============================================
 
-const SIMILARITY_THRESHOLD = 0.15
-
+/**
+ * Minimum cosine similarity score to consider a result relevant.
+ * Canonical value: must stay in sync with SIMILARITY_THRESHOLD in src/lib/memory/embedding.ts.
+ */
+const SIMILARITY_THRESHOLD = 0.2
+3
 // ============================================
 // Fetch Results (Internal Queries)
 // ============================================

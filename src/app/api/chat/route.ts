@@ -298,6 +298,7 @@ export async function POST(req: Request) {
                   sourceType: 'message' as const,
                   sourceId: validConversationId,
                   data: {
+                    type: 'conversation_end' as const,
                     conversationId: validConversationId,
                     messageCount: messages.length,
                     lastUserMessage: lastUserMessageText.slice(0, 500),
