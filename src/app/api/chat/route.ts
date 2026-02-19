@@ -20,6 +20,7 @@ import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
 import { HTTP_STATUS, LIMITS } from '@/lib/constants'
+import { retrieveMemoryContext } from '@/lib/memory/retrieval'
 
 interface PersistedToolCall {
   id: string
@@ -136,7 +137,41 @@ export async function POST(req: Request) {
       }
     }
 
-    // Prepare tools + model + prompt
+    let lastUserMessage: UIMessage | undefined
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        lastUserMessage = messages[i]
+        break
+      }
+    }
+    const lastUserMessageText = lastUserMessage ? extractTextContent(lastUserMessage) : ''
+
+    let nicheId: string | undefined
+    if (featureFlags.enableMemory && organizationId) {
+      const convex = getConvexClient()
+      if (convex) {
+        try {
+          const org = await convex.query(api.organizations.getOrganization, {
+            id: organizationId as Id<'organizations'>,
+          })
+          nicheId = org?.settings?.nicheId ?? undefined
+        } catch {
+          // Non-critical: nicheId is optional, niche layer will be skipped
+        }
+      }
+    }
+
+    const memoryPromise =
+      featureFlags.enableMemory && organizationId
+        ? retrieveMemoryContext({
+            query: lastUserMessageText,
+            organizationId,
+            nicheId,
+            agentType: 'chat',
+            convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL ?? '',
+          })
+        : Promise.resolve(null)
+
     const tools =
       userId && organizationId
         ? createCRMTools({
@@ -147,9 +182,20 @@ export async function POST(req: Request) {
         : undefined
 
     const model = createAIProvider(aiProvider, modelTier)
-    const systemPrompt = getSystemPrompt(
-      featureFlags.enableMemory ? '' : '' // TODO: Fetch memory context (Phase 3)
-    )
+
+    const memoryResult = await memoryPromise
+    const systemPrompt = getSystemPrompt(memoryResult?.context ?? '')
+
+    if (chatConfig.debug && memoryResult) {
+      console.log('[Reme:Memory] Retrieved context:', {
+        requestId,
+        memoriesUsed: memoryResult.memoriesUsed,
+        tokenCount: memoryResult.tokenCount,
+        latencyMs: memoryResult.latencyMs,
+        layerBreakdown: memoryResult.layerBreakdown,
+        contextPreview: memoryResult.context.slice(0, 300) || '(empty)',
+      })
+    }
 
     const validConversationId =
       conversationId && UUID_REGEX.test(conversationId) ? conversationId : undefined
@@ -162,35 +208,26 @@ export async function POST(req: Request) {
       organizationId &&
       convex
 
-    if (canPersist) {
-      let lastUserMessage: UIMessage | undefined
-      for (let i = messages.length - 1; i >= 0; i--) {
-        if (messages[i].role === 'user') {
-          lastUserMessage = messages[i]
-          break
+    if (canPersist && lastUserMessage) {
+      const userContent = lastUserMessageText.slice(0, LIMITS.MAX_MESSAGE_LENGTH)
+      const msgId = lastUserMessage.id
+      after(async () => {
+        try {
+          await convex.mutation(api.messages.save, {
+            organizationId: organizationId as Id<'organizations'>,
+            userId: userId as Id<'appUsers'>,
+            conversationId: validConversationId,
+            messageId: msgId,
+            role: 'user' as const,
+            content: userContent,
+          })
+        } catch (err) {
+          console.error('[Reme:Chat] Failed to persist user message:', {
+            requestId,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          })
         }
-      }
-      if (lastUserMessage) {
-        const userContent = extractTextContent(lastUserMessage).slice(0, LIMITS.MAX_MESSAGE_LENGTH)
-        const msgId = lastUserMessage.id
-        after(async () => {
-          try {
-            await convex.mutation(api.messages.save, {
-              organizationId: organizationId as Id<'organizations'>,
-              userId: userId as Id<'appUsers'>,
-              conversationId: validConversationId,
-              messageId: msgId,
-              role: 'user' as const,
-              content: userContent,
-            })
-          } catch (err) {
-            console.error('[Reme:Chat] Failed to persist user message:', {
-              requestId,
-              error: err instanceof Error ? err.message : 'Unknown error',
-            })
-          }
-        })
-      }
+      })
     }
 
     const requestStartTime = Date.now()
@@ -245,6 +282,31 @@ export async function POST(req: Request) {
                 }
               } catch (err) {
                 console.error('[Reme:Chat] Failed to persist assistant message:', {
+                  requestId,
+                  error: err instanceof Error ? err.message : 'Unknown error',
+                })
+              }
+            })
+          }
+
+          if (featureFlags.enableMemory && organizationId && validConversationId && convex) {
+            after(async () => {
+              try {
+                await convex.mutation(api.memoryEvents.create, {
+                  organizationId: organizationId as Id<'organizations'>,
+                  eventType: 'conversation_end' as const,
+                  sourceType: 'message' as const,
+                  sourceId: validConversationId,
+                  data: {
+                    conversationId: validConversationId,
+                    messageCount: messages.length,
+                    lastUserMessage: lastUserMessageText.slice(0, 500),
+                    finishReason: finishReason ?? 'unknown',
+                    latencyMs,
+                  },
+                })
+              } catch (err) {
+                console.error('[Reme:Chat] Failed to emit conversation_end event:', {
                   requestId,
                   error: err instanceof Error ? err.message : 'Unknown error',
                 })
