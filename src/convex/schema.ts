@@ -419,6 +419,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index('by_org_unprocessed', ['organizationId', 'processed'])
+    .index('by_org_created', ['organizationId', 'createdAt'])
     .index('by_type', ['eventType', 'processed'])
     .index('by_created', ['createdAt']),
 })

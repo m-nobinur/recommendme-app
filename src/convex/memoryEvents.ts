@@ -182,7 +182,7 @@ export const listRecent = query({
 
     return await ctx.db
       .query('memoryEvents')
-      .withIndex('by_org_unprocessed', (q) => q.eq('organizationId', args.organizationId))
+      .withIndex('by_org_created', (q) => q.eq('organizationId', args.organizationId))
       .order('desc')
       .take(pageSize)
   },

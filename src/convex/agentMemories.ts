@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
+import { validateAgentMemoryInput } from './memoryValidation'
 
 /**
  * Agent Memory CRUD (Execution-Level)
@@ -78,6 +79,11 @@ export const create = mutation({
     confidence: v.float64(),
   },
   handler: async (ctx, args) => {
+    validateAgentMemoryInput({
+      content: args.content,
+      confidence: args.confidence,
+    })
+
     const now = Date.now()
 
     const id = await ctx.db.insert('agentMemories', {

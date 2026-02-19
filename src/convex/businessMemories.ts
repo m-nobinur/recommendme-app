@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
+import { validateBusinessMemoryInput } from './memoryValidation'
 
 /**
  * Business Memory CRUD (Organization-Specific)
@@ -91,6 +92,12 @@ export const create = mutation({
     expiresAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    validateBusinessMemoryInput({
+      content: args.content,
+      confidence: args.confidence,
+      importance: args.importance,
+    })
+
     const now = Date.now()
 
     const id = await ctx.db.insert('businessMemories', {
@@ -102,7 +109,7 @@ export const create = mutation({
       subjectId: args.subjectId,
       importance: args.importance,
       confidence: args.confidence,
-      decayScore: 1.0, // Starts at full strength
+      decayScore: 1.0,
       accessCount: 0,
       lastAccessedAt: now,
       source: args.source,
