@@ -18,7 +18,7 @@ import { internalAction, internalQuery } from './_generated/server'
  * │  ═════════════════════                                              │
  * │                                                                     │
  * │  User Query                                                         │
- * │    ↓ generateEmbedding (1536 dims) — done once in searchAllLayers   │
+ * │    ↓ generateEmbedding (3072 dims) — done once in searchAllLayers   │
  * │  Query Vector                                                       │
  * │    ↓ ctx.vectorSearch (per layer, with filter) — parallel           │
  * │  Ranked IDs + Scores                                                │
@@ -36,7 +36,7 @@ import { internalAction, internalQuery } from './_generated/server'
 // Constants
 // ============================================
 
-const SIMILARITY_THRESHOLD = 0.5
+const SIMILARITY_THRESHOLD = 0.15
 
 // ============================================
 // Fetch Results (Internal Queries)
@@ -95,9 +95,19 @@ export const fetchAgentResults = internalQuery({
  */
 function attachScoresAndFilter<T extends { _id: string }>(
   docs: T[],
-  vectorResults: Array<{ _id: string; _score: number }>
+  vectorResults: Array<{ _id: string; _score: number }>,
+  layerName?: string
 ): Array<{ document: T; score: number }> {
   const scoreMap = new Map(vectorResults.map((r) => [r._id, r._score]))
+
+  if (vectorResults.length > 0) {
+    const scores = vectorResults.map((r) => r._score)
+    console.log(`[VectorSearch] ${layerName ?? 'unknown'} raw results:`, {
+      count: vectorResults.length,
+      scores: scores.map((s) => s.toFixed(4)),
+      threshold: SIMILARITY_THRESHOLD,
+    })
+  }
 
   const results: Array<{ document: T; score: number }> = []
   for (const doc of docs) {
@@ -142,7 +152,7 @@ export const searchPlatformMemories = internalAction({
       { ids: vectorResults.map((r) => r._id) }
     )
 
-    return attachScoresAndFilter(docs, vectorResults)
+    return attachScoresAndFilter(docs, vectorResults, 'platform')
   },
 })
 
@@ -172,7 +182,7 @@ export const searchNicheMemories = internalAction({
       { ids: vectorResults.map((r) => r._id) }
     )
 
-    return attachScoresAndFilter(docs, vectorResults)
+    return attachScoresAndFilter(docs, vectorResults, 'niche')
   },
 })
 
@@ -205,7 +215,7 @@ export const searchBusinessMemories = internalAction({
       { ids: vectorResults.map((r) => r._id) }
     )
 
-    return attachScoresAndFilter(docs, vectorResults)
+    return attachScoresAndFilter(docs, vectorResults, 'business')
   },
 })
 
@@ -222,11 +232,14 @@ export const searchAgentMemories = internalAction({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<Array<{ document: Doc<'agentMemories'>; score: number }>> => {
-    const limit = Math.min(args.limit ?? 10, 256)
+    const requestedLimit = Math.min(args.limit ?? 10, 256)
+    const vectorLimit = args.agentType
+      ? Math.min(Math.max(requestedLimit * 5, requestedLimit + 10), 256)
+      : requestedLimit
 
     const vectorResults = await ctx.vectorSearch('agentMemories', 'by_embedding', {
       vector: args.embedding,
-      limit,
+      limit: vectorLimit,
       filter: (q) => q.eq('organizationId', args.organizationId),
     })
 
@@ -237,13 +250,13 @@ export const searchAgentMemories = internalAction({
       { ids: vectorResults.map((r) => r._id) }
     )
 
-    let results = attachScoresAndFilter(docs, vectorResults)
+    let results = attachScoresAndFilter(docs, vectorResults, 'agent')
 
     if (args.agentType) {
       results = results.filter((r) => r.document.agentType === args.agentType)
     }
 
-    return results
+    return results.slice(0, requestedLimit)
   },
 })
 
