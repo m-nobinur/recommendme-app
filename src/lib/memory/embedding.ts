@@ -17,8 +17,8 @@
 // Constants
 // ============================================
 
-/** Embedding dimensions for text-embedding-3-small */
-export const EMBEDDING_DIMENSIONS = 1536
+/** Embedding dimensions for text-embedding-3-large */
+export const EMBEDDING_DIMENSIONS = 3072
 
 /** Minimum cosine similarity score to consider a result relevant */
 export const SIMILARITY_THRESHOLD = 0.5
@@ -27,10 +27,10 @@ export const SIMILARITY_THRESHOLD = 0.5
 export const DUPLICATE_THRESHOLD = 0.92
 
 /** OpenRouter embedding model (OpenAI-compatible format) */
-export const EMBEDDING_MODEL_OPENROUTER = 'openai/text-embedding-3-small'
+export const EMBEDDING_MODEL_OPENROUTER = 'openai/text-embedding-3-large'
 
 /** OpenAI embedding model (direct) */
-export const EMBEDDING_MODEL_OPENAI = 'text-embedding-3-small'
+export const EMBEDDING_MODEL_OPENAI = 'text-embedding-3-large'
 
 // ============================================
 // Memory Layer Limits (defaults for search)

@@ -73,6 +73,7 @@ export default defineSchema({
       v.object({
         defaultAiProvider: v.optional(v.string()),
         modelTier: v.optional(v.string()),
+        nicheId: v.optional(v.string()),
       })
     ),
   }).index('by_slug', ['slug']),
@@ -225,7 +226,7 @@ export default defineSchema({
       v.literal('followup')
     ),
     content: v.string(),
-    embedding: v.optional(v.array(v.float64())), // 1536 dims, optional until generated
+    embedding: v.optional(v.array(v.float64())), // 3072 dims, optional until generated
     confidence: v.float64(),
     sourceCount: v.number(),
     validatedAt: v.optional(v.number()),
@@ -238,7 +239,7 @@ export default defineSchema({
     .index('by_active_category', ['isActive', 'category'])
     .vectorIndex('by_embedding', {
       vectorField: 'embedding',
-      dimensions: 1536,
+      dimensions: 3072,
       filterFields: ['isActive'],
     }),
 
@@ -250,7 +251,7 @@ export default defineSchema({
     nicheId: v.string(),
     category: v.string(),
     content: v.string(),
-    embedding: v.optional(v.array(v.float64())), // 1536 dims
+    embedding: v.optional(v.array(v.float64())), // 3072 dims
     confidence: v.float64(),
     contributorCount: v.number(),
     isActive: v.boolean(),
@@ -262,7 +263,7 @@ export default defineSchema({
     .index('by_niche_active', ['nicheId', 'isActive'])
     .vectorIndex('by_embedding', {
       vectorField: 'embedding',
-      dimensions: 1536,
+      dimensions: 3072,
       filterFields: ['nicheId'],
     }),
 
@@ -282,7 +283,7 @@ export default defineSchema({
       v.literal('episodic')
     ),
     content: v.string(),
-    embedding: v.optional(v.array(v.float64())), // 1536 dims
+    embedding: v.optional(v.array(v.float64())), // 3072 dims
     subjectType: v.optional(v.string()), // 'lead', 'service', 'appointment', etc.
     subjectId: v.optional(v.string()), // Entity ID
     importance: v.float64(), // 0-1
@@ -314,7 +315,7 @@ export default defineSchema({
     .index('by_created', ['createdAt'])
     .vectorIndex('by_embedding', {
       vectorField: 'embedding',
-      dimensions: 1536,
+      dimensions: 3072,
       filterFields: ['organizationId'],
     }),
 
@@ -332,7 +333,7 @@ export default defineSchema({
       v.literal('failure')
     ),
     content: v.string(),
-    embedding: v.optional(v.array(v.float64())), // 1536 dims
+    embedding: v.optional(v.array(v.float64())), // 3072 dims
     useCount: v.number(),
     successRate: v.float64(),
     confidence: v.float64(),
@@ -347,7 +348,7 @@ export default defineSchema({
     .index('by_org_agent_active', ['organizationId', 'agentType', 'isActive'])
     .vectorIndex('by_embedding', {
       vectorField: 'embedding',
-      dimensions: 1536,
+      dimensions: 3072,
       filterFields: ['organizationId'],
     }),
 

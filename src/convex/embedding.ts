@@ -5,7 +5,7 @@ import { internalAction, internalMutation } from './_generated/server'
 /**
  * Embedding Service (Convex Actions)
  *
- * Generates embeddings via OpenAI-compatible APIs (1536 dimensions).
+ * Generates embeddings via OpenAI-compatible APIs (3072 dimensions).
  * All functions are internal — only callable from other Convex functions.
  *
  * Provider Priority:
@@ -24,7 +24,7 @@ import { internalAction, internalMutation } from './_generated/server'
  * │  generateAndStore (internalAction)                                  │
  * │    ↓ resolveProvider() → pick OpenRouter or OpenAI                  │
  * │    ↓ callEmbeddingsAPI() with retry + backoff                       │
- * │    ↓ returns float64[1536]                                          │
+ * │    ↓ returns float64[3072]                                          │
  * │  patchEmbedding (internalMutation)                                  │
  * │    ↓ patches document with embedding vector                         │
  * │  Memory now searchable via vector index                             │
@@ -40,9 +40,9 @@ import { internalAction, internalMutation } from './_generated/server'
 // Constants
 // ============================================
 
-const EMBEDDING_MODEL = 'openai/text-embedding-3-small'
-const OPENAI_EMBEDDING_MODEL = 'text-embedding-3-small'
-const EMBEDDING_DIMENSIONS = 1536
+const EMBEDDING_MODEL = 'openai/text-embedding-3-large'
+const OPENAI_EMBEDDING_MODEL = 'text-embedding-3-large'
+const EMBEDDING_DIMENSIONS = 3072
 const MAX_RETRIES = 3
 const MAX_BATCH_SIZE = 100
 
@@ -81,6 +81,19 @@ const memoryTableNames = v.union(
 // ============================================
 // Provider Resolution
 // ============================================
+
+/**
+ * Check if any embedding provider is configured (non-throwing).
+ * Used upstream to skip memory retrieval entirely when embeddings are unavailable.
+ */
+export function isEmbeddingConfigured(): boolean {
+  const order: ProviderKey[] = ['openrouter', 'openai']
+  for (const key of order) {
+    const apiKey = process.env[PROVIDERS[key].envVar]
+    if (apiKey && apiKey.trim().length > 0) return true
+  }
+  return false
+}
 
 /**
  * Resolve which embedding provider to use.
@@ -216,7 +229,7 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
 
 /**
  * Generate a single embedding vector from text.
- * Returns a 1536-dimension float64 array.
+ * Returns a 3072-dimension float64 array.
  *
  * Provider: OpenRouter (default) → OpenAI (fallback).
  */
