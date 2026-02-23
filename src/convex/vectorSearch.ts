@@ -97,24 +97,25 @@ export const fetchAgentResults = internalQuery({
 /**
  * Attach similarity scores to fetched documents and filter by threshold.
  */
-function attachScoresAndFilter<T extends { _id: string }>(
+function attachScoresAndFilter<T extends { _id: string; isActive?: boolean; isArchived?: boolean }>(
   docs: T[],
   vectorResults: Array<{ _id: string; _score: number }>,
   layerName?: string
 ): Array<{ document: T; score: number }> {
   const scoreMap = new Map(vectorResults.map((r) => [r._id, r._score]))
 
-  if (vectorResults.length > 0) {
-    const scores = vectorResults.map((r) => r._score)
-    console.log(`[VectorSearch] ${layerName ?? 'unknown'} raw results:`, {
+  if (vectorResults.length > 0 && process.env.DEBUG_MEMORY === 'true') {
+    console.log(`[VectorSearch] ${layerName ?? 'unknown'}:`, {
       count: vectorResults.length,
-      scores: scores.map((s) => s.toFixed(4)),
-      threshold: SIMILARITY_THRESHOLD,
+      minScore: Math.min(...vectorResults.map((r) => r._score)).toFixed(4),
+      maxScore: Math.max(...vectorResults.map((r) => r._score)).toFixed(4),
     })
   }
 
   const results: Array<{ document: T; score: number }> = []
   for (const doc of docs) {
+    if ('isActive' in doc && doc.isActive === false) continue
+    if ('isArchived' in doc && doc.isArchived === true) continue
     const score = scoreMap.get(doc._id) ?? 0
     if (score >= SIMILARITY_THRESHOLD) {
       results.push({ document: doc, score })
