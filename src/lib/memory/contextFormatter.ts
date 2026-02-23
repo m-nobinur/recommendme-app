@@ -123,7 +123,6 @@ function formatBusinessMemories(
     parts.push('')
   }
 
-  // Facts, preferences, context section
   const hasCustomerInfo = CUSTOMER_INFO_TYPES.some((t) => grouped.has(t))
   if (hasCustomerInfo) {
     parts.push('## Customer Information')
@@ -131,10 +130,11 @@ function formatBusinessMemories(
       const group = grouped.get(type)
       if (!group) continue
       for (const mem of group) {
+        const tag = mem.document.version > 1 ? `${type}, updated` : type
         appendEntry(
           parts,
           ids,
-          type,
+          tag,
           mem.document.content,
           'confidence',
           mem.document.confidence,
