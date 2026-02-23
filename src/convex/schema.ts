@@ -321,6 +321,7 @@ export default defineSchema({
     .index('by_org_active', ['organizationId', 'isActive'])
     .index('by_org_decay', ['organizationId', 'decayScore'])
     .index('by_org_importance', ['organizationId', 'importance'])
+    .index('by_org_archived', ['organizationId', 'isArchived'])
     .index('by_created', ['createdAt'])
     .vectorIndex('by_embedding', {
       vectorField: 'embedding',
