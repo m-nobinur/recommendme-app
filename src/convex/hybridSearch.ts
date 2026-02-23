@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalAction, internalQuery } from './_generated/server'
+import { fuzzyMatchInContent, fuzzyMatchName } from './fuzzyMatch'
 
 /**
  * Hybrid Search (Vector + Keyword)
@@ -70,7 +71,8 @@ export const keywordSearchBusiness = internalQuery({
     if (args.subjectType && args.subjectId) {
       const subjectType = args.subjectType
       const subjectId = args.subjectId
-      const candidates = await ctx.db
+
+      const indexResults = await ctx.db
         .query('businessMemories')
         .withIndex('by_org_subject', (q) =>
           q
@@ -81,7 +83,41 @@ export const keywordSearchBusiness = internalQuery({
         .order('desc')
         .take(limit * 3)
 
-      results = candidates.filter((m) => m.isActive && !m.isArchived)
+      results = indexResults.filter((m) => m.isActive && !m.isArchived)
+
+      if (results.length < limit) {
+        const nameLower = subjectId.toLowerCase()
+        const allActive = await ctx.db
+          .query('businessMemories')
+          .withIndex('by_org_active', (q) =>
+            q.eq('organizationId', args.organizationId).eq('isActive', true)
+          )
+          .order('desc')
+          .take(200)
+
+        const existingIds = new Set(results.map((r) => r._id))
+        const contentMatches = allActive.filter(
+          (m) =>
+            !m.isArchived &&
+            !existingIds.has(m._id) &&
+            (m.content.toLowerCase().includes(nameLower) ||
+              m.subjectId?.toLowerCase().includes(nameLower))
+        )
+
+        results = [...results, ...contentMatches]
+
+        if (results.length < limit) {
+          const fuzzyMatches = allActive.filter(
+            (m) =>
+              !m.isArchived &&
+              !existingIds.has(m._id) &&
+              !contentMatches.some((cm) => cm._id === m._id) &&
+              (fuzzyMatchName(subjectId, m.subjectId ?? '').matched ||
+                fuzzyMatchInContent(subjectId, m.content))
+          )
+          results = [...results, ...fuzzyMatches]
+        }
+      }
     } else if (args.type) {
       const memoryType = args.type
       const candidates = await ctx.db
