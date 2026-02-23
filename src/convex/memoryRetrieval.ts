@@ -95,10 +95,9 @@ export const retrieveContext = action({
     }
 
     if (!isEmbeddingConfigured()) {
-      console.warn(
-        '[Memory] Embedding provider not configured — skipping retrieval. ' +
-          'Set OPENROUTER_API_KEY or OPENAI_API_KEY in Convex env vars.'
-      )
+      console.warn('[Memory] Embedding provider not configured — skipping retrieval.', {
+        organizationId: args.organizationId,
+      })
       return emptyResults
     }
 
