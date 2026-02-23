@@ -54,6 +54,22 @@ import { validateBusinessMemoryInput } from './memoryValidation'
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
+// TTL defaults (mirrored from src/lib/memory/ttl.ts for Convex runtime)
+const MS_PER_DAY = 86_400_000
+const DEFAULT_TTL_DAYS: Record<string, number | null> = {
+  fact: 180,
+  preference: 90,
+  instruction: null,
+  context: 30,
+  relationship: 180,
+  episodic: 90,
+}
+function computeExpiresAt(type: string, createdAt: number): number | undefined {
+  const days = DEFAULT_TTL_DAYS[type]
+  if (days === null || days === undefined) return undefined
+  return createdAt + days * MS_PER_DAY
+}
+
 const businessMemoryTypeValues = v.union(
   v.literal('fact'),
   v.literal('preference'),
@@ -69,10 +85,6 @@ const memorySourceValues = v.union(
   v.literal('tool'),
   v.literal('system')
 )
-
-// ============================================
-// CREATE
-// ============================================
 
 /**
  * Create a new business memory (tenant-scoped)
@@ -114,7 +126,7 @@ export const create = mutation({
       lastAccessedAt: now,
       source: args.source,
       sourceMessageId: args.sourceMessageId,
-      expiresAt: args.expiresAt,
+      expiresAt: args.expiresAt ?? computeExpiresAt(args.type, now),
       isActive: true,
       isArchived: false,
       version: 1,
@@ -131,10 +143,6 @@ export const create = mutation({
     return id
   },
 })
-
-// ============================================
-// READ
-// ============================================
 
 /**
  * Get a single business memory by ID (tenant-scoped)
@@ -244,10 +252,6 @@ export const listByImportance = query({
   },
 })
 
-// ============================================
-// UPDATE
-// ============================================
-
 /**
  * Update a business memory with version history (tenant-scoped)
  */
@@ -306,6 +310,7 @@ export const update = mutation({
 /**
  * Increment access count and update last accessed timestamp.
  * Used during memory retrieval to track usage.
+ * Schedules an immediate decay boost so the score reflects the access.
  */
 export const recordAccess = internalMutation({
   args: {
@@ -323,13 +328,14 @@ export const recordAccess = internalMutation({
       lastAccessedAt: Date.now(),
     })
 
+    await ctx.scheduler.runAfter(0, internal.memoryDecay.boostBusinessDecayOnAccess, {
+      id: args.id,
+      organizationId: args.organizationId,
+    })
+
     return { success: true }
   },
 })
-
-// ============================================
-// DELETE (Soft)
-// ============================================
 
 /**
  * Soft delete a business memory (set isActive = false, tenant-scoped)

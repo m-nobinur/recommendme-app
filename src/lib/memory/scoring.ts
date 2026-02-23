@@ -35,10 +35,6 @@ import type {
 } from '@/types'
 import type { QueryAnalysis } from './queryAnalysis'
 
-// ============================================
-// TYPES
-// ============================================
-
 export type MemoryLayerName = 'platform' | 'niche' | 'business' | 'agent'
 
 export interface ScoredMemory<T> {
@@ -61,10 +57,6 @@ export interface RawSearchResults {
   business: Array<{ document: BusinessMemory; score: number }>
   agent: Array<{ document: AgentMemory; score: number }>
 }
-
-// ============================================
-// SCORING CONSTANTS (all hoisted to module scope)
-// ============================================
 
 /** Composite score weights (must sum to 1.0) */
 const WEIGHT_RELEVANCE = 0.4
@@ -100,10 +92,6 @@ const HALF_LIFE_MS = 30 * 24 * 60 * 60 * 1000
 
 /** Pre-computed decay coefficient: -ln(2) / halfLife */
 const DECAY_COEFFICIENT = -Math.LN2 / HALF_LIFE_MS
-
-// ============================================
-// HELPER FUNCTIONS
-// ============================================
 
 /**
  * Compute recency score from a timestamp.
@@ -154,10 +142,6 @@ function computeCompositeScore(
 
   return score + intentBonus
 }
-
-// ============================================
-// LAYER-SPECIFIC SCORING
-// ============================================
 
 /**
  * Score platform memories.
@@ -231,8 +215,8 @@ function scoreBusinessMemories(
   const scored: Array<ScoredMemory<BusinessMemory>> = []
 
   for (const { document, score } of results) {
-    // Skip decayed/inactive/archived in single check
     if (document.decayScore < DECAY_THRESHOLD || !document.isActive || document.isArchived) continue
+    if (document.expiresAt != null && document.expiresAt < now) continue
 
     const intentBonus = requiredTypes.has(document.type) ? INTENT_MATCH_BONUS : 0
 
@@ -280,10 +264,6 @@ function scoreAgentMemories(
 
   return scored
 }
-
-// ============================================
-// MAIN EXPORT
-// ============================================
 
 /**
  * Score and rank memories from all layers.
