@@ -7,6 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### Memory Schema & CRUD (Phase 1)
+- 4-layer memory hierarchy: `platformMemories`, `nicheMemories`, `businessMemories`, `agentMemories`
+- `memoryRelations` and `memoryEvents` tables with full CRUD operations
+- Memory validation library (`src/lib/memory/validation.ts`) with content length, confidence, and PII detection
+- Centralized memory types in `src/types/index.ts`
+
+#### Embedding & Vector Search (Phase 2)
+- Multi-provider embedding service (OpenRouter default, OpenAI fallback) with retry and backoff in `src/convex/embedding.ts`
+- 3072-dimension vectors via `text-embedding-3-large`
+- Vector search across all 4 memory layers in `src/convex/vectorSearch.ts`
+- Hybrid search with Reciprocal Rank Fusion (RRF) in `src/convex/hybridSearch.ts`
+- Fuzzy name matching utility in `src/convex/fuzzyMatch.ts`
+- Shared embedding constants and math in `src/lib/memory/embedding.ts`
+- Auto-embedding on memory create/update via `ctx.scheduler.runAfter`
+
+#### Memory Retrieval & Context (Phase 3)
+- Full retrieval pipeline: query analysis, parallel vector search, scoring, token budgeting
+- Context formatter for injecting memory into system prompt (`src/lib/memory/contextFormatter.ts`)
+- Query analysis with entity extraction and intent detection (`src/lib/memory/queryAnalysis.ts`)
+- Scoring with decay-aware and confidence-weighted ranking (`src/lib/memory/scoring.ts`)
+- Convex action gateway in `src/convex/memoryRetrieval.ts`
+- Early-start parallelism for memory retrieval in chat route
+
+#### Memory Extraction Pipeline (Phase 4)
+- LLM-based memory extraction worker in `src/convex/memoryExtraction.ts`
+- Extraction prompt with Zod output schema in `src/lib/memory/extractionPrompt.ts`
+- Memory event emission in chat route: `conversation_end`, `tool_success`, `tool_failure`
+- Deduplication via vector similarity (threshold 0.92) with version chaining
+- Cron job for extraction processing every 2 minutes
+- Correction-aware extraction and maintenance workflows
+- Business memory history fields (`previousVersionId`, `correctedAt`, `correctedBy`)
+
+#### Memory Lifecycle (Phase 5)
+- Ebbinghaus-based decay algorithm in `src/lib/memory/decay.ts` with 7 type-specific decay rates
+- Decay workers in `src/convex/memoryDecay.ts`: hourly batch updates + on-access boost via scheduler
+- TTL management in `src/lib/memory/ttl.ts` with per-type defaults (30 days to never)
+- Auto-set `expiresAt` on memory creation in `businessMemories.ts` and `memoryExtraction.ts`
+- Archival workers in `src/convex/memoryArchival.ts`:
+  - Daily: archive memories with decay score < 0.3
+  - Compression: LLM-based summarization with `@convex-dev/action-retrier` for robust retries
+  - Weekly: soft-delete expired memories, hard-delete after 90-day retention, orphan relation cleanup
+- `by_org_archived` index on `businessMemories` for efficient archival queries
+- Scheduled cron jobs: decay (hourly), archival (daily 8:00 UTC), cleanup (weekly Sunday 8:00 UTC)
+
+#### Developer Tooling
+- Dev environment setup script (`scripts/dev-setup.sh`)
+- Memory pipeline validation script (`scripts/validate-memory.sh`)
+- Phase 4 extraction test script (`scripts/test-extraction-pipeline.sh`)
+- Phase 5 lifecycle test script (`scripts/test-decay-lifecycle.sh`)
+
+### Changed
+
+#### Chat & Retrieval Improvements
+- Enriched chat route memory logging context
+- Labeled updated business memories in formatted context output
+- Expanded short subject queries before retrieval for better matching
+- Improved query entity extraction for single and lowercase names
+- Gated embedding debug logs behind `DEBUG_MEMORY` flag
+- Excluded inactive and archived docs from vector search results
+- Standardized retrieval warning context when embeddings are unavailable
+
+#### Memory System Maturity
+- Full lifecycle management: extraction → decay → archival → purge
+- Extended background processing coverage for memory maintenance and data hygiene
+
+### Fixed
+
+- Inactive and archived documents appearing in vector search results
+- Entity extraction failing on single-word and lowercase names
+- Embedding debug logs polluting output in non-debug mode
+
+### Security
+
+- Memory lifecycle controls that reduce stale-memory retention risk through decay thresholds and purge workflows
+- Periodic cleanup jobs to limit long-lived inactive data
+- TTL filtering prevents expired memories from polluting retrieval
+- Updated `SECURITY.md` to cover background memory lifecycle jobs
+
 ## [2.1.0] - 2026-02-04
 
 ### Added
@@ -207,18 +287,19 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-Planned features for future releases:
+**Phase 6 — Memory Tools & Chat Integration:**
+- Explicit memory tools in chat (rememberFact, forgetMemory, searchMemories, updatePreference)
+- Conversation summary with sliding window for long sessions
+- End-to-end memory loop completion
 
-- Email verification for authentication
-- Two-factor authentication (2FA)
-- Advanced reporting and analytics
-- Email integration for automated follow-ups
+**Planned features for future releases:**
+- Agent framework with LangGraph for background workflows (Phase 7)
+- Guardrails, approval queue, and audit logging (Phase 9)
+- Observability and cost tracking (Phase 10)
+- Memory UI and admin dashboard (Phase 12)
+- Email verification and 2FA for authentication
 - Calendar integrations (Google Calendar, Outlook)
-- Mobile app (React Native)
 - Webhook support for external integrations
-- Advanced search with filters
-- Export functionality (CSV, PDF)
-- Team collaboration features
 
 ---
 
