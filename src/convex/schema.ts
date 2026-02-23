@@ -297,12 +297,21 @@ export default defineSchema({
       v.literal('tool'),
       v.literal('system')
     ),
-    sourceMessageId: v.optional(v.string()), // Link to originating message
-    expiresAt: v.optional(v.number()), // TTL
+    sourceMessageId: v.optional(v.string()),
+    expiresAt: v.optional(v.number()),
     isActive: v.boolean(),
     isArchived: v.boolean(),
     version: v.number(),
     previousVersionId: v.optional(v.id('businessMemories')),
+    history: v.optional(
+      v.array(
+        v.object({
+          previousContent: v.string(),
+          changedAt: v.number(),
+          reason: v.optional(v.string()),
+        })
+      )
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

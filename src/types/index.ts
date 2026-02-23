@@ -308,6 +308,11 @@ export interface BusinessMemory {
   isArchived: boolean
   version: number
   previousVersionId?: Id<'businessMemories'>
+  history?: Array<{
+    previousContent: string
+    changedAt: number
+    reason?: string
+  }>
   createdAt: number
   updatedAt: number
 }
