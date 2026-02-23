@@ -108,8 +108,15 @@ export function ChatContainer() {
   const isAutoScrolling = useRef(false)
   const { setIsHeaderVisible } = useHeader()
 
-  const provider = useModelStore((s) => s.provider)
-  const brainTier = useModelStore((s) => s.brainTier)
+  const providerRef = useRef(useModelStore.getState().provider)
+  const brainTierRef = useRef(useModelStore.getState().brainTier)
+
+  useEffect(() => {
+    return useModelStore.subscribe((s) => {
+      providerRef.current = s.provider
+      brainTierRef.current = s.brainTier
+    })
+  }, [])
 
   const hasHydrated = useChatStore((s) => s.hasHydrated)
   const getOrCreateConversationId = useChatStore((s) => s.getOrCreateConversationId)
@@ -119,7 +126,6 @@ export function ChatContainer() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const initRef = useRef(false)
 
-  // Wait for Zustand hydration, then resolve conversation ID
   useEffect(() => {
     if (!hasHydrated || initRef.current) return
     initRef.current = true
@@ -143,19 +149,22 @@ export function ChatContainer() {
       activeConversationId
         ? new DefaultChatTransport({
             api: API.CHAT_ENDPOINT,
-            body: {
-              provider,
-              tier: brainTier,
+            body: () => ({
+              provider: providerRef.current,
+              tier: brainTierRef.current,
               conversationId: activeConversationId,
-            },
+            }),
           })
         : undefined,
-    [provider, brainTier, activeConversationId]
+    [activeConversationId]
   )
+
+  const sendingRef = useRef(false)
 
   const { messages, sendMessage, setMessages, status, error } = useChat({
     transport: chatTransport,
     onError: (err) => {
+      sendingRef.current = false
       console.error('Chat error:', err)
     },
   })
@@ -168,7 +177,7 @@ export function ChatContainer() {
   const shouldScrollAfterHistory = useRef(false)
   const historyMessageCount = useRef(0)
 
-  // Fetch history — all state updates in one synchronous block
+  // Fetch history
   useEffect(() => {
     if (viewState !== 'loading_history' || !activeConversationId) return
 
@@ -367,26 +376,22 @@ export function ChatContainer() {
     })
   }, [])
 
+  useEffect(() => {
+    if (status === 'ready' || status === 'error') {
+      sendingRef.current = false
+    }
+  }, [status])
+
   const handleSend = useCallback(
     (message: string) => {
-      if (!message.trim()) return
+      if (!message.trim() || sendingRef.current) return
+      sendingRef.current = true
       sendMessage({ text: message })
     },
     [sendMessage]
   )
 
-  const handleSuggestionClick = useCallback(
-    (suggestion: string) => {
-      handleSend(suggestion)
-    },
-    [handleSend]
-  )
-
-  const errorUI = error ? (
-    <div className="mb-4 rounded-xl border border-status-error/20 bg-status-error/10 p-4 text-status-error text-sm">
-      Error: {error.message}
-    </div>
-  ) : null
+  const errorMessage = error?.message
 
   // ── Render ─────────────────────────────────────────────────────────
   return (
@@ -408,7 +413,6 @@ export function ChatContainer() {
 
           {viewState === 'ready' && messages.length > 0 && (
             <div>
-              {/* Load older messages */}
               {historyCursor !== null && (
                 <div className="mb-4 flex justify-center">
                   <button
@@ -423,7 +427,7 @@ export function ChatContainer() {
                         Loading...
                       </>
                     ) : (
-                      'Load earlier messages'
+                      'Load more'
                     )}
                   </button>
                 </div>
@@ -432,11 +436,15 @@ export function ChatContainer() {
               <MessageList
                 messages={messages}
                 historyCount={historyMessageCount.current}
-                onSuggestionClick={handleSuggestionClick}
+                onSuggestionClick={handleSend}
               />
 
               {showTypingIndicator && <TypingIndicator />}
-              {errorUI}
+              {errorMessage && (
+                <div className="mb-4 rounded-xl border border-status-error/20 bg-status-error/10 p-4 text-status-error text-sm">
+                  Error: {errorMessage}
+                </div>
+              )}
 
               <div className="h-40" />
             </div>
@@ -488,20 +496,25 @@ const MessageList = memo(function MessageList({
   historyCount,
   onSuggestionClick,
 }: MessageListProps) {
-  // Pre-compute last assistant index once (Rule 7.6 — single iteration)
-  let lastAssistantIndex = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === 'assistant') {
-      lastAssistantIndex = i
-      break
-    }
-  }
+  const { deduped, lastAssistantIdx } = useMemo(() => {
+    const seen = new Set<string>()
+    let lastAst = -1
+    const items = messages.reduce<Array<{ msg: UIMessage; idx: number }>>((acc, msg, idx) => {
+      const key = msg.id || `msg-${idx}`
+      if (seen.has(key)) return acc
+      seen.add(key)
+      if (msg.role === 'assistant') lastAst = idx
+      acc.push({ msg, idx })
+      return acc
+    }, [])
+    return { deduped: items, lastAssistantIdx: lastAst }
+  }, [messages])
 
   return (
     <>
-      {messages.map((message, index) => {
+      {deduped.map(({ msg: message, idx: index }) => {
         const content = extractTextFromParts(message.parts)
-        const messageKey = message.id || `msg-${index}`
+        const messageKey = message.id ? `${message.id}-${index}` : `msg-${index}`
         const isFromHistory = index < historyCount
 
         const createdAt =
@@ -542,7 +555,7 @@ const MessageList = memo(function MessageList({
             }}
             previousUserMessage={previousUserMessage}
             onSuggestionClick={onSuggestionClick}
-            isLastAssistantMessage={index === lastAssistantIndex}
+            isLastAssistantMessage={index === lastAssistantIdx}
             animate={!isFromHistory}
           />
         )
