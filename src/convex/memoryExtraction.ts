@@ -1,6 +1,6 @@
 import { ConvexError, v } from 'convex/values'
 import { internal } from './_generated/api'
-import type { Doc } from './_generated/dataModel'
+import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
 import { isEmbeddingConfigured } from './embedding'
 
@@ -22,7 +22,7 @@ import { isEmbeddingConfigured } from './embedding'
  * │    │   ├─ Fetch existing memories for dedup context                 │
  * │    │   ├─ Call LLM with extraction prompt                           │
  * │    │   ├─ Parse structured output                                   │
- * │    │   ├─ Dedup: vector similarity ≥ 0.85 → skip or version bump   │
+ * │    │   ├─ Dedup: vector similarity ≥ DEDUP_SIMILARITY_THRESHOLD     │
  * │    │   ├─ Create businessMemories (internalMutation)                │
  * │    │   ├─ Create agentMemories (internalMutation)                   │
  * │    │   ├─ Create memoryRelations (internalMutation)                 │
@@ -40,6 +40,7 @@ const MAX_MESSAGES_FOR_EXTRACTION = 30
 const DEDUP_SIMILARITY_THRESHOLD = 0.85
 const DEDUP_SEARCH_LIMIT = 10
 const MAX_LLM_RETRIES = 2
+const MAX_EVENT_RETRIES = 3
 
 const LLM_PROVIDERS = {
   openrouter: {
@@ -112,22 +113,35 @@ Analyze conversations between a business owner and the AI assistant, then extrac
 ### relations
 - Connections between entities (prefers, related_to, leads_to, requires, conflicts_with)
 
+## Handling Corrections & Contradictions
+When a user CORRECTS, UPDATES, or NEGATES previous information:
+1. ALWAYS extract the UPDATED fact as a new businessMemory with confidence 1.0
+2. ALSO include a "corrections" array identifying the old facts being superseded
+3. The new memory content MUST be TEMPORAL-AWARE — include what changed:
+   - Good: "Sarah Johnson prefers evening appointments after 5pm (previously preferred afternoons)"
+   - Bad: "Sarah Johnson prefers evening appointments after 5pm" (loses the history)
+4. This lets the AI naturally say "I know Sarah switched from afternoons to evenings"
+5. Only add the temporal parenthetical when the old preference is known from "Already Known"
+
+CRITICAL: You must ALWAYS produce BOTH a new businessMemory AND a corrections entry for any correction. Never produce corrections without a corresponding businessMemory.
+
 ## Rules
 1. Extract ONLY information explicitly stated or strongly implied
 2. Each memory must be self-contained — understandable without the conversation
 3. Do NOT extract generic knowledge without specific context
 4. Do NOT extract the AI's responses — only what the USER reveals
-5. Prefer specific, named entities
+5. Prefer specific, named entities (ALWAYS use full names when known: "Sarah Johnson" not "Sarah")
 6. Set importance: client preferences (0.8+), business rules (0.9+), one-time context (0.3-0.5)
 7. Set confidence: 1.0 for explicit, 0.7-0.9 for inferred
 8. Return empty arrays if no extractable knowledge
-9. Avoid redundancy
+9. Avoid redundancy — check the "Already Known" list before extracting
 
 Respond with valid JSON matching this exact structure:
 {
   "businessMemories": [{ "type": "fact|preference|instruction|context|relationship|episodic", "content": "...", "importance": 0.0-1.0, "confidence": 0.5-1.0, "subjectType": "lead|service|appointment|invoice|general", "subjectName": "..." }],
   "agentMemories": [{ "agentType": "chat|crm|followup|invoice|sales|reminder", "category": "pattern|preference|success|failure", "content": "...", "confidence": 0.5-1.0 }],
-  "relations": [{ "sourceType": "...", "sourceName": "...", "targetType": "...", "targetName": "...", "relationType": "prefers|related_to|leads_to|requires|conflicts_with", "strength": 0.0-1.0, "evidence": "..." }]
+  "relations": [{ "sourceType": "...", "sourceName": "...", "targetType": "...", "targetName": "...", "relationType": "prefers|related_to|leads_to|requires|conflicts_with", "strength": 0.0-1.0, "evidence": "..." }],
+  "corrections": [{ "oldContent": "...", "reason": "..." }]
 }`
 
 interface ExtractionResult {
@@ -153,6 +167,10 @@ interface ExtractionResult {
     relationType: string
     strength: number
     evidence: string
+  }>
+  corrections: Array<{
+    oldContent: string
+    reason: string
   }>
 }
 
@@ -218,12 +236,13 @@ async function callExtractionLLM(
         businessMemories: Array.isArray(parsed.businessMemories) ? parsed.businessMemories : [],
         agentMemories: Array.isArray(parsed.agentMemories) ? parsed.agentMemories : [],
         relations: Array.isArray(parsed.relations) ? parsed.relations : [],
+        corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
       }
     } catch (error) {
       if (error instanceof SyntaxError) {
         console.warn('[Extraction] LLM returned invalid JSON, retrying:', {
           attempt,
-          error: error.message,
+          provider: provider.name,
         })
       }
       lastError = error instanceof Error ? error : new Error(String(error))
@@ -234,9 +253,10 @@ async function callExtractionLLM(
   }
 
   console.error('[Extraction] LLM call failed after retries:', {
+    provider: provider.name,
     error: lastError?.message,
   })
-  return { businessMemories: [], agentMemories: [], relations: [] }
+  return { businessMemories: [], agentMemories: [], relations: [], corrections: [] }
 }
 
 // ============================================
@@ -437,10 +457,10 @@ function formatConversation(messages: Doc<'messages'>[]): string {
 // ============================================
 
 async function isDuplicate(
-  ctx: any,
+  ctx: { runAction: (...args: any[]) => Promise<any> },
   content: string,
-  organizationId: any
-): Promise<{ isDup: boolean; existingId?: string; existingConfidence?: number }> {
+  organizationId: Id<'organizations'>
+): Promise<{ isDup: boolean; existingId?: Id<'businessMemories'>; existingConfidence?: number }> {
   if (!isEmbeddingConfigured()) {
     return { isDup: false }
   }
@@ -468,6 +488,7 @@ async function isDuplicate(
     }
   } catch (error) {
     console.warn('[Extraction] Dedup check failed, proceeding with creation:', {
+      organizationId,
       error: error instanceof Error ? error.message : 'Unknown',
     })
   }
@@ -584,6 +605,78 @@ export const updateBusinessMemoryVersion = internalMutation({
   },
 })
 
+/**
+ * Create a new memory version that supersedes an old one due to a user correction.
+ * Preserves history: the old content is recorded in the `history` array,
+ * and the old memory is deactivated via the version chain.
+ */
+export const supersedeBusinessMemory = internalMutation({
+  args: {
+    oldId: v.id('businessMemories'),
+    organizationId: v.id('organizations'),
+    content: v.string(),
+    confidence: v.float64(),
+    importance: v.float64(),
+    subjectType: v.optional(v.string()),
+    subjectId: v.optional(v.string()),
+    reason: v.optional(v.string()),
+    source: v.union(
+      v.literal('extraction'),
+      v.literal('explicit'),
+      v.literal('tool'),
+      v.literal('system')
+    ),
+    sourceMessageId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.oldId)
+    if (!existing || existing.organizationId !== args.organizationId) {
+      throw new Error('Business memory not found or access denied')
+    }
+
+    const now = Date.now()
+    const existingHistory = existing.history ?? []
+    const newHistory = [
+      ...existingHistory,
+      {
+        previousContent: existing.content,
+        changedAt: now,
+        reason: args.reason,
+      },
+    ]
+
+    const newId = await ctx.db.insert('businessMemories', {
+      organizationId: args.organizationId,
+      type: existing.type,
+      content: args.content,
+      importance: args.importance,
+      confidence: args.confidence,
+      subjectType: args.subjectType ?? existing.subjectType,
+      subjectId: args.subjectId ?? existing.subjectId,
+      source: args.source,
+      sourceMessageId: args.sourceMessageId ?? existing.sourceMessageId,
+      decayScore: 1.0,
+      accessCount: existing.accessCount,
+      lastAccessedAt: now,
+      isActive: true,
+      isArchived: false,
+      version: existing.version + 1,
+      previousVersionId: args.oldId,
+      history: newHistory,
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    await ctx.db.patch(args.oldId, {
+      isActive: false,
+      isArchived: true,
+      updatedAt: now,
+    })
+
+    return newId
+  },
+})
+
 export const insertAgentMemory = internalMutation({
   args: {
     organizationId: v.id('organizations'),
@@ -654,17 +747,136 @@ export const insertRelation = internalMutation({
 // Memory Creation Orchestrator
 // ============================================
 
+interface CorrectionMatch {
+  memoryId: Id<'businessMemories'>
+  oldContent: string
+  reason: string
+}
+
+async function processCorrections(
+  ctx: {
+    runAction: (...args: any[]) => Promise<any>
+    runMutation: (...args: any[]) => Promise<any>
+  },
+  organizationId: Id<'organizations'>,
+  corrections: ExtractionResult['corrections']
+): Promise<{ superseded: number; matches: CorrectionMatch[] }> {
+  const matches: CorrectionMatch[] = []
+
+  for (const correction of corrections) {
+    if (!correction.oldContent || correction.oldContent.length < 5) continue
+
+    try {
+      const embedding: number[] = await ctx.runAction(internal.embedding.generateEmbedding, {
+        text: correction.oldContent,
+      })
+
+      const results: Array<{ document: Doc<'businessMemories'>; score: number }> =
+        await ctx.runAction(internal.vectorSearch.searchBusinessMemories, {
+          embedding,
+          organizationId,
+          limit: 3,
+        })
+
+      const best = results.find((r) => r.score >= 0.8)
+      if (best) {
+        matches.push({
+          memoryId: best.document._id,
+          oldContent: best.document.content,
+          reason: correction.reason,
+        })
+        console.log('[Extraction] Found memory to supersede:', {
+          organizationId: String(organizationId),
+          oldContent: best.document.content.slice(0, 80),
+          score: best.score.toFixed(3),
+          reason: correction.reason,
+        })
+      }
+    } catch (error) {
+      console.warn('[Extraction] Failed to find correction target:', {
+        organizationId: String(organizationId),
+        error: error instanceof Error ? error.message : 'Unknown',
+      })
+    }
+  }
+
+  return { superseded: matches.length, matches }
+}
+
 async function createExtractedMemories(
-  ctx: any,
-  organizationId: any,
+  ctx: {
+    runAction: (...args: any[]) => Promise<any>
+    runMutation: (...args: any[]) => Promise<any>
+  },
+  organizationId: Id<'organizations'>,
   extraction: ExtractionResult,
   sourceId: string
 ): Promise<{ memoriesCreated: number; relationsCreated: number }> {
   let memoriesCreated = 0
   let relationsCreated = 0
 
+  let correctionMatches: CorrectionMatch[] = []
+  if (extraction.corrections.length > 0) {
+    const result = await processCorrections(ctx, organizationId, extraction.corrections)
+    correctionMatches = result.matches
+    if (result.superseded > 0) {
+      console.log('[Extraction] Found corrections to apply:', {
+        organizationId: String(organizationId),
+        correctionsRequested: extraction.corrections.length,
+        matchesFound: result.superseded,
+      })
+    }
+  }
+
   for (const mem of extraction.businessMemories) {
     if (!isValidBusinessMemory(mem)) continue
+
+    const correctionForThisMem = correctionMatches.find((c) => {
+      const memLower = mem.content.toLowerCase()
+      const oldLower = c.oldContent.toLowerCase()
+      const subjectWords = oldLower
+        .split(/\s+/)
+        .filter((w) => w.length > 3)
+        .slice(0, 3)
+      return subjectWords.some((w) => memLower.includes(w))
+    })
+
+    if (correctionForThisMem) {
+      try {
+        const newId = await ctx.runMutation(internal.memoryExtraction.supersedeBusinessMemory, {
+          oldId: correctionForThisMem.memoryId,
+          organizationId,
+          content: mem.content,
+          confidence: mem.confidence,
+          importance: mem.importance,
+          subjectType: mem.subjectType,
+          subjectId: mem.subjectName,
+          reason: correctionForThisMem.reason,
+          source: 'extraction' as const,
+          sourceMessageId: sourceId,
+        })
+
+        await ctx.runAction(internal.embedding.generateAndStore, {
+          tableName: 'businessMemories' as const,
+          documentId: newId,
+          content: mem.content,
+        })
+
+        correctionMatches = correctionMatches.filter((c) => c !== correctionForThisMem)
+        memoriesCreated++
+        console.log('[Extraction] Created temporal memory (superseded old):', {
+          organizationId: String(organizationId),
+          newContent: mem.content.slice(0, 100),
+          oldContent: correctionForThisMem.oldContent.slice(0, 80),
+        })
+      } catch (error) {
+        console.warn('[Extraction] Failed to create temporal memory:', {
+          organizationId: String(organizationId),
+          error: error instanceof Error ? error.message : 'Unknown',
+        })
+      }
+      continue
+    }
 
     const dedup = await isDuplicate(ctx, mem.content, organizationId)
 
@@ -695,6 +907,8 @@ async function createExtractedMemories(
           memoriesCreated++
         } catch (error) {
           console.warn('[Extraction] Failed to update existing memory:', {
+            organizationId: String(organizationId),
+            existingId: dedup.existingId,
             error: error instanceof Error ? error.message : 'Unknown',
           })
         }
@@ -724,9 +938,31 @@ async function createExtractedMemories(
       memoriesCreated++
     } catch (error) {
       console.warn('[Extraction] Failed to create business memory:', {
-        content: mem.content.slice(0, 50),
+        organizationId: String(organizationId),
+        type: mem.type,
         error: error instanceof Error ? error.message : 'Unknown',
       })
+    }
+  }
+
+  if (correctionMatches.length > 0) {
+    for (const orphan of correctionMatches) {
+      try {
+        await ctx.runMutation(internal.memoryExtraction.archiveBusinessMemory, {
+          id: orphan.memoryId,
+          organizationId,
+        })
+        console.log('[Extraction] Archived memory (no replacement extracted):', {
+          organizationId: String(organizationId),
+          archivedContent: orphan.oldContent.slice(0, 80),
+          reason: orphan.reason,
+        })
+      } catch (error) {
+        console.warn('[Extraction] Failed to archive orphan correction:', {
+          organizationId: String(organizationId),
+          error: error instanceof Error ? error.message : 'Unknown',
+        })
+      }
     }
   }
 
@@ -751,7 +987,9 @@ async function createExtractedMemories(
       memoriesCreated++
     } catch (error) {
       console.warn('[Extraction] Failed to create agent memory:', {
-        content: mem.content.slice(0, 50),
+        organizationId: String(organizationId),
+        agentType: mem.agentType,
+        category: mem.category,
         error: error instanceof Error ? error.message : 'Unknown',
       })
     }
@@ -774,6 +1012,8 @@ async function createExtractedMemories(
       relationsCreated++
     } catch (error) {
       console.warn('[Extraction] Failed to create relation:', {
+        organizationId: String(organizationId),
+        relationType: rel.relationType,
         error: error instanceof Error ? error.message : 'Unknown',
       })
     }
@@ -787,7 +1027,11 @@ async function createExtractedMemories(
 // ============================================
 
 async function processConversationEnd(
-  ctx: any,
+  ctx: {
+    runQuery: (...args: any[]) => Promise<any>
+    runAction: (...args: any[]) => Promise<any>
+    runMutation: (...args: any[]) => Promise<any>
+  },
   event: Doc<'memoryEvents'>,
   provider: ResolvedLLMProvider
 ): Promise<{ memoriesCreated: number; relationsCreated: number }> {
@@ -810,6 +1054,12 @@ async function processConversationEnd(
   ])
 
   if (messages.length < 2) {
+    console.warn('[Extraction] Skipping event: too few messages', {
+      organizationId: String(event.organizationId),
+      conversationId,
+      messageCount: messages.length,
+      eventId: event._id,
+    })
     return { memoriesCreated: 0, relationsCreated: 0 }
   }
 
@@ -820,7 +1070,10 @@ async function processConversationEnd(
 }
 
 async function processToolOutcome(
-  ctx: any,
+  ctx: {
+    runAction: (...args: any[]) => Promise<any>
+    runMutation: (...args: any[]) => Promise<any>
+  },
   event: Doc<'memoryEvents'>,
   provider: ResolvedLLMProvider
 ): Promise<{ memoriesCreated: number; relationsCreated: number }> {
@@ -860,6 +1113,9 @@ async function processToolOutcome(
     return { memoriesCreated: 1, relationsCreated: 0 }
   } catch (error) {
     console.error('[Extraction] Failed to create agent memory from tool outcome:', {
+      organizationId: String(event.organizationId),
+      eventId: event._id,
+      toolName,
       error: error instanceof Error ? error.message : 'Unknown',
     })
     return { memoriesCreated: 0, relationsCreated: 0 }
@@ -903,6 +1159,7 @@ export const processExtractionBatch = internalAction({
       return { processed: 0, memoriesCreated: 0, relationsCreated: 0, errors: 0 }
     }
 
+    const batchStartMs = Date.now()
     let totalProcessed = 0
     let totalMemoriesCreated = 0
     let totalRelationsCreated = 0
@@ -931,24 +1188,37 @@ export const processExtractionBatch = internalAction({
       } catch (error) {
         totalErrors++
         console.error('[Extraction] Failed to process event:', {
+          organizationId: String(event.organizationId),
           eventId: event._id,
           eventType: event.eventType,
           error: error instanceof Error ? error.message : 'Unknown',
         })
 
-        await ctx.runMutation(internal.memoryEvents.markProcessed, {
-          id: event._id,
-          organizationId: event.organizationId,
-        })
+        const eventAgeMs = Date.now() - event.createdAt
+        const maxRetryWindowMs = MAX_EVENT_RETRIES * 2 * 60 * 1000
+        if (eventAgeMs > maxRetryWindowMs) {
+          await ctx.runMutation(internal.memoryEvents.markProcessed, {
+            id: event._id,
+            organizationId: event.organizationId,
+          })
+          console.warn('[Extraction] Event exceeded retry window, marking processed:', {
+            eventId: event._id,
+            ageMinutes: Math.round(eventAgeMs / 60000),
+          })
+        }
       }
     }
 
-    console.log('[Extraction] Batch complete:', {
-      processed: totalProcessed,
-      memoriesCreated: totalMemoriesCreated,
-      relationsCreated: totalRelationsCreated,
-      errors: totalErrors,
-    })
+    if (totalProcessed > 0 || totalErrors > 0) {
+      console.log('[Extraction] Batch complete:', {
+        processed: totalProcessed,
+        memoriesCreated: totalMemoriesCreated,
+        relationsCreated: totalRelationsCreated,
+        errors: totalErrors,
+        durationMs: Date.now() - batchStartMs,
+        provider: provider.name,
+      })
+    }
 
     return {
       processed: totalProcessed,
@@ -956,5 +1226,179 @@ export const processExtractionBatch = internalAction({
       relationsCreated: totalRelationsCreated,
       errors: totalErrors,
     }
+  },
+})
+
+// ============================================
+// Deduplication Sweep
+// ============================================
+
+/**
+ * One-time maintenance action to find and archive duplicate business memories.
+ * Uses pairwise cosine similarity via vector search.
+ * Run manually: npx convex run --no-push memoryExtraction:deduplicateMemories '{"organizationId": "..."}'
+ */
+export const deduplicateMemories = internalAction({
+  args: {
+    organizationId: v.id('organizations'),
+    dryRun: v.optional(v.boolean()),
+    threshold: v.optional(v.float64()),
+  },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{ checked: number; archived: number; kept: number; pairs: string[] }> => {
+    const similarityThreshold = args.threshold ?? DEDUP_SIMILARITY_THRESHOLD
+    const isDryRun = args.dryRun ?? false
+
+    const memories: Doc<'businessMemories'>[] = await ctx.runQuery(
+      internal.memoryExtraction.getAllActiveBusinessMemories,
+      { organizationId: args.organizationId }
+    )
+
+    if (memories.length < 2) {
+      return { checked: memories.length, archived: 0, kept: memories.length, pairs: [] }
+    }
+
+    const archivedIds = new Set<string>()
+    const pairs: string[] = []
+
+    for (const mem of memories) {
+      if (archivedIds.has(mem._id)) continue
+      if (!mem.embedding) continue
+
+      let results: Array<{ document: Doc<'businessMemories'>; score: number }>
+      try {
+        results = await ctx.runAction(internal.vectorSearch.searchBusinessMemories, {
+          embedding: mem.embedding,
+          organizationId: args.organizationId,
+          limit: 10,
+        })
+      } catch {
+        continue
+      }
+
+      for (const result of results) {
+        if (result.document._id === mem._id) continue
+        if (archivedIds.has(result.document._id)) continue
+        if (result.score < similarityThreshold) continue
+
+        const keepMem =
+          mem.confidence > result.document.confidence ||
+          (mem.confidence === result.document.confidence &&
+            mem.version >= result.document.version) ||
+          (mem.confidence === result.document.confidence &&
+            mem.version === result.document.version &&
+            mem.createdAt >= result.document.createdAt)
+            ? mem
+            : result.document
+        const archiveMem = keepMem._id === mem._id ? result.document : mem
+
+        pairs.push(
+          `[${result.score.toFixed(3)}] KEEP: "${keepMem.content.slice(0, 60)}..." | ARCHIVE: "${archiveMem.content.slice(0, 60)}..."`
+        )
+
+        if (!isDryRun) {
+          await ctx.runMutation(internal.memoryExtraction.archiveBusinessMemory, {
+            id: archiveMem._id,
+            organizationId: args.organizationId,
+          })
+        }
+
+        archivedIds.add(archiveMem._id)
+      }
+    }
+
+    return {
+      checked: memories.length,
+      archived: archivedIds.size,
+      kept: memories.length - archivedIds.size,
+      pairs,
+    }
+  },
+})
+
+export const getAllActiveBusinessMemories = internalQuery({
+  args: { organizationId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('businessMemories')
+      .withIndex('by_org_active', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isActive', true)
+      )
+      .collect()
+  },
+})
+
+export const archiveBusinessMemory = internalMutation({
+  args: {
+    id: v.id('businessMemories'),
+    organizationId: v.id('organizations'),
+  },
+  handler: async (ctx, args) => {
+    const mem = await ctx.db.get(args.id)
+    if (!mem || mem.organizationId !== args.organizationId) return
+    await ctx.db.patch(args.id, {
+      isActive: false,
+      isArchived: true,
+      updatedAt: Date.now(),
+    })
+  },
+})
+
+/**
+ * Re-extract memories from a specific conversation.
+ * Use when extraction failed (e.g., stale conversationId in event data).
+ * Run: npx convex run --no-push memoryExtraction:reExtractConversation '{"organizationId": "...", "conversationId": "..."}'
+ */
+export const reExtractConversation = internalAction({
+  args: {
+    organizationId: v.id('organizations'),
+    conversationId: v.string(),
+  },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{ memoriesCreated: number; relationsCreated: number; messageCount: number }> => {
+    const provider = resolveLLMProvider()
+
+    const [messages, existingMemories] = await Promise.all([
+      ctx.runQuery(internal.memoryExtraction.getConversationMessages, {
+        organizationId: args.organizationId,
+        conversationId: args.conversationId,
+        limit: MAX_MESSAGES_FOR_EXTRACTION,
+      }),
+      ctx.runQuery(internal.memoryExtraction.getExistingMemoryContents, {
+        organizationId: args.organizationId,
+        limit: 50,
+      }),
+    ])
+
+    if (messages.length < 2) {
+      console.warn('[Extraction] reExtractConversation: not enough messages', {
+        conversationId: args.conversationId,
+        messageCount: messages.length,
+      })
+      return { memoriesCreated: 0, relationsCreated: 0, messageCount: messages.length }
+    }
+
+    const conversationText = formatConversation(messages)
+    const extraction = await callExtractionLLM(provider, conversationText, existingMemories)
+
+    console.log('[Extraction] reExtractConversation LLM result:', {
+      conversationId: args.conversationId,
+      businessMemories: extraction.businessMemories.length,
+      agentMemories: extraction.agentMemories.length,
+      relations: extraction.relations.length,
+    })
+
+    const result = await createExtractedMemories(
+      ctx,
+      args.organizationId,
+      extraction,
+      args.conversationId
+    )
+
+    return { ...result, messageCount: messages.length }
   },
 })
