@@ -214,11 +214,13 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
 
   const { embeddings, totalTokens } = await callEmbeddingsAPI(provider, trimmedText)
 
-  console.log(`[Embedding] Generated via ${provider.name}:`, {
-    textLength: trimmedText.length,
-    dimensions: embeddings[0].length,
-    tokens: totalTokens,
-  })
+  if (process.env.DEBUG_MEMORY === 'true') {
+    console.log(`[Embedding] Generated via ${provider.name}:`, {
+      textLength: trimmedText.length,
+      dimensions: embeddings[0].length,
+      tokens: totalTokens,
+    })
+  }
 
   return embeddings[0]
 }
@@ -276,11 +278,13 @@ export const generateEmbeddings = internalAction({
     const provider = resolveProvider()
     const { embeddings, totalTokens } = await callEmbeddingsAPI(provider, trimmedTexts)
 
-    console.log(`[Embedding] Generated batch via ${provider.name}:`, {
-      count: trimmedTexts.length,
-      dimensions: embeddings[0]?.length ?? 0,
-      tokens: totalTokens,
-    })
+    if (process.env.DEBUG_MEMORY === 'true') {
+      console.log(`[Embedding] Generated batch via ${provider.name}:`, {
+        count: trimmedTexts.length,
+        dimensions: embeddings[0]?.length ?? 0,
+        tokens: totalTokens,
+      })
+    }
 
     return embeddings
   },
@@ -315,11 +319,12 @@ export const generateAndStore = internalAction({
         embedding,
       })
 
-      console.log('[Embedding] Stored embedding:', {
-        table: args.tableName,
-        documentId: args.documentId,
-        contentLength: args.content.length,
-      })
+      if (process.env.DEBUG_MEMORY === 'true') {
+        console.log('[Embedding] Stored:', {
+          table: args.tableName,
+          documentId: args.documentId,
+        })
+      }
     } catch (error) {
       console.error('[Embedding] Failed to generate/store embedding:', {
         table: args.tableName,
