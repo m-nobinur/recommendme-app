@@ -76,7 +76,7 @@ const INVOICING_PATTERN =
   /\b(invoice|bill|payment|charge|price|cost|amount|total|due|paid|receipt|estimate|quote)\b/i
 
 const MEMORY_QUERY_PATTERN =
-  /\b(remember|recall|what\s+do\s+you\s+know|what\s+did\s+(?:i|we)\s+(?:say|tell|mention)|forget|preference|prefer|always|never|last\s+time)\b/i
+  /\b(remember|recall|what\s+do\s+you\s+know|(?:know|tell\s+me)\s+about|what\s+did\s+(?:i|we)\s+(?:say|tell|mention)|forget|preference|prefer|always|never|last\s+time)\b/i
 
 // ============================================
 // ENTITY PATTERNS (hoisted to module scope)
@@ -87,6 +87,22 @@ const MEMORY_QUERY_PATTERN =
  * Excludes common non-name capitalized words.
  */
 const PROPER_NOUN_PATTERN = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b/g
+
+/**
+ * Single-word name pattern: catches "Sarah", "Mike", etc.
+ * Applied after multi-word pattern to avoid duplicates.
+ * Only matches words with 3+ chars that start with a capital letter,
+ * preceded by name-context keywords.
+ */
+const SINGLE_NAME_CONTEXT_PATTERN =
+  /\b(?:about|for|with|from|named?|called|contact|client|customer|lead)\s+([A-Z][a-z]{2,})\b/gi
+
+/**
+ * Lowercase name pattern: catches "sarah", "mike" in name-context phrases.
+ * Falls back when proper capitalization is missing.
+ */
+const LOWERCASE_NAME_CONTEXT_PATTERN =
+  /\b(?:about|for|with|from|named?|called|contact|client|customer|lead)\s+([a-z]{3,})\b/gi
 
 /** Common words that look like proper nouns but aren't */
 const NON_NAME_WORDS = new Set([
@@ -111,6 +127,26 @@ const NON_NAME_WORDS = new Set([
   'December',
   'New Lead',
   'The Client',
+])
+
+const NON_NAME_LOWERCASE = new Set([
+  'today',
+  'tomorrow',
+  'yesterday',
+  'morning',
+  'afternoon',
+  'evening',
+  'nothing',
+  'something',
+  'everything',
+  'anyone',
+  'someone',
+  'everyone',
+  'the',
+  'that',
+  'this',
+  'them',
+  'their',
 ])
 
 /** Date-like patterns */
@@ -239,9 +275,14 @@ async function detectIntentsWithAI(message: string): Promise<QueryIntent[]> {
 
 /**
  * Extract entities (names, dates, amounts) from message text.
+ * Uses a multi-pass strategy:
+ *   1. Multi-word proper nouns ("Sarah Johnson")
+ *   2. Single capitalized names in context ("about Sarah")
+ *   3. Lowercase names in context ("about sarah") -- normalized to Title Case
  */
 function extractEntities(message: string): QueryEntity[] {
   const entities: QueryEntity[] = []
+  const seenNames = new Set<string>()
 
   PROPER_NOUN_PATTERN.lastIndex = 0
   for (
@@ -250,8 +291,38 @@ function extractEntities(message: string): QueryEntity[] {
     nameMatch = PROPER_NOUN_PATTERN.exec(message)
   ) {
     const name = nameMatch[1]
-    if (!NON_NAME_WORDS.has(name)) {
+    if (!NON_NAME_WORDS.has(name) && !seenNames.has(name.toLowerCase())) {
+      seenNames.add(name.toLowerCase())
       entities.push({ type: 'customer', value: name })
+    }
+  }
+
+  SINGLE_NAME_CONTEXT_PATTERN.lastIndex = 0
+  for (
+    let match = SINGLE_NAME_CONTEXT_PATTERN.exec(message);
+    match !== null;
+    match = SINGLE_NAME_CONTEXT_PATTERN.exec(message)
+  ) {
+    const name = match[1]
+    if (!NON_NAME_WORDS.has(name) && !seenNames.has(name.toLowerCase())) {
+      seenNames.add(name.toLowerCase())
+      entities.push({ type: 'customer', value: name })
+    }
+  }
+
+  if (entities.filter((e) => e.type === 'customer').length === 0) {
+    LOWERCASE_NAME_CONTEXT_PATTERN.lastIndex = 0
+    for (
+      let match = LOWERCASE_NAME_CONTEXT_PATTERN.exec(message);
+      match !== null;
+      match = LOWERCASE_NAME_CONTEXT_PATTERN.exec(message)
+    ) {
+      const raw = match[1]
+      if (!NON_NAME_LOWERCASE.has(raw) && !seenNames.has(raw.toLowerCase())) {
+        const titleCase = raw.charAt(0).toUpperCase() + raw.slice(1)
+        seenNames.add(raw.toLowerCase())
+        entities.push({ type: 'customer', value: titleCase })
+      }
     }
   }
 
