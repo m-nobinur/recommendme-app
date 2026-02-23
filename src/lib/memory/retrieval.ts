@@ -128,7 +128,9 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
   }
 
   if (!isValidConvexUrl(params.convexUrl)) {
-    console.warn('[Reme:Memory] Skipping retrieval due to invalid Convex URL')
+    console.warn('[Reme:Memory] Skipping retrieval due to invalid Convex URL', {
+      organizationId: params.organizationId,
+    })
     return {
       context: '',
       memoriesUsed: 0,
@@ -151,18 +153,24 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
   const firstSubject = regexAnalysis.subjectHints[0]
   const firstContextType = regexAnalysis.requiredContextTypes[0]
 
+  const subjectName = firstSubject?.subjectId ?? firstSubject?.name
+  let searchQuery = params.query
+  if (subjectName && params.query.trim().split(/\s+/).length <= 8) {
+    searchQuery = `Information about a person named ${subjectName}: ${params.query}`
+  }
+
   let rawResults: RawSearchResults
 
   try {
     const convex = getRetrievalClient(params.convexUrl)
     rawResults = await convex.action(api.memoryRetrieval.retrieveContext, {
-      query: params.query,
+      query: searchQuery,
       organizationId: params.organizationId as Id<'organizations'>,
       nicheId: params.nicheId,
       agentType: params.agentType ?? 'chat',
       keywordType: firstContextType,
       keywordSubjectType: firstSubject?.subjectType,
-      keywordSubjectId: firstSubject?.subjectId ?? firstSubject?.name,
+      keywordSubjectId: subjectName,
     })
   } catch (error) {
     console.error('[Reme:Memory] Retrieval failed:', {
