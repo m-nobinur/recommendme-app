@@ -55,10 +55,6 @@ import type {
   PlatformMemoryCategory,
 } from '@/types'
 
-// ============================================
-// TYPES
-// ============================================
-
 export type MemoryLayer = 'platform' | 'niche' | 'business' | 'agent'
 
 export interface ValidationResult {
@@ -76,10 +72,6 @@ export interface MemoryInput {
   category?: string
 }
 
-// ============================================
-// CONSTANTS
-// ============================================
-
 const MIN_CONTENT_LENGTH = 10
 const MAX_CONTENT_LENGTH = 500
 
@@ -93,10 +85,6 @@ const MAX_IMPORTANCE = 1.0
 
 /** Cosine similarity threshold for duplicate detection */
 export const DUPLICATE_SIMILARITY_THRESHOLD = 0.92
-
-// ============================================
-// PII DETECTION PATTERNS
-// ============================================
 
 /**
  * Pre-compiled regex patterns for PII detection.
@@ -127,10 +115,6 @@ interface PiiDetection {
   found: boolean
   count: number
 }
-
-// ============================================
-// VALID VALUES
-// ============================================
 
 const VALID_BUSINESS_MEMORY_TYPES: readonly BusinessMemoryType[] = [
   'fact',
@@ -176,10 +160,6 @@ const VALID_EVENT_SOURCE_TYPES: readonly MemoryEventSourceType[] = [
   'tool_call',
   'agent_action',
 ] as const
-
-// ============================================
-// CORE VALIDATION
-// ============================================
 
 /**
  * Validate memory content length
@@ -243,10 +223,6 @@ export function validateImportance(importance: number): ValidationResult {
 
   return { valid: errors.length === 0, errors, warnings }
 }
-
-// ============================================
-// PII DETECTION
-// ============================================
 
 /**
  * Detect PII patterns in content.
@@ -312,10 +288,6 @@ export function validatePiiForLayer(content: string, layer: MemoryLayer): Valida
 
   return { valid: errors.length === 0, errors, warnings }
 }
-
-// ============================================
-// TYPE-SPECIFIC VALIDATION
-// ============================================
 
 /**
  * Validate business memory type
@@ -410,10 +382,6 @@ export function validateEventSourceType(sourceType: string): ValidationResult {
 
   return { valid: errors.length === 0, errors, warnings }
 }
-
-// ============================================
-// COMPOSITE VALIDATION
-// ============================================
 
 /**
  * Merge multiple validation results
@@ -544,10 +512,6 @@ export function validateMemoryRelation(input: {
 
   return { valid: errors.length === 0, errors, warnings }
 }
-
-// ============================================
-// EXPORTS
-// ============================================
 
 export const MEMORY_LIMITS = {
   MIN_CONTENT_LENGTH,

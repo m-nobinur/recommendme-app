@@ -36,10 +36,6 @@ import { internalAction, internalMutation } from './_generated/server'
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
-// ============================================
-// Constants
-// ============================================
-
 const EMBEDDING_MODEL = 'openai/text-embedding-3-large'
 const OPENAI_EMBEDDING_MODEL = 'text-embedding-3-large'
 const EMBEDDING_DIMENSIONS = 3072
@@ -78,10 +74,6 @@ const memoryTableNames = v.union(
   v.literal('agentMemories')
 )
 
-// ============================================
-// Provider Resolution
-// ============================================
-
 /**
  * Check if any embedding provider is configured (non-throwing).
  * Used upstream to skip memory retrieval entirely when embeddings are unavailable.
@@ -117,10 +109,6 @@ function resolveProvider(): ResolvedProvider {
       'No embedding provider configured. Set OPENROUTER_API_KEY (preferred) or OPENAI_API_KEY.',
   })
 }
-
-// ============================================
-// Core API Call (shared by all public functions)
-// ============================================
 
 /**
  * Call an OpenAI-compatible embeddings API with retry logic.
@@ -225,10 +213,6 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
   return embeddings[0]
 }
 
-// ============================================
-// Generate Single Embedding (internalAction)
-// ============================================
-
 /**
  * Generate a single embedding vector from text.
  * Returns a 3072-dimension float64 array.
@@ -243,10 +227,6 @@ export const generateEmbedding = internalAction({
     return generateEmbeddingVector(args.text)
   },
 })
-
-// ============================================
-// Generate Batch Embeddings (internalAction)
-// ============================================
 
 /**
  * Generate embeddings for multiple texts in a single API call.
@@ -290,10 +270,6 @@ export const generateEmbeddings = internalAction({
   },
 })
 
-// ============================================
-// Generate and Store Embedding (internalAction)
-// ============================================
-
 /**
  * Generate an embedding for a memory document and store it.
  * Scheduled by memory CRUD mutations via ctx.scheduler.runAfter(0, ...).
@@ -334,10 +310,6 @@ export const generateAndStore = internalAction({
     }
   },
 })
-
-// ============================================
-// Patch Embedding on Document (internalMutation)
-// ============================================
 
 /**
  * Patch the embedding field on a memory document.

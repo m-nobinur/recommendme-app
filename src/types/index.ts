@@ -1,9 +1,5 @@
 import type { Id } from '@convex/_generated/dataModel'
 
-// ============================================
-// USER TYPES
-// ============================================
-
 export interface User {
   id: string
   email: string
@@ -29,10 +25,6 @@ export interface UserSettings {
   theme?: string
 }
 
-// ============================================
-// ORGANIZATION TYPES
-// ============================================
-
 export interface Organization {
   _id: Id<'organizations'>
   name: string
@@ -46,10 +38,6 @@ export interface OrganizationSettings {
   modelTier?: string
   nicheId?: string
 }
-
-// ============================================
-// LEAD TYPES
-// ============================================
 
 export type LeadStatus = 'New' | 'Contacted' | 'Qualified' | 'Proposal' | 'Booked' | 'Closed'
 
@@ -106,10 +94,6 @@ export interface LeadStats {
   thisMonth: number
 }
 
-// ============================================
-// APPOINTMENT TYPES
-// ============================================
-
 export type AppointmentStatus = 'scheduled' | 'completed' | 'cancelled'
 
 export interface Appointment {
@@ -143,10 +127,6 @@ export interface AppointmentCreateInput {
   title?: string
   notes?: string
 }
-
-// ============================================
-// INVOICE TYPES
-// ============================================
 
 export type InvoiceStatus = 'draft' | 'sent' | 'paid'
 
@@ -186,10 +166,6 @@ export interface InvoiceCreateInput {
   items?: string[]
   dueDate?: string
 }
-
-// ============================================
-// MESSAGE & CHAT TYPES
-// ============================================
 
 export type MessageRole = 'user' | 'assistant' | 'system'
 
@@ -380,10 +356,6 @@ export interface MemoryEvent {
   processedAt?: number
   createdAt: number
 }
-
-// ============================================
-// NOTIFICATION TYPES
-// ============================================
 
 export interface Notification {
   id: string

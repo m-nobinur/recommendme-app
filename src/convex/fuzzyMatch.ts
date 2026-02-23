@@ -24,10 +24,6 @@ const FUZZY_MATCH_THRESHOLD = 0.5
 const PHONETIC_BONUS = 0.25
 const EDIT_DISTANCE_WEIGHT = 0.75
 
-// ============================================
-// Damerau-Levenshtein Distance
-// ============================================
-
 /**
  * Damerau-Levenshtein: like Levenshtein but transpositions (ab→ba)
  * count as 1 edit instead of 2. Crucial for typo detection since
@@ -63,10 +59,6 @@ function normalizedEditDistance(a: string, b: string): number {
   if (maxLen === 0) return 1.0
   return 1.0 - damerauLevenshtein(a, b) / maxLen
 }
-
-// ============================================
-// Double Metaphone (simplified)
-// ============================================
 
 /**
  * Simplified Metaphone that covers the most common name transformations.
@@ -234,10 +226,6 @@ function metaphone(input: string): string {
   return code.join('')
 }
 
-// ============================================
-// Combined Fuzzy Score
-// ============================================
-
 /**
  * Compute a 0-1 fuzzy match score between two name strings.
  * Combines normalized Levenshtein distance with phonetic similarity.
@@ -292,10 +280,6 @@ function fuzzyScoreMultiWord(query: string, candidate: string): number {
 
   return totalScore / qWords.length
 }
-
-// ============================================
-// Public API
-// ============================================
 
 export interface FuzzyMatchResult {
   matched: boolean

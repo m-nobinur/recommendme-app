@@ -30,17 +30,9 @@ import { fuzzyMatchInContent, fuzzyMatchName } from './fuzzyMatch'
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
-// ============================================
-// Constants
-// ============================================
-
 const VECTOR_WEIGHT = 0.7
 const KEYWORD_WEIGHT = 0.3
 const RRF_K = 60 // Standard RRF constant
-
-// ============================================
-// Keyword Search (Internal Queries)
-// ============================================
 
 /**
  * Keyword-based search for business memories using existing indexes.
@@ -145,10 +137,6 @@ export const keywordSearchBusiness = internalQuery({
   },
 })
 
-// ============================================
-// Hybrid Search
-// ============================================
-
 /**
  * Hybrid search for business memories combining vector + keyword paths.
  *
@@ -220,7 +208,6 @@ export const hybridSearchBusinessMemories = internalAction({
       }
     >()
 
-    // Score vector results
     for (let i = 0; i < vectorResults.length; i++) {
       const result = vectorResults[i]
       const docId = result.document._id
@@ -234,7 +221,6 @@ export const hybridSearchBusinessMemories = internalAction({
       })
     }
 
-    // Score keyword results and merge
     for (let i = 0; i < keywordResults.length; i++) {
       const doc = keywordResults[i]
       const docId = doc._id
@@ -254,7 +240,6 @@ export const hybridSearchBusinessMemories = internalAction({
       }
     }
 
-    // Sort by combined RRF score and return top results
     const fusedResults = Array.from(scoreMap.values())
       .sort((a, b) => b.rrfScore - a.rrfScore)
       .slice(0, limit)

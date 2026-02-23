@@ -31,10 +31,6 @@
 
 import type { ScoredMemory, ScoredSearchResults } from './scoring'
 
-// ============================================
-// TYPES
-// ============================================
-
 export interface BudgetAllocation {
   platform: number
   niche: number
@@ -82,10 +78,6 @@ export interface TokenBudgetConfig {
   maxReallocationPerSection?: number
 }
 
-// ============================================
-// CONSTANTS (hardcoded defaults)
-// ============================================
-
 type LayerKey = 'platform' | 'niche' | 'business' | 'agent'
 
 interface SelectedLayerResults {
@@ -111,10 +103,6 @@ const HARDCODED_DEFAULTS: Required<TokenBudgetConfig> = {
  * Unused budget from lower-priority sections flows to higher ones.
  */
 const REALLOCATION_PRIORITY: readonly LayerKey[] = ['business', 'agent', 'niche', 'platform']
-
-// ============================================
-// CONFIGURATION RESOLUTION
-// ============================================
 
 /** Cached resolved config (env vars read once) */
 let resolvedConfig: Required<TokenBudgetConfig> | null = null
@@ -198,10 +186,6 @@ export function getTokenBudgetConfig(override?: TokenBudgetConfig): Required<Tok
   return mergeConfig(override)
 }
 
-// ============================================
-// TOKEN ESTIMATION
-// ============================================
-
 /**
  * Approximate token count for a string.
  *
@@ -220,10 +204,6 @@ export function estimateTokens(text: string): number {
 function getMemoryContent(doc: Record<string, unknown>): string {
   return (doc.content as string) ?? ''
 }
-
-// ============================================
-// SELECTION LOGIC
-// ============================================
 
 /**
  * Greedy selection: iterate through scored memories descending by score,
@@ -311,10 +291,6 @@ function enforceTotalBudget(
     totalUsed,
   }
 }
-
-// ============================================
-// MAIN EXPORT
-// ============================================
 
 /**
  * Allocate token budget across memory layers and select memories

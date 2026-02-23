@@ -29,10 +29,6 @@ import type { AgentMemory, BusinessMemory, NicheMemory, PlatformMemory } from '@
 import type { ScoredMemory } from './scoring'
 import { estimateTokens } from './tokenBudget'
 
-// ============================================
-// TYPES
-// ============================================
-
 export interface FormattedContext {
   text: string
   memoryIds: string[]
@@ -40,19 +36,11 @@ export interface FormattedContext {
   memoriesUsed: number
 }
 
-// ============================================
-// CONSTANTS
-// ============================================
-
 const MAX_ENTRY_LENGTH = 200
 const TRUNCATION_SUFFIX = '...'
 const TRUNCATION_LIMIT = MAX_ENTRY_LENGTH - TRUNCATION_SUFFIX.length
 
 const CUSTOMER_INFO_TYPES: readonly string[] = ['fact', 'preference', 'context']
-
-// ============================================
-// FORMATTING HELPERS
-// ============================================
 
 /**
  * Truncate content to maximum length, appending '...' if truncated.
@@ -77,10 +65,6 @@ function appendEntry(
   parts.push(`- [${tag}] ${truncate(content)} (${metricLabel}: ${metricValue.toFixed(2)})`)
   ids.push(id)
 }
-
-// ============================================
-// SECTION FORMATTERS
-// ============================================
 
 /**
  * Format business memories into structured sections.
@@ -145,7 +129,6 @@ function formatBusinessMemories(
     parts.push('')
   }
 
-  // Relationships section
   const relationships = grouped.get('relationship')
   if (relationships) {
     parts.push('## Relationships')
@@ -163,7 +146,6 @@ function formatBusinessMemories(
     parts.push('')
   }
 
-  // Episodic section
   const episodic = grouped.get('episodic')
   if (episodic) {
     parts.push('## Recent Context')

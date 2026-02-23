@@ -32,10 +32,6 @@ import type { BusinessMemoryType } from '@/types'
 import { getAIConfig } from '../ai/config'
 import { createAIProvider } from '../ai/providers'
 
-// ============================================
-// TYPES
-// ============================================
-
 export type QueryIntent =
   | 'scheduling'
   | 'lead_management'
@@ -62,10 +58,6 @@ export interface QueryAnalysis {
   aiAssisted?: boolean
 }
 
-// ============================================
-// INTENT PATTERNS (hoisted to module scope)
-// ============================================
-
 const SCHEDULING_PATTERN =
   /\b(schedule|appointment|book|booking|cancel|reschedule|available|availability|calendar|time\s?slot|when|remind(?:er)?)\b/i
 
@@ -77,10 +69,6 @@ const INVOICING_PATTERN =
 
 const MEMORY_QUERY_PATTERN =
   /\b(remember|recall|what\s+do\s+you\s+know|(?:know|tell\s+me)\s+about|what\s+did\s+(?:i|we)\s+(?:say|tell|mention)|forget|preference|prefer|always|never|last\s+time)\b/i
-
-// ============================================
-// ENTITY PATTERNS (hoisted to module scope)
-// ============================================
 
 /**
  * Detect capitalized proper nouns (2+ words) that likely represent names.
@@ -156,10 +144,6 @@ const DATE_PATTERN =
 /** Currency/amount patterns */
 const AMOUNT_PATTERN = /\$\s?[\d,]+(?:\.\d{2})?|\b\d+(?:,\d{3})*(?:\.\d{2})?\s*(?:dollars?|usd)\b/gi
 
-// ============================================
-// INTENT TO MEMORY TYPE MAPPING
-// ============================================
-
 const INTENT_CONTEXT_MAP: Record<QueryIntent, BusinessMemoryType[]> = {
   scheduling: ['fact', 'preference', 'instruction'],
   lead_management: ['fact', 'relationship', 'context'],
@@ -167,10 +151,6 @@ const INTENT_CONTEXT_MAP: Record<QueryIntent, BusinessMemoryType[]> = {
   memory_query: ['fact', 'preference', 'instruction', 'context', 'relationship'],
   general: ['fact', 'instruction'],
 }
-
-// ============================================
-// AI INTENT DETECTION SCHEMA
-// ============================================
 
 /** Zod schema for structured AI intent output */
 const aiIntentSchema = z.object({
@@ -195,10 +175,6 @@ Rules:
 - A message can have multiple intents (e.g. "schedule a followup with the lead" = scheduling + lead_management)
 - Short/ambiguous messages should still be classified if there's any CRM-related signal`
 
-// ============================================
-// CACHED RESULTS
-// ============================================
-
 /** Pre-built empty analysis result for empty/whitespace-only input (rule 7.8, 7.4) */
 const EMPTY_ANALYSIS: QueryAnalysis = {
   intents: ['general'],
@@ -215,10 +191,6 @@ const VALID_INTENTS = new Set<QueryIntent>([
   'memory_query',
   'general',
 ])
-
-// ============================================
-// ANALYSIS FUNCTIONS
-// ============================================
 
 /**
  * Detect intents from message text using regex patterns.
@@ -379,10 +351,6 @@ function buildSubjectHints(entities: QueryEntity[]): SubjectHint[] {
 
   return hints
 }
-
-// ============================================
-// MAIN EXPORTS
-// ============================================
 
 /**
  * Analyze a user message (sync path).
