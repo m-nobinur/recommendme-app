@@ -93,12 +93,6 @@ function extractTextFromParts(parts: Array<{ type?: string; text?: string }> | u
     .join('')
 }
 
-// ── View state machine ──────────────────────────────────────────────
-//
-//   hydrating → (store ready) →
-//     - had existing conversation? → loading_history → ready
-//     - fresh conversation?        → ready  (skip fetch)
-//
 type ViewState = 'hydrating' | 'loading_history' | 'ready'
 
 export function ChatContainer() {
@@ -177,7 +171,6 @@ export function ChatContainer() {
   const shouldScrollAfterHistory = useRef(false)
   const historyMessageCount = useRef(0)
 
-  // Fetch history
   useEffect(() => {
     if (viewState !== 'loading_history' || !activeConversationId) return
 
@@ -207,7 +200,6 @@ export function ChatContainer() {
     }
   }, [viewState, activeConversationId, setMessages])
 
-  // Scroll to bottom after history renders
   useEffect(() => {
     if (!shouldScrollAfterHistory.current || viewState !== 'ready' || messages.length === 0) return
     shouldScrollAfterHistory.current = false
@@ -224,7 +216,6 @@ export function ChatContainer() {
     })
   }, [viewState, messages.length])
 
-  // Load more (older) messages — functional setState
   const loadMoreMessages = useCallback(() => {
     if (!activeConversationId || historyCursor === null || isLoadingMore) return
 
@@ -393,7 +384,6 @@ export function ChatContainer() {
 
   const errorMessage = error?.message
 
-  // ── Render ─────────────────────────────────────────────────────────
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       <div
@@ -482,8 +472,6 @@ export function ChatContainer() {
     </div>
   )
 }
-
-// ── Message list — extracted to prevent parent re-renders (Rule 5.5) ─
 
 interface MessageListProps {
   messages: UIMessage[]
