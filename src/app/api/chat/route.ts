@@ -189,11 +189,11 @@ export async function POST(req: Request) {
     if (chatConfig.debug && memoryResult) {
       console.log('[Reme:Memory] Retrieved context:', {
         requestId,
+        organizationId,
         memoriesUsed: memoryResult.memoriesUsed,
         tokenCount: memoryResult.tokenCount,
         latencyMs: memoryResult.latencyMs,
         layerBreakdown: memoryResult.layerBreakdown,
-        contextPreview: memoryResult.context.slice(0, 300) || '(empty)',
       })
     }
 
@@ -283,6 +283,8 @@ export async function POST(req: Request) {
               } catch (err) {
                 console.error('[Reme:Chat] Failed to persist assistant message:', {
                   requestId,
+                  organizationId,
+                  conversationId: validConversationId,
                   error: err instanceof Error ? err.message : 'Unknown error',
                 })
               }
@@ -311,6 +313,8 @@ export async function POST(req: Request) {
               } catch (err) {
                 console.error('[Reme:Chat] Failed to emit conversation_end event:', {
                   requestId,
+                  organizationId,
+                  conversationId: validConversationId,
                   error: err instanceof Error ? err.message : 'Unknown error',
                 })
               }
@@ -338,6 +342,7 @@ export async function POST(req: Request) {
                   } catch (err) {
                     console.error('[Reme:Chat] Failed to emit tool event:', {
                       requestId,
+                      organizationId,
                       toolName: tc.name,
                       error: err instanceof Error ? err.message : 'Unknown error',
                     })
