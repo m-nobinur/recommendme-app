@@ -5,12 +5,14 @@ import { z } from 'zod'
 import type { LeadStatus } from '@/types'
 
 /**
- * Tool context containing user and organization info
+ * Tool context containing user and organization info.
+ * When `convexClient` is provided, tools reuse it instead of creating a new one.
  */
 export interface ToolContext {
   organizationId: string
   userId: string
   convexUrl: string
+  convexClient?: ConvexHttpClient
 }
 
 /**
@@ -88,7 +90,7 @@ function getApi() {
  * Create CRM tools with Convex integration
  */
 export function createCRMTools(ctx: ToolContext) {
-  const convex = new ConvexHttpClient(ctx.convexUrl)
+  const convex = ctx.convexClient ?? new ConvexHttpClient(ctx.convexUrl)
   const orgId = asOrganizationId(ctx.organizationId)
   const userId = asAppUserId(ctx.userId)
 
@@ -387,3 +389,5 @@ export function createCRMTools(ctx: ToolContext) {
  * Export tool types for use in API routes
  */
 export type CRMTools = ReturnType<typeof createCRMTools>
+
+export { createMemoryTools, type MemoryTools } from './memory'

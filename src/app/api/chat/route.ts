@@ -15,11 +15,12 @@ import { getChatConfig, getFeatureFlags, getPerformanceConfig } from '@/lib/ai/c
 import { getSystemPrompt } from '@/lib/ai/prompts/system'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers'
 import { createAIProvider, isValidProvider, isValidTier } from '@/lib/ai/providers'
-import { createCRMTools } from '@/lib/ai/tools'
+import { createCRMTools, createMemoryTools } from '@/lib/ai/tools'
 import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
 import { HTTP_STATUS, LIMITS } from '@/lib/constants'
+import { buildConversationWindow, formatSummaryForPrompt } from '@/lib/memory/conversationSummary'
 import { retrieveMemoryContext } from '@/lib/memory/retrieval'
 
 interface PersistedToolCall {
@@ -45,6 +46,8 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
+const MEMORY_RETRIEVAL_SLO_MS = Number(process.env.AI_MEMORY_RETRIEVAL_SLO_MS ?? 1800)
+const CHAT_LATENCY_SLO_MS = Number(process.env.AI_CHAT_LATENCY_SLO_MS ?? 12000)
 
 export async function POST(req: Request) {
   const requestId = generateRequestId()
@@ -143,47 +146,65 @@ export async function POST(req: Request) {
     }
     const lastUserMessageText = lastUserMessage ? extractTextContent(lastUserMessage) : ''
 
-    let nicheId: string | undefined
-    if (featureFlags.enableMemory && organizationId) {
-      const convex = getConvexClient()
-      if (convex) {
-        try {
-          const org = await convex.query(api.organizations.getOrganization, {
-            id: organizationId as Id<'organizations'>,
-          })
-          nicheId = org?.settings?.nicheId ?? undefined
-        } catch {
-          // nicheId is optional; niche layer simply gets skipped
-        }
-      }
-    }
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? ''
+    const convexForMemory = getConvexClient()
+
+    const nicheLookupPromise: Promise<string | undefined> =
+      featureFlags.enableMemory && organizationId && convexForMemory
+        ? convexForMemory
+            .query(api.organizations.getOrganization, {
+              id: organizationId as Id<'organizations'>,
+            })
+            .then((org) => org?.settings?.nicheId ?? undefined)
+            .catch(() => undefined)
+        : Promise.resolve(undefined)
 
     const memoryPromise =
       featureFlags.enableMemory && organizationId
-        ? retrieveMemoryContext({
-            query: lastUserMessageText,
-            organizationId,
-            nicheId,
-            agentType: 'chat',
-            convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL ?? '',
-          })
+        ? (async () => {
+            const nicheId = await Promise.race<string | undefined>([
+              nicheLookupPromise,
+              new Promise((resolve) => setTimeout(() => resolve(undefined), 75)),
+            ])
+            return retrieveMemoryContext({
+              query: lastUserMessageText,
+              organizationId,
+              nicheId,
+              agentType: 'chat',
+              convexUrl,
+              traceId: requestId,
+            })
+          })()
         : Promise.resolve(null)
-
-    const tools =
+    const toolCtx =
       userId && organizationId
-        ? createCRMTools({
-            organizationId,
-            userId,
-            convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL ?? '',
-          })
-        : undefined
+        ? { organizationId, userId, convexUrl, convexClient: convexForMemory ?? undefined }
+        : null
+
+    const crmTools = toolCtx ? createCRMTools(toolCtx) : undefined
+    const memoryTools =
+      featureFlags.enableMemory && toolCtx ? createMemoryTools(toolCtx) : undefined
+    const tools = crmTools || memoryTools ? { ...crmTools, ...memoryTools } : undefined
 
     const model = createAIProvider(aiProvider, modelTier)
 
-    const memoryResult = await memoryPromise
-    const systemPrompt = getSystemPrompt(memoryResult?.context ?? '')
+    const [memoryResult, summaryResult] = await Promise.all([
+      memoryPromise,
+      featureFlags.enableMemory && messages.length > 6
+        ? buildConversationWindow(messages)
+        : Promise.resolve(null),
+    ])
+
+    const conversationSummaryText = summaryResult
+      ? formatSummaryForPrompt(summaryResult.summary)
+      : ''
+    const systemPrompt = getSystemPrompt(memoryResult?.context ?? '', conversationSummaryText)
+    const llmMessages = summaryResult?.wasTrimmed ? summaryResult.messages : messages
 
     if (chatConfig.debug && memoryResult) {
+      const skippedLayers = (['platform', 'niche', 'business', 'agent'] as const).filter(
+        (l) => memoryResult.layerBreakdown[l] === 0
+      )
       console.log('[Reme:Memory] Retrieved context:', {
         requestId,
         organizationId,
@@ -191,6 +212,26 @@ export async function POST(req: Request) {
         tokenCount: memoryResult.tokenCount,
         latencyMs: memoryResult.latencyMs,
         layerBreakdown: memoryResult.layerBreakdown,
+        ...(skippedLayers.length > 0 && { skippedLayers }),
+      })
+    }
+
+    if (memoryResult && memoryResult.latencyMs > MEMORY_RETRIEVAL_SLO_MS) {
+      console.warn('[Reme:SLO] Memory retrieval latency breach', {
+        requestId,
+        organizationId,
+        latencyMs: memoryResult.latencyMs,
+        sloMs: MEMORY_RETRIEVAL_SLO_MS,
+      })
+    }
+
+    if (chatConfig.debug && summaryResult?.wasTrimmed) {
+      console.log('[Reme:Summary] Conversation trimmed:', {
+        requestId,
+        originalMessages: summaryResult.totalOriginal,
+        windowMessages: summaryResult.messages.length,
+        hasSummary: summaryResult.summary.length > 0,
+        needsArchival: summaryResult.needsArchival,
       })
     }
 
@@ -235,7 +276,7 @@ export async function POST(req: Request) {
       const result = streamText({
         model,
         system: systemPrompt,
-        messages: await convertToModelMessages(messages),
+        messages: await convertToModelMessages(llmMessages),
         tools,
         stopWhen: stepCountIs(chatConfig.maxSteps),
         abortSignal: controller.signal,
@@ -246,6 +287,14 @@ export async function POST(req: Request) {
         onFinish: ({ responseMessage, finishReason }) => {
           clearTimeout(timeout)
           const latencyMs = Date.now() - requestStartTime
+          if (latencyMs > CHAT_LATENCY_SLO_MS) {
+            console.warn('[Reme:SLO] Chat latency breach', {
+              requestId,
+              organizationId,
+              latencyMs,
+              sloMs: CHAT_LATENCY_SLO_MS,
+            })
+          }
 
           if (canPersist) {
             const content = extractTextContent(responseMessage)
@@ -298,13 +347,17 @@ export async function POST(req: Request) {
                   eventType: 'conversation_end' as const,
                   sourceType: 'message' as const,
                   sourceId: validConversationId,
+                  idempotencyKey: `${validConversationId}:conversation_end`,
                   data: {
                     type: 'conversation_end' as const,
                     conversationId: validConversationId,
-                    messageCount: messages.length,
+                    messageCount: summaryResult?.totalOriginal ?? messages.length,
                     lastUserMessage: lastUserMessageText.slice(0, 500),
-                    finishReason: finishReason ?? 'unknown',
+                    finishReason: summaryResult?.needsArchival
+                      ? 'archive_threshold'
+                      : (finishReason ?? 'unknown'),
                     latencyMs,
+                    needsArchival: summaryResult?.needsArchival ?? false,
                   },
                 })
               } catch (err) {
@@ -321,13 +374,22 @@ export async function POST(req: Request) {
             if (toolCallParts.length > 0) {
               after(async () => {
                 for (const tc of toolCallParts) {
-                  const hasError = tc.result?.includes('"error"') || tc.result?.includes('Error')
+                  let hasError = false
+                  if (tc.result) {
+                    try {
+                      const parsed = JSON.parse(tc.result)
+                      hasError = parsed?.success === false || parsed?.error !== undefined
+                    } catch {
+                      hasError = false
+                    }
+                  }
                   try {
                     await convex.mutation(api.memoryEvents.create, {
                       organizationId: orgId,
                       eventType: hasError ? ('tool_failure' as const) : ('tool_success' as const),
                       sourceType: 'tool_call' as const,
                       sourceId: tc.id,
+                      idempotencyKey: `${tc.id}:${hasError ? 'tool_failure' : 'tool_success'}`,
                       data: {
                         type: 'tool_result' as const,
                         toolName: tc.name,
