@@ -30,7 +30,7 @@ export default async function HomePage() {
         </div>
 
         {/* Title */}
-        <h1 className="mb-4 bg-linear-to-r from-brand to-brand-secondary bg-clip-text font-bold text-4xl text-transparent tracking-tight sm:text-5xl">
+        <h1 className="mb-4 text-gradient-brand font-bold text-4xl tracking-tight sm:text-5xl">
           RecommendMe AI
         </h1>
 
@@ -45,13 +45,13 @@ export default async function HomePage() {
         <div className="flex flex-col gap-4 sm:flex-row sm:justify-center">
           <Link
             href={ROUTES.REGISTER}
-            className="inline-flex items-center justify-center rounded-lg bg-brand px-8 py-3 font-semibold text-surface-primary transition-all hover:bg-brand-accent hover:shadow-brand/20 hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
+            className="inline-flex items-center justify-center rounded-lg bg-brand px-8 py-3 font-semibold text-surface-primary transition-all hover:bg-brand-accent hover:shadow-brand/20 hover:shadow-lg focus-ring"
           >
             Get Started
           </Link>
           <Link
             href={ROUTES.LOGIN}
-            className="inline-flex items-center justify-center rounded-lg border border-border bg-surface-elevated px-8 py-3 font-semibold text-text-primary transition-colors hover:bg-surface-muted focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
+            className="inline-flex items-center justify-center rounded-lg border border-border bg-surface-elevated px-8 py-3 font-semibold text-text-primary transition-colors hover:bg-surface-muted focus-ring"
           >
             Sign In
           </Link>

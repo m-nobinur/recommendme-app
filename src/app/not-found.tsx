@@ -18,13 +18,13 @@ export default function NotFound() {
         <div className="flex flex-col gap-3 sm:flex-row sm:justify-center">
           <Link
             href="/chat"
-            className="rounded-lg bg-brand px-6 py-2.5 font-medium text-surface-primary transition-colors hover:bg-brand-accent focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
+            className="rounded-lg bg-brand px-6 py-2.5 font-medium text-surface-primary transition-colors hover:bg-brand-accent focus-ring"
           >
             Go to Chat
           </Link>
           <Link
             href="/login"
-            className="rounded-lg border border-border bg-surface-elevated px-6 py-2.5 font-medium text-text-primary transition-colors hover:bg-surface-muted focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
+            className="rounded-lg border border-border bg-surface-elevated px-6 py-2.5 font-medium text-text-primary transition-colors hover:bg-surface-muted focus-ring"
           >
             Sign in
           </Link>

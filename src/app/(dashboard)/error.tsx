@@ -45,7 +45,7 @@ export default function DashboardError({ error, reset }: DashboardErrorProps) {
         <button
           type="button"
           onClick={reset}
-          className="rounded-lg bg-brand px-5 py-2 font-medium text-surface-primary transition-colors hover:bg-brand-accent focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2 focus:ring-offset-surface-primary"
+          className="rounded-lg bg-brand px-5 py-2 font-medium text-surface-primary transition-colors hover:bg-brand-accent focus-ring"
         >
           Try again
         </button>

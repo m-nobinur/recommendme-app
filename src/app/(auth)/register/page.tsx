@@ -64,7 +64,7 @@ export default function RegisterPage() {
   }
 
   const logoElement = (
-    <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-linear-to-br from-[#121212] to-surface-muted shadow-xl">
+    <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border logo-container shadow-xl">
       <Logo size={40} />
     </div>
   )

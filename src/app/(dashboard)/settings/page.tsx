@@ -21,7 +21,7 @@ export default function SettingsPage() {
         <div className="mx-auto w-full max-w-2xl px-4 pb-24 md:px-8">
           <div className="mb-8">
             <h1 className="font-semibold text-2xl text-white">Settings</h1>
-            <p className="mt-1 text-gray-400">Configure your AI assistant preferences</p>
+            <p className="mt-1 text-text-secondary">Configure your AI assistant preferences</p>
           </div>
 
           <Suspense fallback={<SettingsSkeleton />}>
@@ -30,7 +30,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-24 bg-linear-to-t from-black via-black/80 to-transparent" />
+      <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-24 fade-overlay-bottom" />
     </div>
   )
 }

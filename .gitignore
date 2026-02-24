@@ -62,3 +62,5 @@ Thumbs.db
 *.log
 .turbo
 src/convex/_generated/
+
+.ignore/

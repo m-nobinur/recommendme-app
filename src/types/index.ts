@@ -44,6 +44,7 @@ export interface Organization {
 export interface OrganizationSettings {
   defaultAiProvider?: string
   modelTier?: string
+  nicheId?: string
 }
 
 // ============================================
@@ -243,23 +244,141 @@ export interface MessagePart {
 // ============================================
 // MEMORY TYPES
 // ============================================
+export type PlatformMemoryCategory =
+  | 'sales'
+  | 'scheduling'
+  | 'pricing'
+  | 'communication'
+  | 'followup'
 
-export type MemoryScope = 'user' | 'organization'
-export type MemoryType = 'fact' | 'preference' | 'context' | 'instruction'
-
-export interface Memory {
-  _id: Id<'memories'>
-  organizationId: Id<'organizations'>
-  userId?: Id<'appUsers'>
-  scope: MemoryScope
-  type: MemoryType
+export interface PlatformMemory {
+  _id: Id<'platformMemories'>
+  category: PlatformMemoryCategory
   content: string
   embedding?: number[]
-  metadata?: Record<string, unknown>
-  source?: string
-  externalId?: string
+  confidence: number
+  sourceCount: number
+  validatedAt?: number
+  isActive: boolean
   createdAt: number
   updatedAt: number
+}
+
+export interface NicheMemory {
+  _id: Id<'nicheMemories'>
+  nicheId: string
+  category: string
+  content: string
+  embedding?: number[]
+  confidence: number
+  contributorCount: number
+  isActive: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export type BusinessMemoryType =
+  | 'fact'
+  | 'preference'
+  | 'instruction'
+  | 'context'
+  | 'relationship'
+  | 'episodic'
+
+export type MemorySource = 'extraction' | 'explicit' | 'tool' | 'system'
+
+export interface BusinessMemory {
+  _id: Id<'businessMemories'>
+  organizationId: Id<'organizations'>
+  userId?: string
+  type: BusinessMemoryType
+  content: string
+  embedding?: number[]
+  subjectType?: string
+  subjectId?: string
+  importance: number
+  confidence: number
+  decayScore: number
+  accessCount: number
+  lastAccessedAt: number
+  source: MemorySource
+  sourceMessageId?: string
+  expiresAt?: number
+  isActive: boolean
+  isArchived: boolean
+  version: number
+  previousVersionId?: Id<'businessMemories'>
+  history?: Array<{
+    previousContent: string
+    changedAt: number
+    reason?: string
+  }>
+  createdAt: number
+  updatedAt: number
+}
+
+export type AgentMemoryCategory = 'pattern' | 'preference' | 'success' | 'failure'
+
+export interface AgentMemory {
+  _id: Id<'agentMemories'>
+  organizationId: Id<'organizations'>
+  agentType: string
+  category: AgentMemoryCategory
+  content: string
+  embedding?: number[]
+  useCount: number
+  successRate: number
+  confidence: number
+  decayScore: number
+  lastUsedAt: number
+  isActive: boolean
+  createdAt: number
+  updatedAt: number
+}
+
+export type MemoryRelationType =
+  | 'prefers'
+  | 'related_to'
+  | 'leads_to'
+  | 'requires'
+  | 'conflicts_with'
+
+export interface MemoryRelation {
+  _id: Id<'memoryRelations'>
+  organizationId: Id<'organizations'>
+  sourceType: string
+  sourceId: string
+  targetType: string
+  targetId: string
+  relationType: MemoryRelationType
+  strength: number
+  evidence: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type MemoryEventType =
+  | 'conversation_end'
+  | 'tool_success'
+  | 'tool_failure'
+  | 'user_correction'
+  | 'explicit_instruction'
+  | 'approval_granted'
+  | 'approval_rejected'
+  | 'feedback'
+
+export type MemoryEventSourceType = 'message' | 'tool_call' | 'agent_action'
+
+export interface MemoryEvent {
+  _id: Id<'memoryEvents'>
+  organizationId: Id<'organizations'>
+  eventType: MemoryEventType
+  sourceType: MemoryEventSourceType
+  sourceId: string
+  data: unknown
+  processed: boolean
+  processedAt?: number
+  createdAt: number
 }
 
 // ============================================

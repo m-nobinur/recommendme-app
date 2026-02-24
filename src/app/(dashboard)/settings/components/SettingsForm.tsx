@@ -91,7 +91,7 @@ export function SettingsForm() {
       {/* AI Provider Section */}
       <section className="mb-8">
         <h2 className="mb-4 font-medium text-lg text-white">AI Provider</h2>
-        <p className="mb-4 text-gray-400 text-sm">
+        <p className="mb-4 text-text-secondary text-sm">
           Choose which AI service powers Reme. Each provider offers different models for the brain
           tiers.
         </p>
@@ -106,7 +106,7 @@ export function SettingsForm() {
                 'flex items-start gap-4 rounded-xl border p-4 text-left transition-all',
                 'hover:border-border-strong',
                 provider === providerConfig.id
-                  ? 'border-amber-500 bg-amber-500/5'
+                  ? 'border-brand bg-brand/5'
                   : 'border-border bg-surface-tertiary'
               )}
             >
@@ -114,8 +114,8 @@ export function SettingsForm() {
                 className={cn(
                   'flex h-10 w-10 shrink-0 items-center justify-center rounded-lg',
                   provider === providerConfig.id
-                    ? 'bg-amber-500 text-black'
-                    : 'bg-surface-elevated text-gray-400'
+                    ? 'bg-brand text-black'
+                    : 'bg-surface-elevated text-text-secondary'
                 )}
               >
                 {getProviderIcon(providerConfig.id)}
@@ -124,13 +124,13 @@ export function SettingsForm() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-white">{providerConfig.name}</span>
-                  {provider === providerConfig.id && <Check className="h-4 w-4 text-amber-500" />}
+                  {provider === providerConfig.id && <Check className="h-4 w-4 text-brand" />}
                 </div>
-                <p className="mt-0.5 text-gray-400 text-sm">{providerConfig.description}</p>
+                <p className="mt-0.5 text-text-secondary text-sm">{providerConfig.description}</p>
                 <ul className="mt-2 space-y-1">
                   {(PROVIDER_FEATURES[providerConfig.id] ?? []).map((feature, i) => (
-                    <li key={i} className="flex items-center gap-1.5 text-gray-500 text-xs">
-                      <span className="h-1 w-1 rounded-full bg-gray-500" />
+                    <li key={i} className="flex items-center gap-1.5 text-text-muted text-xs">
+                      <span className="h-1 w-1 rounded-full bg-text-muted" />
                       {feature}
                     </li>
                   ))}
@@ -142,7 +142,7 @@ export function SettingsForm() {
                 target="_blank"
                 rel="noopener noreferrer"
                 onClick={(e) => e.stopPropagation()}
-                className="p-1 text-gray-500 hover:text-gray-400"
+                className="p-1 text-text-muted hover:text-text-secondary"
                 title="View documentation"
               >
                 <ExternalLink className="h-4 w-4" />
@@ -155,7 +155,7 @@ export function SettingsForm() {
       {/* Reme's Brain Section */}
       <section className="mb-8">
         <h2 className="mb-4 font-medium text-lg text-white">Reme's Brain</h2>
-        <p className="mb-4 text-gray-400 text-sm">
+        <p className="mb-4 text-text-secondary text-sm">
           Select the intelligence level for Reme. This is the same as the brain selector in chat.
         </p>
 
@@ -166,11 +166,11 @@ export function SettingsForm() {
             className={cn(
               'flex w-full items-center justify-between rounded-xl border px-4 py-3',
               'border-border bg-surface-tertiary transition-colors hover:border-border-strong',
-              isBrainDropdownOpen && 'border-amber-500'
+              isBrainDropdownOpen && 'border-brand'
             )}
           >
             <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-amber-500/30 bg-amber-500/20">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-brand/30 bg-brand/20">
                 <svg
                   width="18"
                   height="18"
@@ -178,7 +178,7 @@ export function SettingsForm() {
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="2"
-                  className="text-amber-400"
+                  className="text-brand"
                 >
                   <path d="M12 2a4 4 0 0 1 4 4v1a4 4 0 0 1-1.17 2.83L12 12.66l-2.83-2.83A4 4 0 0 1 8 7V6a4 4 0 0 1 4-4z" />
                   <path d="M12 12.66V22" />
@@ -188,14 +188,14 @@ export function SettingsForm() {
               </div>
               <div className="text-left">
                 <div className="font-medium text-white">{currentTierInfo.label}</div>
-                <div className="text-gray-400 text-sm">
+                <div className="text-text-secondary text-sm">
                   {currentModel.name} — {currentModel.description}
                 </div>
               </div>
             </div>
             <ChevronDown
               className={cn(
-                'h-5 w-5 text-gray-500 transition-transform',
+                'h-5 w-5 text-text-muted transition-transform',
                 isBrainDropdownOpen && 'rotate-180'
               )}
             />
@@ -219,7 +219,7 @@ export function SettingsForm() {
                     className={cn(
                       'flex w-full items-center justify-between px-4 py-3 text-left',
                       'transition-colors hover:bg-surface-elevated',
-                      isSelected && 'bg-amber-500/10'
+                      isSelected && 'bg-brand/10'
                     )}
                   >
                     <div className="flex items-center gap-3">
@@ -227,7 +227,7 @@ export function SettingsForm() {
                         className={cn(
                           'flex h-8 w-8 items-center justify-center rounded-lg border',
                           isSelected
-                            ? 'border-amber-500/30 bg-amber-500/20'
+                            ? 'border-brand/30 bg-brand/20'
                             : 'border-border bg-surface-muted'
                         )}
                       >
@@ -239,7 +239,7 @@ export function SettingsForm() {
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
-                            className={isSelected ? 'text-amber-400' : 'text-gray-400'}
+                            className={isSelected ? 'text-brand' : 'text-text-secondary'}
                           >
                             <path d="M12 2L14.4 9.6L22 12L14.4 14.4L12 22L9.6 14.4L2 12L9.6 9.6L12 2Z" />
                           </svg>
@@ -251,7 +251,7 @@ export function SettingsForm() {
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
-                            className={isSelected ? 'text-amber-400' : 'text-gray-400'}
+                            className={isSelected ? 'text-brand' : 'text-text-secondary'}
                           >
                             <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                           </svg>
@@ -263,7 +263,7 @@ export function SettingsForm() {
                             fill="none"
                             stroke="currentColor"
                             strokeWidth="2"
-                            className={isSelected ? 'text-amber-400' : 'text-gray-400'}
+                            className={isSelected ? 'text-brand' : 'text-text-secondary'}
                           >
                             <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
                           </svg>
@@ -272,25 +272,22 @@ export function SettingsForm() {
                       <div>
                         <div className="flex items-center gap-2">
                           <span
-                            className={cn(
-                              'font-medium',
-                              isSelected ? 'text-amber-500' : 'text-white'
-                            )}
+                            className={cn('font-medium', isSelected ? 'text-brand' : 'text-white')}
                           >
                             {tierInfo.label}
                           </span>
                           {tier === 'smart' && (
-                            <span className="rounded-full bg-amber-500/20 px-1.5 py-0.5 font-medium text-[9px] text-amber-500 uppercase tracking-wide">
+                            <span className="rounded-full bg-brand/20 px-1.5 py-0.5 font-medium text-[9px] text-brand uppercase tracking-wide">
                               Default
                             </span>
                           )}
                         </div>
-                        <div className="text-gray-400 text-sm">
+                        <div className="text-text-secondary text-sm">
                           {model.name} — {model.description}
                         </div>
                       </div>
                     </div>
-                    {isSelected && <Check className="h-4 w-4 shrink-0 text-amber-500" />}
+                    {isSelected && <Check className="h-4 w-4 shrink-0 text-brand" />}
                   </button>
                 )
               })}
@@ -298,7 +295,7 @@ export function SettingsForm() {
           )}
         </div>
 
-        <p className="mt-3 text-gray-500 text-xs">
+        <p className="mt-3 text-text-muted text-xs">
           This setting syncs with the brain selector in chat. The model used depends on both the
           provider and brain tier.
         </p>
@@ -308,10 +305,10 @@ export function SettingsForm() {
       {currentProvider.requiresApiKey && currentProvider.apiKeyEnvVar && (
         <section className="mb-8">
           <div className="rounded-xl border border-border bg-surface-tertiary p-4">
-            <p className="text-gray-400 text-sm">
+            <p className="text-text-secondary text-sm">
               <span className="font-medium text-white">API Key Required:</span>{' '}
               {currentProvider.name} requires an API key. Set it in your environment variables as{' '}
-              <code className="rounded bg-surface-elevated px-1.5 py-0.5 font-mono text-amber-500 text-xs">
+              <code className="rounded bg-surface-elevated px-1.5 py-0.5 font-mono text-brand text-xs">
                 {currentProvider.apiKeyEnvVar}
               </code>
             </p>
@@ -325,24 +322,24 @@ export function SettingsForm() {
           <h3 className="font-medium text-sm text-white mb-3">Current Configuration</h3>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <span className="text-[10px] uppercase text-gray-600 font-bold tracking-wider">
+              <span className="text-[10px] uppercase text-text-disabled font-bold tracking-wider">
                 Provider
               </span>
-              <div className="mt-1 text-sm text-amber-500">{currentProvider.name}</div>
+              <div className="mt-1 text-sm text-brand">{currentProvider.name}</div>
             </div>
             <div>
-              <span className="text-[10px] uppercase text-gray-600 font-bold tracking-wider">
+              <span className="text-[10px] uppercase text-text-disabled font-bold tracking-wider">
                 Brain Tier
               </span>
-              <div className="mt-1 text-sm text-amber-500">{currentTierInfo.label}</div>
+              <div className="mt-1 text-sm text-brand">{currentTierInfo.label}</div>
             </div>
             <div className="col-span-2">
-              <span className="text-[10px] uppercase text-gray-600 font-bold tracking-wider">
+              <span className="text-[10px] uppercase text-text-disabled font-bold tracking-wider">
                 Active Model
               </span>
-              <div className="mt-1 text-sm text-gray-200">
+              <div className="mt-1 text-sm text-text-primary">
                 {currentModel.name}{' '}
-                <span className="text-gray-500 text-xs font-mono">({currentModel.id})</span>
+                <span className="text-text-muted text-xs font-mono">({currentModel.id})</span>
               </div>
             </div>
           </div>
@@ -356,7 +353,7 @@ export function SettingsForm() {
         </Button>
 
         {saveSuccess && (
-          <span className="flex items-center gap-1.5 text-green-500 text-sm">
+          <span className="flex items-center gap-1.5 text-status-success text-sm">
             <Check className="h-4 w-4" />
             Settings saved successfully
           </span>

@@ -99,6 +99,10 @@ export const LIMITS = {
   MIN_PASSWORD_LENGTH: 8,
   MAX_PASSWORD_LENGTH: 128,
 
+  // Chat Input Validation
+  MAX_MESSAGES_PER_REQUEST: 200,
+  HISTORY_PAGE_SIZE: 50,
+
   // Search & Pagination
   MAX_SEARCH_RESULTS: 20,
   MAX_SLUG_LENGTH: 30,
@@ -156,6 +160,7 @@ export const STORAGE_KEYS = {
   MODEL_CONFIG: 'reme-model-config',
   THEME: 'reme-theme',
   SIDEBAR_STATE: 'reme-sidebar-state',
+  CHAT_STATE: 'reme-chat-state',
 } as const
 
 // === Z-Index Layers ===
