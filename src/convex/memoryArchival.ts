@@ -22,6 +22,21 @@ const MAX_PURGE_BATCH = 100
 const MAX_COMPRESS_GROUPS = 10
 const MIN_GROUP_SIZE_FOR_COMPRESSION = 3
 const MAX_ORPHAN_CLEANUP = 50
+const TTL_MS_PER_DAY = 86_400_000
+const TTL_DAYS: Record<string, number | null> = {
+  fact: 180,
+  preference: 90,
+  instruction: null,
+  context: 30,
+  relationship: 180,
+  episodic: 90,
+}
+
+function computeTTLExpiresAt(type: string, createdAt: number): number | undefined {
+  const days = TTL_DAYS[type]
+  if (days === null || days === undefined) return undefined
+  return createdAt + days * TTL_MS_PER_DAY
+}
 
 const LLM_PROVIDERS = {
   openrouter: {
@@ -167,7 +182,10 @@ export const getHardDeleteCandidates = internalQuery({
 })
 
 /**
- * Find orphaned relations (source or target memory no longer active).
+ * Find orphaned relations whose source or target memory document no longer exists or is inactive.
+ * Only checks relations where sourceType/targetType === 'memory' (i.e. direct Convex doc references).
+ * Relations from LLM extraction use entity names as IDs (sourceType: 'lead', 'service', etc.)
+ * and are NOT checked here since they don't reference Convex document IDs.
  */
 export const getOrphanedRelations = internalQuery({
   args: { limit: v.number() },
@@ -179,15 +197,24 @@ export const getOrphanedRelations = internalQuery({
       if (orphaned.length >= args.limit) break
 
       if (rel.sourceType === 'memory') {
-        const source = await ctx.db.get(rel.sourceId as Id<'businessMemories'>)
-        if (!source || !source.isActive) {
+        try {
+          const source = await ctx.db.get(rel.sourceId as Id<'businessMemories'>)
+          if (!source || !source.isActive) {
+            orphaned.push(rel._id)
+            continue
+          }
+        } catch {
           orphaned.push(rel._id)
           continue
         }
       }
       if (rel.targetType === 'memory') {
-        const target = await ctx.db.get(rel.targetId as Id<'businessMemories'>)
-        if (!target || !target.isActive) {
+        try {
+          const target = await ctx.db.get(rel.targetId as Id<'businessMemories'>)
+          if (!target || !target.isActive) {
+            orphaned.push(rel._id)
+          }
+        } catch {
           orphaned.push(rel._id)
         }
       }
@@ -303,6 +330,7 @@ export const insertConsolidatedMemory = internalMutation({
       accessCount: 0,
       lastAccessedAt: now,
       source: 'system' as const,
+      expiresAt: computeTTLExpiresAt(args.type, now),
       isActive: true,
       isArchived: false,
       version: 1,
@@ -472,10 +500,11 @@ export const compressArchivedMemories = internalAction({
     for (const orgId of orgIds) {
       if (groupsCompressed >= MAX_COMPRESS_GROUPS) break
 
-      const groups = await ctx.runQuery(internal.memoryArchival.getArchivedMemoriesBySubject, {
-        organizationId: orgId,
-        limit: MAX_COMPRESS_GROUPS - groupsCompressed,
-      })
+      const groups: Array<{ subjectKey: string; memories: Doc<'businessMemories'>[] }> =
+        await ctx.runQuery(internal.memoryArchival.getArchivedMemoriesBySubject, {
+          organizationId: orgId,
+          limit: MAX_COMPRESS_GROUPS - groupsCompressed,
+        })
 
       for (const group of groups) {
         const typeCounts = new Map<string, number>()
@@ -577,5 +606,55 @@ export const purgeExpiredMemories = internalAction({
     }
 
     return { softDeleted, hardDeleted, orphansRemoved }
+  },
+})
+
+/**
+ * Lightweight lifecycle sanity checks for archival pipelines.
+ * Runs on a schedule to surface growing queues/backlogs early.
+ */
+export const lifecycleHealthCheck = internalAction({
+  args: {},
+  handler: async (
+    ctx
+  ): Promise<{
+    archiveCandidates: number
+    purgeCandidates: number
+    hardDeleteCandidates: number
+    orphanedRelations: number
+    checkedAt: number
+  }> => {
+    const [archiveCandidates, purgeCandidates, hardDeleteCandidates, orphanedRelations] =
+      await Promise.all([
+        ctx.runQuery(internal.memoryArchival.getArchiveCandidates, { limit: MAX_ARCHIVE_BATCH }),
+        ctx.runQuery(internal.memoryArchival.getPurgeCandidates, { limit: MAX_PURGE_BATCH }),
+        ctx.runQuery(internal.memoryArchival.getHardDeleteCandidates, { limit: MAX_PURGE_BATCH }),
+        ctx.runQuery(internal.memoryArchival.getOrphanedRelations, { limit: MAX_ORPHAN_CLEANUP }),
+      ])
+
+    const result = {
+      archiveCandidates: archiveCandidates.length,
+      purgeCandidates: purgeCandidates.length,
+      hardDeleteCandidates: hardDeleteCandidates.length,
+      orphanedRelations: orphanedRelations.length,
+      checkedAt: Date.now(),
+    }
+
+    if (
+      result.archiveCandidates >= MAX_ARCHIVE_BATCH ||
+      result.purgeCandidates >= MAX_PURGE_BATCH ||
+      result.hardDeleteCandidates >= MAX_PURGE_BATCH
+    ) {
+      console.warn('[Lifecycle] Potential backlog detected:', result)
+    } else if (
+      result.archiveCandidates > 0 ||
+      result.purgeCandidates > 0 ||
+      result.hardDeleteCandidates > 0 ||
+      result.orphanedRelations > 0
+    ) {
+      console.log('[Lifecycle] Health check:', result)
+    }
+
+    return result
   },
 })
