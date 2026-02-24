@@ -18,10 +18,6 @@ import { mutation } from './_generated/server'
  *   npx convex run devSeedMemories:cleanMemories '{"organizationId":"<DEV_ORGANIZATION_ID>"}'
  */
 
-// ============================================
-// SEED ALL LAYERS
-// ============================================
-
 export const seedAllMemories = mutation({
   args: {
     organizationId: v.id('organizations'),
@@ -283,10 +279,6 @@ export const seedAllMemories = mutation({
     }
   },
 })
-
-// ============================================
-// CLEANUP
-// ============================================
 
 export const cleanMemories = mutation({
   args: {

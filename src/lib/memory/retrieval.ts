@@ -28,10 +28,6 @@ import type { RawSearchResults } from './scoring'
 import { scoreAndRank } from './scoring'
 import { allocateTokenBudget } from './tokenBudget'
 
-// ============================================
-// TYPES
-// ============================================
-
 export interface RetrievalResult {
   context: string
   memoriesUsed: number
@@ -55,15 +51,7 @@ export interface RetrievalParams {
   skipAIIntent?: boolean
 }
 
-// ============================================
-// CONSTANTS
-// ============================================
-
 const EMPTY_LAYER_BREAKDOWN = { platform: 0, niche: 0, business: 0, agent: 0 } as const
-
-// ============================================
-// CONVEX CLIENT
-// ============================================
 
 let retrievalClient: ConvexHttpClient | null = null
 let retrievalClientUrl = ''
@@ -89,10 +77,6 @@ function getRetrievalClient(url: string): ConvexHttpClient {
   }
   return retrievalClient
 }
-
-// ============================================
-// MAIN EXPORT
-// ============================================
 
 /**
  * Retrieve memory context for a user message.

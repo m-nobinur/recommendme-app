@@ -53,10 +53,6 @@ const platformCategoryValues = v.union(
   v.literal('followup')
 )
 
-// ============================================
-// CREATE (Internal only)
-// ============================================
-
 /**
  * Create a new platform memory (admin only)
  */
@@ -89,10 +85,6 @@ export const create = internalMutation({
     return id
   },
 })
-
-// ============================================
-// READ
-// ============================================
 
 /**
  * Get a single platform memory by ID
@@ -147,10 +139,6 @@ export const list = query({
   },
 })
 
-// ============================================
-// UPDATE
-// ============================================
-
 /**
  * Update a platform memory (admin only)
  */
@@ -196,10 +184,6 @@ export const update = internalMutation({
     return { success: true }
   },
 })
-
-// ============================================
-// DELETE (Soft)
-// ============================================
 
 /**
  * Soft delete a platform memory (admin only)

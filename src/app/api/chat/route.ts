@@ -56,8 +56,6 @@ export async function POST(req: Request) {
   const isDevMode = process.env.DISABLE_AUTH_IN_DEV === 'true'
 
   try {
-    // In production, auth and body parsing are independent async ops.
-    // Start both immediately, then await as needed.
     const bodyPromise = req.json()
     const sessionPromise = isDevMode ? null : getServerSession()
 
@@ -74,7 +72,6 @@ export async function POST(req: Request) {
       conversationId?: string
     } = body
 
-    // Input Sanitization
     if (!Array.isArray(messages) || messages.length === 0) {
       return new Response(
         JSON.stringify({ error: 'Messages array is required and must not be empty', requestId }),
@@ -156,7 +153,7 @@ export async function POST(req: Request) {
           })
           nicheId = org?.settings?.nicheId ?? undefined
         } catch {
-          // Non-critical: nicheId is optional, niche layer will be skipped
+          // nicheId is optional; niche layer simply gets skipped
         }
       }
     }
@@ -392,10 +389,6 @@ export async function POST(req: Request) {
   }
 }
 
-/**
- * Extract text content from a UIMessage's parts.
- * Uses the AI SDK's TextUIPart type for type-safe access.
- */
 function extractTextContent(message: UIMessage): string {
   if (!message.parts || message.parts.length === 0) return ''
   return message.parts
@@ -404,12 +397,6 @@ function extractTextContent(message: UIMessage): string {
     .join('')
 }
 
-/**
- * Extract tool call data from a UIMessage for persistence.
- * Uses the AI SDK's `isToolUIPart` and `getToolName` for type-safe
- * handling of both static (tool-{name}) and dynamic-tool parts.
- * Args and results are JSON-serialized for storage in Convex (v.string()).
- */
 function extractToolCalls(message: UIMessage): PersistedToolCall[] {
   if (!message.parts || message.parts.length === 0) return []
   const toolCalls: PersistedToolCall[] = []

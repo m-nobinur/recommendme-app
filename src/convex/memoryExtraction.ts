@@ -31,9 +31,7 @@ import { isEmbeddingConfigured } from './embedding'
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
-// ============================================
-// Constants
-// ============================================
+const DEBUG = process.env.DEBUG_MEMORY === 'true'
 
 const EXTRACTION_BATCH_SIZE = 5
 const MAX_MESSAGES_FOR_EXTRACTION = 30
@@ -41,6 +39,22 @@ const DEDUP_SIMILARITY_THRESHOLD = 0.85
 const DEDUP_SEARCH_LIMIT = 10
 const MAX_LLM_RETRIES = 2
 const MAX_EVENT_RETRIES = 3
+
+// TTL defaults (mirrored from src/lib/memory/ttl.ts for Convex runtime)
+const TTL_MS_PER_DAY = 86_400_000
+const TTL_DAYS: Record<string, number | null> = {
+  fact: 180,
+  preference: 90,
+  instruction: null,
+  context: 30,
+  relationship: 180,
+  episodic: 90,
+}
+function computeTTLExpiresAt(type: string, createdAt: number): number | undefined {
+  const days = TTL_DAYS[type]
+  if (days === null || days === undefined) return undefined
+  return createdAt + days * TTL_MS_PER_DAY
+}
 
 const LLM_PROVIDERS = {
   openrouter: {
@@ -58,10 +72,6 @@ const LLM_PROVIDERS = {
 } as const
 
 type LLMProviderKey = keyof typeof LLM_PROVIDERS
-
-// ============================================
-// LLM Provider Resolution
-// ============================================
 
 interface ResolvedLLMProvider {
   url: string
@@ -86,10 +96,6 @@ function resolveLLMProvider(): ResolvedLLMProvider {
     message: 'No LLM provider configured for extraction. Set OPENROUTER_API_KEY or OPENAI_API_KEY.',
   })
 }
-
-// ============================================
-// LLM Call
-// ============================================
 
 const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction engine for a CRM assistant called "Reme".
 Analyze conversations between a business owner and the AI assistant, then extract structured knowledge for future interactions.
@@ -259,10 +265,6 @@ async function callExtractionLLM(
   return { businessMemories: [], agentMemories: [], relations: [], corrections: [] }
 }
 
-// ============================================
-// Tool Outcome Summarization
-// ============================================
-
 async function summarizeToolOutcome(
   provider: ResolvedLLMProvider,
   toolName: string,
@@ -313,10 +315,6 @@ async function summarizeToolOutcome(
   return fallback.slice(0, 500)
 }
 
-// ============================================
-// Internal Queries
-// ============================================
-
 export const getConversationMessages = internalQuery({
   args: {
     organizationId: v.id('organizations'),
@@ -365,10 +363,6 @@ export const getNextUnprocessedBatch = internalQuery({
       .take(pageSize)
   },
 })
-
-// ============================================
-// Validation Helpers
-// ============================================
 
 const VALID_BUSINESS_TYPES = new Set([
   'fact',
@@ -430,10 +424,6 @@ function isValidRelation(r: ExtractionResult['relations'][0]): boolean {
   )
 }
 
-// ============================================
-// Conversation Formatting
-// ============================================
-
 function formatConversation(messages: Doc<'messages'>[]): string {
   const parts: string[] = []
   for (const msg of messages) {
@@ -451,10 +441,6 @@ function formatConversation(messages: Doc<'messages'>[]): string {
   }
   return parts.join('\n')
 }
-
-// ============================================
-// Deduplication
-// ============================================
 
 async function isDuplicate(
   ctx: { runAction: (...args: any[]) => Promise<any> },
@@ -508,10 +494,6 @@ function mapToolToAgentType(toolName: string): string {
   return mapping[toolName] ?? 'chat'
 }
 
-// ============================================
-// Internal Mutations (database writes)
-// ============================================
-
 export const insertBusinessMemory = internalMutation({
   args: {
     organizationId: v.id('organizations'),
@@ -548,6 +530,7 @@ export const insertBusinessMemory = internalMutation({
       subjectId: args.subjectId,
       source: args.source,
       sourceMessageId: args.sourceMessageId,
+      expiresAt: computeTTLExpiresAt(args.type, now),
       decayScore: 1.0,
       accessCount: 0,
       lastAccessedAt: now,
@@ -743,10 +726,6 @@ export const insertRelation = internalMutation({
   },
 })
 
-// ============================================
-// Memory Creation Orchestrator
-// ============================================
-
 interface CorrectionMatch {
   memoryId: Id<'businessMemories'>
   oldContent: string
@@ -785,12 +764,14 @@ async function processCorrections(
           oldContent: best.document.content,
           reason: correction.reason,
         })
-        console.log('[Extraction] Found memory to supersede:', {
-          organizationId: String(organizationId),
-          oldContent: best.document.content.slice(0, 80),
-          score: best.score.toFixed(3),
-          reason: correction.reason,
-        })
+        if (DEBUG) {
+          console.log('[Extraction] Found memory to supersede:', {
+            organizationId: String(organizationId),
+            oldContent: best.document.content.slice(0, 80),
+            score: best.score.toFixed(3),
+            reason: correction.reason,
+          })
+        }
       }
     } catch (error) {
       console.warn('[Extraction] Failed to find correction target:', {
@@ -819,7 +800,7 @@ async function createExtractedMemories(
   if (extraction.corrections.length > 0) {
     const result = await processCorrections(ctx, organizationId, extraction.corrections)
     correctionMatches = result.matches
-    if (result.superseded > 0) {
+    if (DEBUG && result.superseded > 0) {
       console.log('[Extraction] Found corrections to apply:', {
         organizationId: String(organizationId),
         correctionsRequested: extraction.corrections.length,
@@ -864,11 +845,13 @@ async function createExtractedMemories(
 
         correctionMatches = correctionMatches.filter((c) => c !== correctionForThisMem)
         memoriesCreated++
-        console.log('[Extraction] Created temporal memory (superseded old):', {
-          organizationId: String(organizationId),
-          newContent: mem.content.slice(0, 100),
-          oldContent: correctionForThisMem.oldContent.slice(0, 80),
-        })
+        if (DEBUG) {
+          console.log('[Extraction] Created temporal memory (superseded old):', {
+            organizationId: String(organizationId),
+            newContent: mem.content.slice(0, 100),
+            oldContent: correctionForThisMem.oldContent.slice(0, 80),
+          })
+        }
       } catch (error) {
         console.warn('[Extraction] Failed to create temporal memory:', {
           organizationId: String(organizationId),
@@ -952,11 +935,13 @@ async function createExtractedMemories(
           id: orphan.memoryId,
           organizationId,
         })
-        console.log('[Extraction] Archived memory (no replacement extracted):', {
-          organizationId: String(organizationId),
-          archivedContent: orphan.oldContent.slice(0, 80),
-          reason: orphan.reason,
-        })
+        if (DEBUG) {
+          console.log('[Extraction] Archived memory (no replacement extracted):', {
+            organizationId: String(organizationId),
+            archivedContent: orphan.oldContent.slice(0, 80),
+            reason: orphan.reason,
+          })
+        }
       } catch (error) {
         console.warn('[Extraction] Failed to archive orphan correction:', {
           organizationId: String(organizationId),
@@ -1021,10 +1006,6 @@ async function createExtractedMemories(
 
   return { memoriesCreated, relationsCreated }
 }
-
-// ============================================
-// Per-Event Processing
-// ============================================
 
 async function processConversationEnd(
   ctx: {
@@ -1122,10 +1103,6 @@ async function processToolOutcome(
   }
 }
 
-// ============================================
-// Main Extraction Action
-// ============================================
-
 export const processExtractionBatch = internalAction({
   args: {
     organizationId: v.optional(v.id('organizations')),
@@ -1209,7 +1186,7 @@ export const processExtractionBatch = internalAction({
       }
     }
 
-    if (totalProcessed > 0 || totalErrors > 0) {
+    if (DEBUG && (totalProcessed > 0 || totalErrors > 0)) {
       console.log('[Extraction] Batch complete:', {
         processed: totalProcessed,
         memoriesCreated: totalMemoriesCreated,
@@ -1228,10 +1205,6 @@ export const processExtractionBatch = internalAction({
     }
   },
 })
-
-// ============================================
-// Deduplication Sweep
-// ============================================
 
 /**
  * One-time maintenance action to find and archive duplicate business memories.
@@ -1385,12 +1358,14 @@ export const reExtractConversation = internalAction({
     const conversationText = formatConversation(messages)
     const extraction = await callExtractionLLM(provider, conversationText, existingMemories)
 
-    console.log('[Extraction] reExtractConversation LLM result:', {
-      conversationId: args.conversationId,
-      businessMemories: extraction.businessMemories.length,
-      agentMemories: extraction.agentMemories.length,
-      relations: extraction.relations.length,
-    })
+    if (DEBUG) {
+      console.log('[Extraction] reExtractConversation LLM result:', {
+        conversationId: args.conversationId,
+        businessMemories: extraction.businessMemories.length,
+        agentMemories: extraction.agentMemories.length,
+        relations: extraction.relations.length,
+      })
+    }
 
     const result = await createExtractedMemories(
       ctx,

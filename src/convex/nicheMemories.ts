@@ -39,10 +39,6 @@ import { internalMutation, query } from './_generated/server'
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
-// ============================================
-// CREATE
-// ============================================
-
 /**
  * Create a new niche memory
  */
@@ -77,10 +73,6 @@ export const create = internalMutation({
     return id
   },
 })
-
-// ============================================
-// READ
-// ============================================
 
 /**
  * Get a single niche memory by ID
@@ -156,10 +148,6 @@ export const list = query({
   },
 })
 
-// ============================================
-// UPDATE (Internal only)
-// ============================================
-
 /**
  * Update a niche memory (internal - admin/pipeline only)
  */
@@ -204,10 +192,6 @@ export const update = internalMutation({
     return { success: true }
   },
 })
-
-// ============================================
-// DELETE (Soft)
-// ============================================
 
 /**
  * Soft delete a niche memory (internal - admin/pipeline only)

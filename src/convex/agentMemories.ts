@@ -63,10 +63,6 @@ const agentCategoryValues = v.union(
   v.literal('failure')
 )
 
-// ============================================
-// CREATE
-// ============================================
-
 /**
  * Create a new agent memory (tenant-scoped)
  */
@@ -110,10 +106,6 @@ export const create = mutation({
     return id
   },
 })
-
-// ============================================
-// READ
-// ============================================
 
 /**
  * Get a single agent memory by ID (tenant-scoped)
@@ -200,10 +192,6 @@ export const list = query({
   },
 })
 
-// ============================================
-// UPDATE
-// ============================================
-
 /**
  * Update an agent memory (tenant-scoped)
  */
@@ -254,6 +242,7 @@ export const update = mutation({
 /**
  * Record a use of this agent memory and update success tracking.
  * Internal since it is called by the agent execution pipeline, not end users.
+ * Schedules an immediate decay boost so the score reflects the usage.
  */
 export const recordUse = internalMutation({
   args: {
@@ -278,13 +267,14 @@ export const recordUse = internalMutation({
       updatedAt: Date.now(),
     })
 
+    await ctx.scheduler.runAfter(0, internal.memoryDecay.boostAgentDecayOnAccess, {
+      id: args.id,
+      organizationId: args.organizationId,
+    })
+
     return { success: true, useCount: newUseCount, successRate: newSuccessRate }
   },
 })
-
-// ============================================
-// DELETE (Soft)
-// ============================================
 
 /**
  * Soft delete an agent memory (set isActive = false, tenant-scoped)

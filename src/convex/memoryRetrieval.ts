@@ -126,10 +126,16 @@ export const retrieveContext = action({
         })
       : null
 
-    const business: Array<{ document: Doc<'businessMemories'>; score: number }> =
+    const now = Date.now()
+
+    const rawBusiness: Array<{ document: Doc<'businessMemories'>; score: number }> =
       hybridBusinessResults
         ? hybridBusinessResults.map((r) => ({ document: r.document, score: r.score }))
         : vectorResults.business
+
+    const business = rawBusiness.filter(
+      (r) => r.document.expiresAt == null || r.document.expiresAt > now
+    )
 
     const trackingPromises: Promise<unknown>[] = []
     const seenBusinessIds = new Set<string>()

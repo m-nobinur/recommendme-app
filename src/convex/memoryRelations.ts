@@ -62,10 +62,6 @@ const relationTypeValues = v.union(
   v.literal('conflicts_with')
 )
 
-// ============================================
-// CREATE
-// ============================================
-
 /**
  * Create a new memory relation (graph edge, tenant-scoped)
  */
@@ -99,10 +95,6 @@ export const create = mutation({
     return id
   },
 })
-
-// ============================================
-// READ
-// ============================================
 
 /**
  * Get a single memory relation by ID (tenant-scoped)
@@ -232,10 +224,6 @@ export const getForEntity = query({
   },
 })
 
-// ============================================
-// UPDATE
-// ============================================
-
 /**
  * Update a memory relation (tenant-scoped)
  */
@@ -269,10 +257,6 @@ export const update = mutation({
     return { success: true }
   },
 })
-
-// ============================================
-// DELETE
-// ============================================
 
 /**
  * Delete a memory relation (hard delete, tenant-scoped).

@@ -32,19 +32,11 @@ import { internalAction, internalQuery } from './_generated/server'
  * └─────────────────────────────────────────────────────────────────────┘
  */
 
-// ============================================
-// Constants
-// ============================================
-
 /**
  * Minimum cosine similarity score to consider a result relevant.
  * Canonical value: must stay in sync with SIMILARITY_THRESHOLD in src/lib/memory/embedding.ts.
  */
 const SIMILARITY_THRESHOLD = 0.2
-
-// ============================================
-// Fetch Results (Internal Queries)
-// ============================================
 
 /**
  * Fetch platform memory documents by IDs (parallel).
@@ -90,10 +82,6 @@ export const fetchAgentResults = internalQuery({
   },
 })
 
-// ============================================
-// Shared Helpers
-// ============================================
-
 /**
  * Attach similarity scores to fetched documents and filter by threshold.
  */
@@ -124,10 +112,6 @@ function attachScoresAndFilter<T extends { _id: string; isActive?: boolean; isAr
 
   return results
 }
-
-// ============================================
-// Per-Layer Search Functions
-// ============================================
 
 /**
  * Search platform memories.
@@ -264,10 +248,6 @@ export const searchAgentMemories = internalAction({
     return results.slice(0, requestedLimit)
   },
 })
-
-// ============================================
-// Multi-Layer Search (All Layers in Parallel)
-// ============================================
 
 /**
  * Search across all memory layers in parallel.
