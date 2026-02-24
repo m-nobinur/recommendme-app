@@ -40,6 +40,18 @@ const DEDUP_SEARCH_LIMIT = 10
 const MAX_LLM_RETRIES = 2
 const MAX_EVENT_RETRIES = 3
 
+/**
+ * Normalize a subject name for use as `subjectId`.
+ * Until entity resolution is implemented (Phase 8+), the LLM-extracted
+ * display name is stored as the ID. Normalizing ensures consistent
+ * matching across extractions (e.g. "Sarah Johnson" and "sarah johnson"
+ * resolve to the same subject).
+ */
+function normalizeSubjectName(name: string | undefined): string | undefined {
+  if (!name) return undefined
+  return name.trim().toLowerCase()
+}
+
 // TTL defaults (mirrored from src/lib/memory/ttl.ts for Convex runtime)
 const TTL_MS_PER_DAY = 86_400_000
 const TTL_DAYS: Record<string, number | null> = {
@@ -359,7 +371,7 @@ export const getNextUnprocessedBatch = internalQuery({
       .query('memoryEvents')
       .withIndex('by_created')
       .order('asc')
-      .filter((q) => q.eq(q.field('processed'), false))
+      .filter((q) => q.and(q.eq(q.field('processed'), false), q.eq(q.field('status'), 'pending')))
       .take(pageSize)
   },
 })
@@ -568,6 +580,7 @@ export const updateBusinessMemoryVersion = internalMutation({
       subjectId: existing.subjectId,
       source: 'extraction',
       sourceMessageId: existing.sourceMessageId,
+      expiresAt: computeTTLExpiresAt(existing.type, now),
       decayScore: 1.0,
       accessCount: 0,
       lastAccessedAt: now,
@@ -638,6 +651,7 @@ export const supersedeBusinessMemory = internalMutation({
       subjectId: args.subjectId ?? existing.subjectId,
       source: args.source,
       sourceMessageId: args.sourceMessageId ?? existing.sourceMessageId,
+      expiresAt: computeTTLExpiresAt(existing.type, now),
       decayScore: 1.0,
       accessCount: existing.accessCount,
       lastAccessedAt: now,
@@ -831,7 +845,7 @@ async function createExtractedMemories(
           confidence: mem.confidence,
           importance: mem.importance,
           subjectType: mem.subjectType,
-          subjectId: mem.subjectName,
+          subjectId: normalizeSubjectName(mem.subjectName),
           reason: correctionForThisMem.reason,
           source: 'extraction' as const,
           sourceMessageId: sourceId,
@@ -907,7 +921,7 @@ async function createExtractedMemories(
         importance: mem.importance,
         confidence: mem.confidence,
         subjectType: mem.subjectType,
-        subjectId: mem.subjectName,
+        subjectId: normalizeSubjectName(mem.subjectName),
         source: 'extraction' as const,
         sourceMessageId: sourceId,
       })
@@ -987,9 +1001,9 @@ async function createExtractedMemories(
       await ctx.runMutation(internal.memoryExtraction.insertRelation, {
         organizationId,
         sourceType: rel.sourceType,
-        sourceId: rel.sourceName,
+        sourceId: normalizeSubjectName(rel.sourceName) ?? rel.sourceName,
         targetType: rel.targetType,
-        targetId: rel.targetName,
+        targetId: normalizeSubjectName(rel.targetName) ?? rel.targetName,
         relationType: rel.relationType as any,
         strength: rel.strength,
         evidence: rel.evidence.slice(0, 200),
@@ -1137,6 +1151,7 @@ export const processExtractionBatch = internalAction({
     }
 
     const batchStartMs = Date.now()
+    const batchId = `${batchStartMs}-${Math.random().toString(36).slice(2, 8)}`
     let totalProcessed = 0
     let totalMemoriesCreated = 0
     let totalRelationsCreated = 0
@@ -1145,6 +1160,14 @@ export const processExtractionBatch = internalAction({
     const provider = resolveLLMProvider()
 
     for (const event of events) {
+      const lockResult = await ctx.runMutation(internal.memoryEvents.markProcessing, {
+        id: event._id,
+        organizationId: event.organizationId,
+      })
+      if (!lockResult.success) {
+        continue
+      }
+
       try {
         let result = { memoriesCreated: 0, relationsCreated: 0 }
 
@@ -1152,6 +1175,22 @@ export const processExtractionBatch = internalAction({
           result = await processConversationEnd(ctx, event, provider)
         } else if (event.eventType === 'tool_success' || event.eventType === 'tool_failure') {
           result = await processToolOutcome(ctx, event, provider)
+        } else if (
+          event.eventType === 'user_correction' ||
+          event.eventType === 'explicit_instruction'
+        ) {
+          // TODO(Phase 8): Implement user_correction (update/override existing memory)
+          //   and explicit_instruction (store as high-priority instruction) handlers.
+          //   See DEVELOPMENT_PLAN.md §12 "Worker Architecture".
+        } else if (
+          event.eventType === 'approval_granted' ||
+          event.eventType === 'approval_rejected'
+        ) {
+          // TODO(Phase 9): Implement approval workflow handlers.
+          //   See DEVELOPMENT_PLAN.md §13 "Guardrails, Security & Approval Workflow".
+        } else if (event.eventType === 'feedback') {
+          // TODO(Phase 11): Implement feedback signal processing.
+          //   See DEVELOPMENT_PLAN.md §15 "Continuous Improvement & Learning System".
         }
 
         totalMemoriesCreated += result.memoriesCreated
@@ -1164,30 +1203,41 @@ export const processExtractionBatch = internalAction({
         })
       } catch (error) {
         totalErrors++
+        const errorMessage = error instanceof Error ? error.message : 'Unknown'
         console.error('[Extraction] Failed to process event:', {
+          batchId,
           organizationId: String(event.organizationId),
           eventId: event._id,
           eventType: event.eventType,
-          error: error instanceof Error ? error.message : 'Unknown',
+          error: errorMessage,
         })
 
-        const eventAgeMs = Date.now() - event.createdAt
-        const maxRetryWindowMs = MAX_EVENT_RETRIES * 2 * 60 * 1000
-        if (eventAgeMs > maxRetryWindowMs) {
-          await ctx.runMutation(internal.memoryEvents.markProcessed, {
-            id: event._id,
-            organizationId: event.organizationId,
-          })
-          console.warn('[Extraction] Event exceeded retry window, marking processed:', {
-            eventId: event._id,
-            ageMinutes: Math.round(eventAgeMs / 60000),
-          })
-        }
+        await ctx.runMutation(internal.memoryEvents.markFailed, {
+          id: event._id,
+          organizationId: event.organizationId,
+          error: errorMessage,
+          maxRetries: MAX_EVENT_RETRIES,
+        })
+      }
+    }
+
+    const attempted = totalProcessed + totalErrors
+    if (attempted > 0) {
+      const failureRate = totalErrors / attempted
+      if (failureRate > 0.2) {
+        console.warn('[Reme:SLO] Extraction failure-rate breach', {
+          batchId,
+          processed: totalProcessed,
+          errors: totalErrors,
+          failureRate,
+          threshold: 0.2,
+        })
       }
     }
 
     if (DEBUG && (totalProcessed > 0 || totalErrors > 0)) {
       console.log('[Extraction] Batch complete:', {
+        batchId,
         processed: totalProcessed,
         memoriesCreated: totalMemoriesCreated,
         relationsCreated: totalRelationsCreated,

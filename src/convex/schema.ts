@@ -422,6 +422,7 @@ export default defineSchema({
     ),
     sourceType: v.union(v.literal('message'), v.literal('tool_call'), v.literal('agent_action')),
     sourceId: v.string(),
+    idempotencyKey: v.optional(v.string()),
     data: v.union(
       v.object({
         type: v.literal('conversation_end'),
@@ -458,11 +459,49 @@ export default defineSchema({
       })
     ),
     processed: v.boolean(),
+    status: v.optional(
+      v.union(
+        v.literal('pending'),
+        v.literal('processing'),
+        v.literal('processed'),
+        v.literal('failed')
+      )
+    ),
+    retryCount: v.optional(v.number()),
+    processingStartedAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
     processedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index('by_org_unprocessed', ['organizationId', 'processed'])
     .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_org_status_created', ['organizationId', 'status', 'createdAt'])
+    .index('by_org_idempotency', ['organizationId', 'idempotencyKey'])
     .index('by_type', ['eventType', 'processed'])
     .index('by_created', ['createdAt']),
+
+  memoryEventDeadLetters: defineTable({
+    organizationId: v.id('organizations'),
+    eventId: v.id('memoryEvents'),
+    eventType: v.union(
+      v.literal('conversation_end'),
+      v.literal('tool_success'),
+      v.literal('tool_failure'),
+      v.literal('user_correction'),
+      v.literal('explicit_instruction'),
+      v.literal('approval_granted'),
+      v.literal('approval_rejected'),
+      v.literal('feedback')
+    ),
+    sourceType: v.union(v.literal('message'), v.literal('tool_call'), v.literal('agent_action')),
+    sourceId: v.string(),
+    data: v.any(),
+    retryCount: v.number(),
+    error: v.string(),
+    failedAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_event', ['eventId']),
 })
