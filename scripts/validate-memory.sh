@@ -20,38 +20,12 @@ set -uo pipefail
 #   - bun dev is running (Next.js + Convex)
 # ============================================================
 
-BLUE='\033[0;34m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-BOLD='\033[1m'
-DIM='\033[2m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/test-helpers.sh"
 
-pass=0
-fail=0
-warn_count=0
-section=0
-
-ok()    { echo -e "  ${GREEN}✓${NC} $*"; pass=$((pass + 1)); }
-err()   { echo -e "  ${RED}✗${NC} $*"; fail=$((fail + 1)); }
-warn()  { echo -e "  ${YELLOW}!${NC} $*"; warn_count=$((warn_count + 1)); }
-info()  { echo -e "  ${DIM}→${NC} $*"; }
-header(){
-  section=$((section + 1))
-  echo -e "\n${BOLD}${BLUE}[$section]${NC} ${BOLD}$*${NC}"
-}
-
-APP_URL="${NEXT_PUBLIC_APP_URL:-http://localhost:3000}"
-ENV_FILE=".env.local"
-
-# Load env vars we need
+USER_ID=""
 if [[ -f "$ENV_FILE" ]]; then
-  ORG_ID=$(grep -E '^DEV_ORGANIZATION_ID=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
   USER_ID=$(grep -E '^DEV_USER_ID=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
-else
-  echo -e "${RED}No .env.local found. Run ./scripts/dev-setup.sh first.${NC}"
-  exit 1
 fi
 
 if [[ -z "$ORG_ID" ]]; then
@@ -59,28 +33,13 @@ if [[ -z "$ORG_ID" ]]; then
   exit 1
 fi
 
-echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
-echo -e "${BOLD}  Memory System Validation${NC}"
-echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
-echo -e "  Org ID:  $ORG_ID"
+print_banner "Memory System Validation"
 echo -e "  App URL: $APP_URL"
 
-# ─── 1. Static Analysis ──────────────────────────────────────
-header "Static Analysis (typecheck + lint)"
+# ─── 1. Static Analysis ─────────────────────────────────────
+run_static_gate
 
-if bun run typecheck 2>&1 | tail -1 | grep -q "error"; then
-  err "TypeScript errors found"
-else
-  ok "TypeScript type check passed"
-fi
-
-if bun run check:ci 2>&1 | tail -3 | grep -q "error\|Err"; then
-  err "Biome lint/format errors found"
-else
-  ok "Biome lint + format check passed"
-fi
-
-# ─── 2. Convex Data Layer ────────────────────────────────────
+# ─── 2. Convex Data Layer ───────────────────────────────────
 header "Convex Data Layer"
 
 info "Querying organization..."
@@ -137,7 +96,7 @@ else
   warn "No memory events yet — they are emitted when you chat"
 fi
 
-# ─── 3. Chat API Health ──────────────────────────────────────
+# ─── 3. Chat API Health ─────────────────────────────────────
 header "Chat API Health Check"
 
 info "Checking if Next.js dev server is running at ${APP_URL}..."
@@ -194,7 +153,7 @@ if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "307" || "$HTTP_CODE" == "302" ]]
   fi
 fi
 
-# ─── 4. Memory Validation Rules ──────────────────────────────
+# ─── 4. Memory Validation Rules ─────────────────────────────
 header "Memory Validation Rules (CRUD guards)"
 
 info "Testing business memory validation — content too short..."
@@ -224,7 +183,7 @@ else
   err "Agent memory short content was NOT rejected"
 fi
 
-# ─── 5. Index Validation ─────────────────────────────────────
+# ─── 5. Index Validation ────────────────────────────────────
 header "Index & Query Validation"
 
 info "Testing memoryEvents by_org_created index (time-ordered)..."
@@ -246,32 +205,19 @@ else
   ok "businessMemories by_org index works"
 fi
 
-# ─── Summary ──────────────────────────────────────────────────
-echo ""
-echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
-echo -e "${BOLD}  Validation Results${NC}"
-echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
-echo -e "  ${GREEN}Passed:   ${pass}${NC}"
-[[ $warn_count -gt 0 ]] && echo -e "  ${YELLOW}Warnings: ${warn_count}${NC}"
-[[ $fail -gt 0 ]] && echo -e "  ${RED}Failed:   ${fail}${NC}"
-echo ""
-
-if [[ $fail -eq 0 ]]; then
-  echo -e "  ${GREEN}${BOLD}All checks passed!${NC} Memory system is ready."
-else
-  echo -e "  ${RED}${BOLD}Some checks failed.${NC} Review errors above."
-fi
+# ─── Results ─────────────────────────────────────────────────
+print_results
 
 echo ""
 echo -e "  ${BOLD}Manual tests to try in the chat UI:${NC}"
 echo -e "  1. \"What do you know about John Smith?\""
-echo -e "     → Should mention outdoor locations, portrait preferences"
+echo -e "     -> Should mention outdoor locations, portrait preferences"
 echo -e "  2. \"What are our pricing packages?\""
-echo -e "     → Should pull from business + niche memories"
+echo -e "     -> Should pull from business + niche memories"
 echo -e "  3. \"Tell me about Sarah Johnson\""
-echo -e "     → Should mention B&W edits, corporate headshots, February deadline"
+echo -e "     -> Should mention B&W edits, corporate headshots, February deadline"
 echo -e "  4. \"How should I follow up with leads?\""
-echo -e "     → Should reference platform best practices (24-hour rule)"
-echo -e "${BOLD}═══════════════════════════════════════════════${NC}"
+echo -e "     -> Should reference platform best practices (24-hour rule)"
+echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
 
 exit $fail
