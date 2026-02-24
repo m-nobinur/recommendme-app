@@ -63,11 +63,32 @@ jobs:
       - name: Run lint check
         run: bun run lint
 
+  memory-smoke:
+    name: Memory Smoke Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: lint-only
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run memory smoke tests
+        run: bun run test:memory:smoke
+
   build:
     name: Build Application
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: lint-only
+    needs: [lint-only, memory-smoke]
 
     steps:
       - name: Checkout code
@@ -87,6 +108,8 @@ jobs:
           NEXT_PUBLIC_CONVEX_URL: ${{ secrets.NEXT_PUBLIC_CONVEX_URL || 'https://dummy.convex.cloud' }}
           BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET || 'dummy-secret-for-build-validation-only' }}
           BETTER_AUTH_URL: ${{ secrets.BETTER_AUTH_URL || 'http://localhost:3000' }}
+        # Build may fail without Convex generated types (CI has no live Convex deployment).
+        # Vercel production builds succeed with proper Convex setup.
         continue-on-error: true
         id: build
 
@@ -98,9 +121,9 @@ jobs:
               echo "✅ .next directory created"
             fi
           else
-            echo "⚠️  Build check: Skipped due to Convex dependencies"
-            echo "Note: Build requires Convex generated types"
-            echo "Vercel builds successfully with proper Convex setup"
+            echo "⚠️  Build requires Convex generated types (unavailable in CI)"
+            echo "Vercel production builds succeed with proper Convex setup"
+            echo "Type safety enforced locally via: bun run typecheck (pre-push hook)"
             exit 0
           fi
 
@@ -125,14 +148,15 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint-and-format, lint-only, build, security-audit]
+    needs: [lint-and-format, lint-only, memory-smoke, build, security-audit]
     if: always()
 
     steps:
       - name: Check CI status
         run: |
           if [ "${{ needs.lint-and-format.result }}" != "success" ] || \
-             [ "${{ needs.lint-only.result }}" != "success" ]; then
+             [ "${{ needs.lint-only.result }}" != "success" ] || \
+             [ "${{ needs.memory-smoke.result }}" != "success" ]; then
             echo "❌ CI pipeline failed"
             exit 1
           else
