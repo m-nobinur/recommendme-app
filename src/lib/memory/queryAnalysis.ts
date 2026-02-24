@@ -38,6 +38,7 @@ export type QueryIntent =
   | 'invoicing'
   | 'general'
   | 'memory_query'
+  | 'memory_command'
 
 export interface QueryEntity {
   type: 'customer' | 'date' | 'service' | 'amount'
@@ -68,7 +69,10 @@ const INVOICING_PATTERN =
   /\b(invoice|bill|payment|charge|price|cost|amount|total|due|paid|receipt|estimate|quote)\b/i
 
 const MEMORY_QUERY_PATTERN =
-  /\b(remember|recall|what\s+do\s+you\s+know|(?:know|tell\s+me)\s+about|what\s+did\s+(?:i|we)\s+(?:say|tell|mention)|forget|preference|prefer|always|never|last\s+time)\b/i
+  /\b(recall|what\s+do\s+you\s+know|(?:know|tell\s+me)\s+about|what\s+did\s+(?:i|we)\s+(?:say|tell|mention)|preference|prefer|always|never|last\s+time)\b/i
+
+const MEMORY_COMMAND_PATTERN =
+  /\b(remember\s+(?:that|this|the|my|our|when|if|to)|forget\s+(?:that|the|about|my|our)|don'?t\s+forget|update\s+(?:the\s+)?preference|save\s+(?:that|this|the)|store\s+(?:that|this|the)|note\s+(?:that|this|the|down))\b/i
 
 /**
  * Detect capitalized proper nouns (2+ words) that likely represent names.
@@ -149,13 +153,23 @@ const INTENT_CONTEXT_MAP: Record<QueryIntent, BusinessMemoryType[]> = {
   lead_management: ['fact', 'relationship', 'context'],
   invoicing: ['fact', 'preference', 'instruction'],
   memory_query: ['fact', 'preference', 'instruction', 'context', 'relationship'],
+  memory_command: [],
   general: ['fact', 'instruction'],
 }
 
 /** Zod schema for structured AI intent output */
 const aiIntentSchema = z.object({
   intents: z
-    .array(z.enum(['scheduling', 'lead_management', 'invoicing', 'memory_query', 'general']))
+    .array(
+      z.enum([
+        'scheduling',
+        'lead_management',
+        'invoicing',
+        'memory_query',
+        'memory_command',
+        'general',
+      ])
+    )
     .min(1)
     .describe('Detected user intents from the message'),
 })
@@ -167,12 +181,14 @@ Available intents:
 - scheduling: Anything about appointments, bookings, calendar, time slots, reminders, availability
 - lead_management: Anything about leads, customers, clients, contacts, prospects, pipeline, follow-ups, proposals
 - invoicing: Anything about invoices, bills, payments, pricing, costs, estimates, quotes, receipts
-- memory_query: When the user asks what the system remembers, their preferences, past interactions, or asks to remember/forget something
+- memory_query: When the user asks what the system knows, their preferences, or past interactions
+- memory_command: When the user tells the system to remember, forget, save, or store something (imperative actions, NOT questions)
 - general: ONLY use this if the message truly doesn't fit any other intent. Most CRM messages have a specific intent.
 
 Rules:
 - Prefer specific intents over general
 - A message can have multiple intents (e.g. "schedule a followup with the lead" = scheduling + lead_management)
+- "remember that X" = memory_command (imperative). "what do you remember about X?" = memory_query (question).
 - Short/ambiguous messages should still be classified if there's any CRM-related signal`
 
 /** Pre-built empty analysis result for empty/whitespace-only input (rule 7.8, 7.4) */
@@ -189,6 +205,7 @@ const VALID_INTENTS = new Set<QueryIntent>([
   'lead_management',
   'invoicing',
   'memory_query',
+  'memory_command',
   'general',
 ])
 
@@ -199,6 +216,7 @@ const VALID_INTENTS = new Set<QueryIntent>([
 function detectIntents(message: string): QueryIntent[] {
   const intents: QueryIntent[] = []
 
+  if (MEMORY_COMMAND_PATTERN.test(message)) intents.push('memory_command')
   if (SCHEDULING_PATTERN.test(message)) intents.push('scheduling')
   if (LEAD_MANAGEMENT_PATTERN.test(message)) intents.push('lead_management')
   if (INVOICING_PATTERN.test(message)) intents.push('invoicing')
@@ -408,4 +426,44 @@ export async function analyzeQueryAsync(message: string): Promise<QueryAnalysis>
   const subjectHints = buildSubjectHints(entities)
 
   return { intents, entities, requiredContextTypes, subjectHints, aiAssisted }
+}
+
+export type MemoryLayer = 'platform' | 'niche' | 'business' | 'agent'
+
+const INTENT_LAYER_MAP: Record<QueryIntent, MemoryLayer[]> = {
+  scheduling: ['business', 'agent'],
+  lead_management: ['business', 'agent'],
+  invoicing: ['business'],
+  memory_query: ['business', 'agent', 'niche', 'platform'],
+  memory_command: [],
+  general: ['business', 'agent', 'niche', 'platform'],
+}
+
+/**
+ * Determine which memory layers to search based on detected intents.
+ *
+ * Most intents only need business + agent. Platform and niche are only
+ * relevant for general knowledge queries and explicit memory lookups.
+ * `memory_command` (remember/forget/store) needs zero retrieval.
+ */
+export function getRequiredLayers(intents: QueryIntent[]): MemoryLayer[] {
+  if (intents.includes('memory_command') && intents.length === 1) {
+    return []
+  }
+
+  const layers = new Set<MemoryLayer>()
+  for (const intent of intents) {
+    for (const layer of INTENT_LAYER_MAP[intent]) {
+      layers.add(layer)
+    }
+  }
+  return Array.from(layers)
+}
+
+/**
+ * Check if the query is a pure memory command (remember/forget/store)
+ * that requires no retrieval at all.
+ */
+export function isMemoryCommand(analysis: QueryAnalysis): boolean {
+  return analysis.intents.length === 1 && analysis.intents[0] === 'memory_command'
 }

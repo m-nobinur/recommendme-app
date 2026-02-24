@@ -148,6 +148,14 @@ export const hybridSearchBusinessMemories = internalAction({
     query: v.string(),
     organizationId: v.id('organizations'),
     embedding: v.optional(v.array(v.float64())),
+    precomputedVectorResults: v.optional(
+      v.array(
+        v.object({
+          document: v.any(),
+          score: v.float64(),
+        })
+      )
+    ),
     type: v.optional(
       v.union(
         v.literal('fact'),
@@ -175,24 +183,30 @@ export const hybridSearchBusinessMemories = internalAction({
   > => {
     const limit = Math.min(args.limit ?? 20, 100)
 
-    const embedding: number[] =
-      args.embedding ??
-      (await ctx.runAction(internal.embedding.generateEmbedding, { text: args.query }))
+    const vectorResultsPromise = args.precomputedVectorResults
+      ? Promise.resolve(args.precomputedVectorResults)
+      : (async () => {
+          const embedding: number[] =
+            args.embedding ??
+            (await ctx.runAction(internal.embedding.generateEmbedding, { text: args.query }))
+          return ctx.runAction(internal.vectorSearch.searchBusinessMemories, {
+            embedding,
+            organizationId: args.organizationId,
+            limit: limit * 2,
+          })
+        })()
+
+    const keywordResultsPromise = ctx.runQuery(internal.hybridSearch.keywordSearchBusiness, {
+      organizationId: args.organizationId,
+      type: args.type,
+      subjectType: args.subjectType,
+      subjectId: args.subjectId,
+      limit: limit * 2,
+    })
 
     const [vectorResults, keywordResults] = await Promise.all([
-      ctx.runAction(internal.vectorSearch.searchBusinessMemories, {
-        embedding,
-        organizationId: args.organizationId,
-        limit: limit * 2,
-      }),
-
-      ctx.runQuery(internal.hybridSearch.keywordSearchBusiness, {
-        organizationId: args.organizationId,
-        type: args.type,
-        subjectType: args.subjectType,
-        subjectId: args.subjectId,
-        limit: limit * 2,
-      }),
+      vectorResultsPromise,
+      keywordResultsPromise,
     ])
 
     // Reciprocal Rank Fusion

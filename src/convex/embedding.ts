@@ -41,6 +41,52 @@ const OPENAI_EMBEDDING_MODEL = 'text-embedding-3-large'
 const EMBEDDING_DIMENSIONS = 3072
 const MAX_RETRIES = 3
 const MAX_BATCH_SIZE = 100
+const MAX_EMBEDDING_CACHE_ENTRIES = 2000
+
+interface CachedEmbeddingEntry {
+  embedding: number[]
+  expiresAt: number
+}
+
+const embeddingCache = new Map<string, CachedEmbeddingEntry>()
+
+function isEmbeddingCacheEnabled(): boolean {
+  return process.env.AI_ENABLE_CACHING === 'true'
+}
+
+function getEmbeddingCacheTtlMs(): number {
+  const parsed = Number(process.env.AI_MEMORY_EMBEDDING_CACHE_TTL ?? '120')
+  const ttlSeconds = Number.isFinite(parsed) && parsed > 0 ? parsed : 120
+  return ttlSeconds * 1000
+}
+
+function buildEmbeddingCacheKey(providerModel: string, text: string): string {
+  return `${providerModel}:${text.trim().toLowerCase()}`
+}
+
+function getCachedEmbedding(key: string): number[] | null {
+  const cached = embeddingCache.get(key)
+  if (!cached) return null
+
+  if (cached.expiresAt <= Date.now()) {
+    embeddingCache.delete(key)
+    return null
+  }
+
+  return cached.embedding
+}
+
+function setCachedEmbedding(key: string, embedding: number[]): void {
+  const expiresAt = Date.now() + getEmbeddingCacheTtlMs()
+  embeddingCache.set(key, { embedding, expiresAt })
+
+  if (embeddingCache.size > MAX_EMBEDDING_CACHE_ENTRIES) {
+    const firstKey = embeddingCache.keys().next().value
+    if (firstKey) {
+      embeddingCache.delete(firstKey)
+    }
+  }
+}
 
 /**
  * Provider configurations for embedding generation.
@@ -200,6 +246,14 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
     })
   }
 
+  const cacheKey = buildEmbeddingCacheKey(provider.model, trimmedText)
+  if (isEmbeddingCacheEnabled()) {
+    const cached = getCachedEmbedding(cacheKey)
+    if (cached) {
+      return cached
+    }
+  }
+
   const { embeddings, totalTokens } = await callEmbeddingsAPI(provider, trimmedText)
 
   if (process.env.DEBUG_MEMORY === 'true') {
@@ -210,7 +264,12 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
     })
   }
 
-  return embeddings[0]
+  const embedding = embeddings[0]
+  if (isEmbeddingCacheEnabled()) {
+    setCachedEmbedding(cacheKey, embedding)
+  }
+
+  return embedding
 }
 
 /**

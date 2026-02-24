@@ -22,8 +22,14 @@
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { ConvexHttpClient } from 'convex/browser'
+import { getPerformanceConfig } from '@/lib/ai/config'
 import { formatContext } from './contextFormatter'
-import { analyzeQuery, analyzeQueryAsync } from './queryAnalysis'
+import {
+  analyzeQuery,
+  analyzeQueryAsync,
+  getRequiredLayers,
+  isMemoryCommand,
+} from './queryAnalysis'
 import type { RawSearchResults } from './scoring'
 import { scoreAndRank } from './scoring'
 import { allocateTokenBudget } from './tokenBudget'
@@ -49,12 +55,54 @@ export interface RetrievalParams {
   agentType?: string
   convexUrl: string
   skipAIIntent?: boolean
+  traceId?: string
 }
 
 const EMPTY_LAYER_BREAKDOWN = { platform: 0, niche: 0, business: 0, agent: 0 } as const
 
 let retrievalClient: ConvexHttpClient | null = null
 let retrievalClientUrl = ''
+const MAX_RETRIEVAL_CACHE_ENTRIES = 1000
+
+interface CachedRetrievalEntry {
+  result: RetrievalResult
+  expiresAt: number
+}
+
+const retrievalCache = new Map<string, CachedRetrievalEntry>()
+
+function buildRetrievalCacheKey(params: RetrievalParams): string {
+  return [
+    params.organizationId,
+    params.nicheId ?? '',
+    params.agentType ?? 'chat',
+    params.skipAIIntent ? '1' : '0',
+    params.query.trim().toLowerCase(),
+  ].join('|')
+}
+
+function getCachedRetrievalResult(cacheKey: string): RetrievalResult | null {
+  const cached = retrievalCache.get(cacheKey)
+  if (!cached) return null
+
+  if (cached.expiresAt <= Date.now()) {
+    retrievalCache.delete(cacheKey)
+    return null
+  }
+
+  return cached.result
+}
+
+function setCachedRetrievalResult(cacheKey: string, result: RetrievalResult, ttlMs: number): void {
+  retrievalCache.set(cacheKey, { result, expiresAt: Date.now() + ttlMs })
+
+  if (retrievalCache.size > MAX_RETRIEVAL_CACHE_ENTRIES) {
+    const firstKey = retrievalCache.keys().next().value
+    if (firstKey) {
+      retrievalCache.delete(firstKey)
+    }
+  }
+}
 
 function isValidConvexUrl(url: string): boolean {
   if (!url) return false
@@ -99,6 +147,16 @@ function getRetrievalClient(url: string): ConvexHttpClient {
  */
 export async function retrieveMemoryContext(params: RetrievalParams): Promise<RetrievalResult> {
   const startTime = performance.now()
+  const stageLatencies = {
+    analysisMs: 0,
+    searchMs: 0,
+    scoringMs: 0,
+    budgetMs: 0,
+    formatMs: 0,
+  }
+  const performanceConfig = getPerformanceConfig()
+  const cacheEnabled = performanceConfig.enableCaching
+  const retrievalCacheTtlMs = performanceConfig.memoryRetrievalCacheTTL * 1000
 
   if (!params.query || params.query.trim().length === 0) {
     return {
@@ -114,6 +172,7 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
   if (!isValidConvexUrl(params.convexUrl)) {
     console.warn('[Reme:Memory] Skipping retrieval due to invalid Convex URL', {
       organizationId: params.organizationId,
+      traceId: params.traceId,
     })
     return {
       context: '',
@@ -125,7 +184,30 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
     }
   }
 
+  const cacheKey = buildRetrievalCacheKey(params)
+  if (cacheEnabled) {
+    const cached = getCachedRetrievalResult(cacheKey)
+    if (cached) {
+      return cached
+    }
+  }
+
+  const analysisStart = performance.now()
   const regexAnalysis = analyzeQuery(params.query)
+  stageLatencies.analysisMs = Math.round(performance.now() - analysisStart)
+
+  if (isMemoryCommand(regexAnalysis)) {
+    return {
+      context: '',
+      memoriesUsed: 0,
+      memoryIds: [],
+      tokenCount: 0,
+      latencyMs: Math.round(performance.now() - startTime),
+      layerBreakdown: EMPTY_LAYER_BREAKDOWN,
+    }
+  }
+
+  const requiredLayers = getRequiredLayers(regexAnalysis.intents)
 
   const needsAI =
     !params.skipAIIntent &&
@@ -144,22 +226,42 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
   }
 
   let rawResults: RawSearchResults
+  const useSelectiveSearch = requiredLayers.length < 4
 
+  const searchStart = performance.now()
   try {
     const convex = getRetrievalClient(params.convexUrl)
-    rawResults = await convex.action(api.memoryRetrieval.retrieveContext, {
-      query: searchQuery,
-      organizationId: params.organizationId as Id<'organizations'>,
-      nicheId: params.nicheId,
-      agentType: params.agentType ?? 'chat',
-      keywordType: firstContextType,
-      keywordSubjectType: firstSubject?.subjectType,
-      keywordSubjectId: subjectName,
-    })
+
+    if (useSelectiveSearch) {
+      rawResults = await convex.action(api.memoryRetrieval.retrieveSelectedContext, {
+        query: searchQuery,
+        organizationId: params.organizationId as Id<'organizations'>,
+        layers: requiredLayers,
+        nicheId: params.nicheId,
+        agentType: params.agentType ?? 'chat',
+        keywordType: firstContextType,
+        keywordSubjectType: firstSubject?.subjectType,
+        keywordSubjectId: subjectName,
+        traceId: params.traceId,
+      })
+    } else {
+      rawResults = await convex.action(api.memoryRetrieval.retrieveContext, {
+        query: searchQuery,
+        organizationId: params.organizationId as Id<'organizations'>,
+        nicheId: params.nicheId,
+        agentType: params.agentType ?? 'chat',
+        keywordType: firstContextType,
+        keywordSubjectType: firstSubject?.subjectType,
+        keywordSubjectId: subjectName,
+        traceId: params.traceId,
+      })
+    }
+    stageLatencies.searchMs = Math.round(performance.now() - searchStart)
   } catch (error) {
     console.error('[Reme:Memory] Retrieval failed:', {
       error: error instanceof Error ? error.message : 'Unknown error',
       organizationId: params.organizationId,
+      traceId: params.traceId,
     })
 
     return {
@@ -174,20 +276,26 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
 
   const analysis = aiAnalysisPromise ? await aiAnalysisPromise : regexAnalysis
 
+  const scoringStart = performance.now()
   const scored = scoreAndRank(rawResults, analysis)
+  stageLatencies.scoringMs = Math.round(performance.now() - scoringStart)
 
+  const budgetStart = performance.now()
   const selected = allocateTokenBudget(scored)
+  stageLatencies.budgetMs = Math.round(performance.now() - budgetStart)
 
+  const formatStart = performance.now()
   const formatted = formatContext({
     platform: selected.platform,
     niche: selected.niche,
     business: selected.business,
     agent: selected.agent,
   })
+  stageLatencies.formatMs = Math.round(performance.now() - formatStart)
 
   const latencyMs = Math.round(performance.now() - startTime)
 
-  return {
+  const result = {
     context: formatted.text,
     memoriesUsed: formatted.memoriesUsed,
     memoryIds: formatted.memoryIds,
@@ -200,4 +308,19 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
       agent: selected.agent.length,
     },
   }
+
+  if (cacheEnabled) {
+    setCachedRetrievalResult(cacheKey, result, retrievalCacheTtlMs)
+  }
+
+  if (process.env.DEBUG_MEMORY === 'true') {
+    console.log('[Reme:MemoryTrace] Retrieval stages', {
+      traceId: params.traceId,
+      organizationId: params.organizationId,
+      ...stageLatencies,
+      totalMs: latencyMs,
+    })
+  }
+
+  return result
 }
