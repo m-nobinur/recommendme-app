@@ -136,6 +136,9 @@ export const updateBusinessDecayBatch = internalMutation({
       if (!memory || !memory.isActive) continue
 
       const timeSinceAccess = now - memory.lastAccessedAt
+      // successRate is intentionally 0 for business memories: they don't have an
+      // outcome-based success metric (unlike agent memories which track successRate).
+      // Access frequency alone (accessCount) drives reinforcement for business memories.
       const reinforcement = computeReinforcement(memory.accessCount, 0)
       const newScore = calculateDecayStrength(memory.type, timeSinceAccess, reinforcement)
 

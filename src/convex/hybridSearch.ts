@@ -85,7 +85,7 @@ export const keywordSearchBusiness = internalQuery({
             q.eq('organizationId', args.organizationId).eq('isActive', true)
           )
           .order('desc')
-          .take(200)
+          .take(50)
 
         const existingIds = new Set(results.map((r) => r._id))
         const contentMatches = allActive.filter(

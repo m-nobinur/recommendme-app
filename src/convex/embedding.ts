@@ -60,8 +60,17 @@ function getEmbeddingCacheTtlMs(): number {
   return ttlSeconds * 1000
 }
 
-function buildEmbeddingCacheKey(providerModel: string, text: string): string {
-  return `${providerModel}:${text.trim().toLowerCase()}`
+/**
+ * Build a cache key for an embedding by hashing the text with SHA-256.
+ * Hashing prevents PII (raw memory text) from being stored in the cache key.
+ */
+async function buildEmbeddingCacheKey(providerModel: string, text: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(text.trim().toLowerCase())
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('')
+  return `${providerModel}:${hashHex}`
 }
 
 function getCachedEmbedding(key: string): number[] | null {
@@ -246,7 +255,7 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
     })
   }
 
-  const cacheKey = buildEmbeddingCacheKey(provider.model, trimmedText)
+  const cacheKey = await buildEmbeddingCacheKey(provider.model, trimmedText)
   if (isEmbeddingCacheEnabled()) {
     const cached = getCachedEmbedding(cacheKey)
     if (cached) {

@@ -1507,12 +1507,14 @@ export const deduplicateMemories = internalAction({
 export const getAllActiveBusinessMemories = internalQuery({
   args: { organizationId: v.id('organizations') },
   handler: async (ctx, args) => {
+    // Capped at 500 to prevent unbounded reads in Convex queries.
+    // Callers that need full coverage should paginate using getActiveBusinessBatch.
     return await ctx.db
       .query('businessMemories')
       .withIndex('by_org_active', (q) =>
         q.eq('organizationId', args.organizationId).eq('isActive', true)
       )
-      .collect()
+      .take(500)
   },
 })
 
