@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
-import { allocateTokenBudget, estimateTokens } from './tokenBudget'
+import { beforeEach, describe, it } from 'node:test'
+import { allocateTokenBudget, estimateTokens, resetTokenBudgetConfig } from './tokenBudget'
 
 describe('tokenBudget', () => {
+  beforeEach(() => {
+    // Reset the resolved config cache between tests to prevent cross-test pollution
+    // from environment variables read at module load time.
+    resetTokenBudgetConfig()
+  })
+
   it('estimates tokens with 4-char heuristic', () => {
     assert.equal(estimateTokens(''), 0)
     assert.equal(estimateTokens('1234'), 1)

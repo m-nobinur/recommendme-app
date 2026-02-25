@@ -24,6 +24,7 @@
  */
 
 import { generateText, type UIMessage } from 'ai'
+import { getAIConfig } from '../config'
 import { createAIProvider } from '../providers'
 import type { AIProvider, ModelTier } from '../providers/types'
 
@@ -108,7 +109,7 @@ export async function buildConversationWindow(
   const recentMessages = messages.slice(splitIndex)
 
   let summary = ''
-  const provider = options?.provider ?? 'gemini'
+  const provider = options?.provider ?? getAIConfig().defaultProvider
   const modelTier = options?.modelTier ?? 'regular'
   const fallbackProviders: AIProvider[] = provider === 'gemini' ? ['openrouter'] : ['gemini']
 

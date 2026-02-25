@@ -136,6 +136,11 @@ function computeCompositeScore(
 
   score *= layerWeight
 
+  // Intentional double-recency effect: memories accessed within the last 7 days
+  // receive both a linear recency component above (WEIGHT_RECENCY * recency)
+  // AND a multiplicative boost here (RECENCY_BOOST = 1.2). This ensures that
+  // very fresh memories — likely most relevant to the current conversation —
+  // rank substantially higher than older memories with similar importance scores.
   if (now - recencyTimestamp < RECENCY_WINDOW_MS) {
     score *= RECENCY_BOOST
   }

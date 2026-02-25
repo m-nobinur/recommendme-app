@@ -78,13 +78,16 @@ export const getArchivedMemoriesBySubject = internalQuery({
     ctx,
     args
   ): Promise<{ subjectKey: string; memories: Doc<'businessMemories'>[] }[]> => {
-    const archived = await ctx.db
+    // Use the by_org_archived index to fetch only archived memories directly,
+    // avoiding an in-memory post-filter over a large active-memory scan.
+    const candidates = await ctx.db
       .query('businessMemories')
-      .withIndex('by_org_active', (q) =>
-        q.eq('organizationId', args.organizationId).eq('isActive', true)
+      .withIndex('by_org_archived', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isArchived', true)
       )
       .take(500)
-      .then((results) => results.filter((m) => m.isArchived && m.subjectType && m.subjectId))
+
+    const archived = candidates.filter((m) => m.subjectType && m.subjectId)
 
     const groups = new Map<string, Doc<'businessMemories'>[]>()
     for (const memory of archived) {
