@@ -81,7 +81,7 @@ fi
 
 info "Querying memory events..."
 EVENTS=$(npx convex run memoryEvents:listRecent \
-  "{\"organizationId\": \"${ORG_ID}\", \"limit\": 10}" 2>&1)
+  "{\"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 10}" 2>&1)
 EVENT_COUNT=$(echo "$EVENTS" | grep -c '"eventType"' 2>/dev/null || true)
 EVENT_COUNT=${EVENT_COUNT:-0}
 EVENT_COUNT=$(echo "$EVENT_COUNT" | tr -d '[:space:]')
@@ -145,7 +145,7 @@ if [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "307" || "$HTTP_CODE" == "302" ]]
   sleep 3
 
   EVENTS_AFTER=$(npx convex run memoryEvents:listRecent \
-    "{\"organizationId\": \"${ORG_ID}\", \"limit\": 5}" 2>&1)
+    "{\"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 5}" 2>&1)
   if echo "$EVENTS_AFTER" | grep -q "conversation_end"; then
     ok "conversation_end event emitted after chat"
   else
@@ -155,6 +155,9 @@ fi
 
 # ─── 4. Memory Validation Rules ─────────────────────────────
 header "Memory Validation Rules (CRUD guards)"
+
+info "Negative tests below intentionally send invalid payloads."
+info "Expected behavior: Convex rejects them with validation errors (this is PASS)."
 
 info "Testing business memory validation — content too short..."
 SHORT_RESULT=$(npx convex run businessMemories:create \
@@ -188,7 +191,7 @@ header "Index & Query Validation"
 
 info "Testing memoryEvents by_org_created index (time-ordered)..."
 INDEX_RESULT=$(npx convex run memoryEvents:listRecent \
-  "{\"organizationId\": \"${ORG_ID}\", \"limit\": 3}" 2>&1)
+  "{\"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 3}" 2>&1)
 if echo "$INDEX_RESULT" | grep -qi "error\|index.*not\|no such"; then
   err "by_org_created index query failed"
   echo "$INDEX_RESULT"

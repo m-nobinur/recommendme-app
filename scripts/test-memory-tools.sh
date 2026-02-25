@@ -74,7 +74,7 @@ info "Waiting 3s for embedding generation..."
 sleep 3
 
 SEARCH_OUT=$(npx convex run memoryRetrieval:searchMemories \
-  "{\"query\": \"Alex morning appointments\", \"organizationId\": \"${ORG_ID}\", \"limit\": 5}" 2>&1)
+  "{\"query\": \"Alex morning appointments\", \"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 5}" 2>&1)
 
 if echo "$SEARCH_OUT" | grep -q "error\|Error"; then
   info "searchMemories is a public action — may need different invocation"

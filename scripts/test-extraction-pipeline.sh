@@ -153,7 +153,7 @@ fi
 
 if $SERVER_AVAILABLE; then
   EVENTS_BEFORE=$(npx convex run memoryEvents:listRecent \
-    "{\"organizationId\": \"${ORG_ID}\", \"limit\": 100}" 2>&1)
+    "{\"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 100}" 2>&1)
   EVENT_COUNT_BEFORE=$(echo "$EVENTS_BEFORE" | grep -c '"eventType"' 2>/dev/null || echo "0")
   EVENT_COUNT_BEFORE=$(echo "$EVENT_COUNT_BEFORE" | tr -d '[:space:]')
   info "Events before test: ${EVENT_COUNT_BEFORE}"
@@ -185,7 +185,7 @@ if $SERVER_AVAILABLE; then
   sleep 5
 
   EVENTS_AFTER=$(npx convex run memoryEvents:listRecent \
-    "{\"organizationId\": \"${ORG_ID}\", \"limit\": 100}" 2>&1)
+    "{\"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 100}" 2>&1)
   EVENT_COUNT_AFTER=$(echo "$EVENTS_AFTER" | grep -c '"eventType"' 2>/dev/null || echo "0")
   EVENT_COUNT_AFTER=$(echo "$EVENT_COUNT_AFTER" | tr -d '[:space:]')
   info "Events after test: ${EVENT_COUNT_AFTER}"
@@ -205,7 +205,7 @@ if $SERVER_AVAILABLE; then
 
   info "Checking unprocessed event queue..."
   UNPROCESSED=$(npx convex run memoryEvents:listUnprocessed \
-    "{\"organizationId\": \"${ORG_ID}\", \"limit\": 10}" 2>&1)
+    "{\"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 10}" 2>&1)
   UNPROCESSED_COUNT=$(echo "$UNPROCESSED" | grep -c '"eventType"' 2>/dev/null || echo "0")
   UNPROCESSED_COUNT=$(echo "$UNPROCESSED_COUNT" | tr -d '[:space:]')
   info "Unprocessed events: ${UNPROCESSED_COUNT}"

@@ -51,8 +51,12 @@ ENV_FILE=".env.local"
 APP_URL="${NEXT_PUBLIC_APP_URL:-http://localhost:3000}"
 
 ORG_ID=""
+MEMORY_API_TOKEN=""
+DISABLE_AUTH_IN_DEV=""
 if [[ -f "$ENV_FILE" ]]; then
   ORG_ID=$(grep -E '^DEV_ORGANIZATION_ID=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
+  MEMORY_API_TOKEN=$(grep -E '^MEMORY_API_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
+  DISABLE_AUTH_IN_DEV=$(grep -E '^DISABLE_AUTH_IN_DEV=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
 fi
 
 # ─── Helpers ─────────────────────────────────────────────────
@@ -69,12 +73,21 @@ extract_id() {
   echo "$val"
 }
 
-# Extract a numeric or string JSON field value from raw output.
+# Extract a JSON field value (number, boolean, or quoted string) from raw output.
 # Usage: parse_json_field "$output" "fieldName"
 parse_json_field() {
   local text="$1"
   local field="$2"
-  echo "$text" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p" | head -1
+  local val
+  # Try number first
+  val=$(echo "$text" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p" | head -1)
+  if [[ -n "$val" ]]; then echo "$val"; return; fi
+  # Try boolean
+  val=$(echo "$text" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p" | head -1)
+  if [[ -n "$val" ]]; then echo "$val"; return; fi
+  # Try quoted string
+  val=$(echo "$text" | sed -n "s/.*\"${field}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" | head -1)
+  echo "$val"
 }
 
 # Print the standard test suite banner.
@@ -85,6 +98,15 @@ print_banner() {
   echo -e "${BOLD}  ${title}${NC}"
   echo -e "${BOLD}═══════════════════════════════════════════════════════════${NC}"
   echo -e "  Org ID: ${ORG_ID:-${RED}not set${NC}}"
+  if [[ -n "$MEMORY_API_TOKEN" ]]; then
+    echo -e "  Memory API Token: ${GREEN}configured${NC}"
+  else
+    if [[ "$DISABLE_AUTH_IN_DEV" == "true" ]]; then
+      echo -e "  Memory API Token: ${YELLOW}not set (dev bypass enabled via DISABLE_AUTH_IN_DEV=true)${NC}"
+    else
+      echo -e "  Memory API Token: ${RED}not set (requests will fail without DISABLE_AUTH_IN_DEV=true)${NC}"
+    fi
+  fi
 }
 
 # ─── Gates ───────────────────────────────────────────────────
@@ -93,13 +115,13 @@ print_banner() {
 run_static_gate() {
   header "Typecheck & Lint"
 
-  if bun run typecheck 2>&1 | tail -1 | grep -q "error"; then
+  if ! bun run typecheck; then
     err "TypeScript errors found"
   else
     ok "TypeScript type check passed"
   fi
 
-  if bun run check:ci 2>&1 | tail -3 | grep -q "error\|Err"; then
+  if ! bun run check:ci; then
     err "Biome lint/format errors found"
   else
     ok "Biome lint + format check passed"
@@ -137,15 +159,24 @@ require_convex() {
 
 # ─── Convex Helpers ──────────────────────────────────────────
 
-# Track file for memory IDs (subshells can't modify parent arrays).
+# Track files for memory IDs (subshells can't modify parent arrays).
 _TEST_IDS_FILE=$(mktemp)
-trap 'rm -f "$_TEST_IDS_FILE"' EXIT
+_TEST_AGENT_IDS_FILE=$(mktemp)
+trap 'rm -f "$_TEST_IDS_FILE" "$_TEST_AGENT_IDS_FILE"' EXIT
 
-# Register a memory ID for cleanup.
+# Register a business memory ID for cleanup.
 # Usage: track_test_id "$id"
 track_test_id() {
   if [[ -n "${1:-}" ]]; then
     echo "$1" >> "$_TEST_IDS_FILE"
+  fi
+}
+
+# Register an agent memory ID for cleanup.
+# Usage: track_agent_test_id "$id"
+track_agent_test_id() {
+  if [[ -n "${1:-}" ]]; then
+    echo "$1" >> "$_TEST_AGENT_IDS_FILE"
   fi
 }
 
@@ -203,7 +234,7 @@ assert_field() {
 
 # ─── Results & Cleanup ──────────────────────────────────────
 
-# Soft-delete all tracked test memory IDs.
+# Soft-delete all tracked test memory IDs (business + agent).
 cleanup_test_memories() {
   header "Cleanup Test Data"
   local cleaned=0
@@ -215,6 +246,15 @@ cleanup_test_memories() {
         cleaned=$((cleaned + 1))
       fi
     done < "$_TEST_IDS_FILE"
+  fi
+  if [[ -s "$_TEST_AGENT_IDS_FILE" ]]; then
+    while IFS= read -r mem_id; do
+      if [[ -n "$mem_id" ]]; then
+        npx convex run agentMemories:softDelete \
+          "{\"id\": \"${mem_id}\", \"organizationId\": \"${ORG_ID}\"}" 2>&1 >/dev/null || true
+        cleaned=$((cleaned + 1))
+      fi
+    done < "$_TEST_AGENT_IDS_FILE"
   fi
   ok "Cleaned up ${cleaned} test memories"
 }
