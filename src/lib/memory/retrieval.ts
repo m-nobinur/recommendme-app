@@ -51,6 +51,7 @@ export interface RetrievalResult {
 export interface RetrievalParams {
   query: string
   organizationId: string
+  authToken?: string
   nicheId?: string
   agentType?: string
   convexUrl: string
@@ -74,6 +75,7 @@ const retrievalCache = new Map<string, CachedRetrievalEntry>()
 function buildRetrievalCacheKey(params: RetrievalParams): string {
   return [
     params.organizationId,
+    params.authToken ?? '',
     params.nicheId ?? '',
     params.agentType ?? 'chat',
     params.skipAIIntent ? '1' : '0',
@@ -225,52 +227,72 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
     searchQuery = `Information about a person named ${subjectName}: ${params.query}`
   }
 
-  let rawResults: RawSearchResults
+  let rawResults!: RawSearchResults
   const useSelectiveSearch = requiredLayers.length < 4
 
   const searchStart = performance.now()
-  try {
-    const convex = getRetrievalClient(params.convexUrl)
+  const MAX_RETRIEVAL_RETRIES = 1
+  const RETRY_DELAY_MS = 500
 
-    if (useSelectiveSearch) {
-      rawResults = await convex.action(api.memoryRetrieval.retrieveSelectedContext, {
-        query: searchQuery,
-        organizationId: params.organizationId as Id<'organizations'>,
-        layers: requiredLayers,
-        nicheId: params.nicheId,
-        agentType: params.agentType ?? 'chat',
-        keywordType: firstContextType,
-        keywordSubjectType: firstSubject?.subjectType,
-        keywordSubjectId: subjectName,
+  for (let attempt = 0; attempt <= MAX_RETRIEVAL_RETRIES; attempt++) {
+    try {
+      const convex = getRetrievalClient(params.convexUrl)
+
+      if (useSelectiveSearch) {
+        rawResults = await convex.action(api.memoryRetrieval.retrieveSelectedContext, {
+          query: searchQuery,
+          organizationId: params.organizationId as Id<'organizations'>,
+          authToken: params.authToken,
+          layers: requiredLayers,
+          nicheId: params.nicheId,
+          agentType: params.agentType ?? 'chat',
+          keywordType: firstContextType,
+          keywordSubjectType: firstSubject?.subjectType,
+          keywordSubjectId: subjectName,
+          traceId: params.traceId,
+        })
+      } else {
+        rawResults = await convex.action(api.memoryRetrieval.retrieveContext, {
+          query: searchQuery,
+          organizationId: params.organizationId as Id<'organizations'>,
+          authToken: params.authToken,
+          nicheId: params.nicheId,
+          agentType: params.agentType ?? 'chat',
+          keywordType: firstContextType,
+          keywordSubjectType: firstSubject?.subjectType,
+          keywordSubjectId: subjectName,
+          traceId: params.traceId,
+        })
+      }
+      stageLatencies.searchMs = Math.round(performance.now() - searchStart)
+      break
+    } catch (error) {
+      const isRetryable = attempt < MAX_RETRIEVAL_RETRIES
+      if (isRetryable) {
+        console.warn('[Reme:Memory] Retrieval attempt failed, retrying:', {
+          attempt,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          organizationId: params.organizationId,
+          traceId: params.traceId,
+        })
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * 2 ** attempt))
+        continue
+      }
+
+      console.error('[Reme:Memory] Retrieval failed after retries:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        organizationId: params.organizationId,
         traceId: params.traceId,
       })
-    } else {
-      rawResults = await convex.action(api.memoryRetrieval.retrieveContext, {
-        query: searchQuery,
-        organizationId: params.organizationId as Id<'organizations'>,
-        nicheId: params.nicheId,
-        agentType: params.agentType ?? 'chat',
-        keywordType: firstContextType,
-        keywordSubjectType: firstSubject?.subjectType,
-        keywordSubjectId: subjectName,
-        traceId: params.traceId,
-      })
-    }
-    stageLatencies.searchMs = Math.round(performance.now() - searchStart)
-  } catch (error) {
-    console.error('[Reme:Memory] Retrieval failed:', {
-      error: error instanceof Error ? error.message : 'Unknown error',
-      organizationId: params.organizationId,
-      traceId: params.traceId,
-    })
 
-    return {
-      context: '',
-      memoriesUsed: 0,
-      memoryIds: [],
-      tokenCount: 0,
-      latencyMs: Math.round(performance.now() - startTime),
-      layerBreakdown: EMPTY_LAYER_BREAKDOWN,
+      return {
+        context: '',
+        memoriesUsed: 0,
+        memoryIds: [],
+        tokenCount: 0,
+        latencyMs: Math.round(performance.now() - startTime),
+        layerBreakdown: EMPTY_LAYER_BREAKDOWN,
+      }
     }
   }
 

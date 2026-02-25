@@ -54,6 +54,7 @@ function getApi() {
 export function createMemoryTools(ctx: ToolContext) {
   const convex = ctx.convexClient ?? new ConvexHttpClient(ctx.convexUrl)
   const orgId = asOrganizationId(ctx.organizationId)
+  const authToken = ctx.memoryAuthToken
 
   return {
     rememberFact: tool({
@@ -130,6 +131,7 @@ export function createMemoryTools(ctx: ToolContext) {
           const searchResults = await convex.action(api.memoryRetrieval.searchMemories, {
             query: args.description,
             organizationId: orgId,
+            authToken,
             type: args.type,
             limit: 1,
           })
@@ -199,6 +201,7 @@ export function createMemoryTools(ctx: ToolContext) {
           const searchResults = await convex.action(api.memoryRetrieval.searchMemories, {
             query: args.query,
             organizationId: orgId,
+            authToken,
             type: args.type,
             limit: args.limit ?? 5,
           })
@@ -248,6 +251,7 @@ export function createMemoryTools(ctx: ToolContext) {
           const searchResults = await convex.action(api.memoryRetrieval.searchMemories, {
             query: args.content,
             organizationId: orgId,
+            authToken,
             type: 'preference',
             limit: 3,
           })
