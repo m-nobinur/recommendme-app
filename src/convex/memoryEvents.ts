@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
+import { assertMemoryApiToken } from './security'
 
 /**
  * Memory Events CRUD (Pipeline Trigger Queue)
@@ -142,6 +143,7 @@ const memoryEventData = v.union(
 export const create = mutation({
   args: {
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     eventType: eventTypeValues,
     sourceType: eventSourceTypeValues,
     sourceId: v.string(),
@@ -149,6 +151,8 @@ export const create = mutation({
     data: memoryEventData,
   },
   handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'memoryEvents.create')
+
     const derivedIdempotencyKey =
       args.idempotencyKey ??
       hashString(
@@ -199,8 +203,11 @@ export const get = query({
   args: {
     id: v.id('memoryEvents'),
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'memoryEvents.get')
+
     const event = await ctx.db.get(args.id)
     if (!event || event.organizationId !== args.organizationId) {
       return null
@@ -215,9 +222,12 @@ export const get = query({
 export const listUnprocessed = query({
   args: {
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'memoryEvents.listUnprocessed')
+
     const pageSize = Math.min(args.limit ?? 10, 100)
 
     return await ctx.db
@@ -256,18 +266,27 @@ export const listUnprocessedInternal = internalQuery({
  */
 export const listByType = query({
   args: {
+    organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     eventType: eventTypeValues,
     processedOnly: v.optional(v.boolean()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'memoryEvents.listByType')
+
     const pageSize = Math.min(args.limit ?? 10, 100)
     const processed = args.processedOnly ?? false
 
     return await ctx.db
       .query('memoryEvents')
-      .withIndex('by_type', (q) => q.eq('eventType', args.eventType).eq('processed', processed))
-      .order('asc')
+      .withIndex('by_org_type_processed_created', (q) =>
+        q
+          .eq('organizationId', args.organizationId)
+          .eq('eventType', args.eventType)
+          .eq('processed', processed)
+      )
+      .order('desc')
       .take(pageSize)
   },
 })
@@ -278,9 +297,12 @@ export const listByType = query({
 export const listRecent = query({
   args: {
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'memoryEvents.listRecent')
+
     const pageSize = Math.min(args.limit ?? 20, 100)
 
     return await ctx.db
@@ -297,9 +319,12 @@ export const listRecent = query({
 export const listDeadLetters = query({
   args: {
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'memoryEvents.listDeadLetters')
+
     const pageSize = Math.min(args.limit ?? 20, 100)
     return await ctx.db
       .query('memoryEventDeadLetters')
@@ -425,6 +450,47 @@ export const markFailed = internalMutation({
     }
 
     return { success: true, deadLettered: shouldDeadLetter }
+  },
+})
+
+/**
+ * Recover events stuck in `processing` status (e.g. worker crash).
+ * Resets them to `pending` so the next extraction batch picks them up.
+ */
+export const recoverStuckProcessingEvents = internalMutation({
+  args: {
+    staleThresholdMs: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const threshold = args.staleThresholdMs ?? 10 * 60 * 1000
+    const cutoff = Date.now() - threshold
+
+    const stuckEvents = await ctx.db
+      .query('memoryEvents')
+      .filter((q) =>
+        q.and(
+          q.eq(q.field('status'), 'processing'),
+          q.eq(q.field('processed'), false),
+          q.lt(q.field('processingStartedAt'), cutoff)
+        )
+      )
+      .take(50)
+
+    let recovered = 0
+    for (const event of stuckEvents) {
+      await ctx.db.patch(event._id, {
+        status: 'pending' as const,
+        processingStartedAt: undefined,
+        lastError: 'Recovered from stuck processing state',
+      })
+      recovered++
+    }
+
+    if (recovered > 0) {
+      console.warn('[Memory:Events] Recovered stuck processing events:', { recovered, cutoff })
+    }
+
+    return { recovered }
   },
 })
 

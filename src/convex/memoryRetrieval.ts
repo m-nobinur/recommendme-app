@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { action } from './_generated/server'
 import { isEmbeddingConfigured } from './embedding'
+import { assertMemoryApiToken } from './security'
 
 /**
  * Memory Retrieval Actions
@@ -46,10 +47,57 @@ const businessMemoryTypeValidator = v.union(
   v.literal('episodic')
 )
 
+function emptyLayerResults() {
+  return {
+    platform: [] as Array<{ document: Doc<'platformMemories'>; score: number }>,
+    niche: [] as Array<{ document: Doc<'nicheMemories'>; score: number }>,
+    business: [] as Array<{ document: Doc<'businessMemories'>; score: number }>,
+    agent: [] as Array<{ document: Doc<'agentMemories'>; score: number }>,
+    totalResults: 0,
+  }
+}
+
+function scheduleAccessTracking(
+  ctx: { scheduler: { runAfter: (...args: any[]) => Promise<unknown> } },
+  business: Array<{ document: Doc<'businessMemories'>; score: number }>,
+  agent: Array<{ document: Doc<'agentMemories'>; score: number }>,
+  organizationId: Doc<'organizations'>['_id']
+): Promise<unknown>[] {
+  const promises: Promise<unknown>[] = []
+  const seenBusinessIds = new Set<string>()
+  for (const mem of business) {
+    const memoryId = mem.document._id
+    if (seenBusinessIds.has(memoryId)) continue
+    seenBusinessIds.add(memoryId)
+    promises.push(
+      ctx.scheduler.runAfter(0, internal.businessMemories.recordAccess, {
+        id: memoryId,
+        organizationId,
+      })
+    )
+  }
+
+  const seenAgentIds = new Set<string>()
+  for (const mem of agent) {
+    const memoryId = mem.document._id
+    if (seenAgentIds.has(memoryId)) continue
+    seenAgentIds.add(memoryId)
+    promises.push(
+      ctx.scheduler.runAfter(0, internal.agentMemories.recordUse, {
+        id: memoryId,
+        organizationId,
+        wasSuccessful: true,
+      })
+    )
+  }
+  return promises
+}
+
 export const retrieveContext = action({
   args: {
     query: v.string(),
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     nicheId: v.optional(v.string()),
     agentType: v.optional(v.string()),
     platformLimit: v.optional(v.number()),
@@ -98,19 +146,13 @@ export const retrieveContext = action({
     agent: Array<{ document: Doc<'agentMemories'>; score: number }>
     totalResults: number
   }> => {
-    const emptyResults = {
-      platform: [] as Array<{ document: Doc<'platformMemories'>; score: number }>,
-      niche: [] as Array<{ document: Doc<'nicheMemories'>; score: number }>,
-      business: [] as Array<{ document: Doc<'businessMemories'>; score: number }>,
-      agent: [] as Array<{ document: Doc<'agentMemories'>; score: number }>,
-      totalResults: 0,
-    }
+    assertMemoryApiToken(args.authToken, 'memoryRetrieval.retrieveContext')
 
     if (!isEmbeddingConfigured()) {
       console.warn('[Memory] Embedding provider not configured — skipping retrieval.', {
         organizationId: args.organizationId,
       })
-      return emptyResults
+      return emptyLayerResults()
     }
 
     const hasKeywordHints = args.keywordType || args.keywordSubjectType || args.keywordSubjectId
@@ -153,37 +195,12 @@ export const retrieveContext = action({
       (r) => r.document.expiresAt == null || r.document.expiresAt > now
     )
 
-    const trackingPromises: Promise<unknown>[] = []
-    const seenBusinessIds = new Set<string>()
-
-    for (const mem of business) {
-      const memoryId = mem.document._id
-      if (seenBusinessIds.has(memoryId)) continue
-      seenBusinessIds.add(memoryId)
-
-      trackingPromises.push(
-        ctx.scheduler.runAfter(0, internal.businessMemories.recordAccess, {
-          id: memoryId,
-          organizationId: args.organizationId,
-        })
-      )
-    }
-
-    const seenAgentIds = new Set<string>()
-    for (const mem of vectorResults.agent) {
-      const memoryId = mem.document._id
-      if (seenAgentIds.has(memoryId)) continue
-      seenAgentIds.add(memoryId)
-
-      trackingPromises.push(
-        ctx.scheduler.runAfter(0, internal.agentMemories.recordUse, {
-          id: memoryId,
-          organizationId: args.organizationId,
-          wasSuccessful: true,
-        })
-      )
-    }
-
+    const trackingPromises = scheduleAccessTracking(
+      ctx,
+      business,
+      vectorResults.agent,
+      args.organizationId
+    )
     if (trackingPromises.length > 0) {
       await Promise.allSettled(trackingPromises)
     }
@@ -210,6 +227,7 @@ export const retrieveSelectedContext = action({
   args: {
     query: v.string(),
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     layers: v.array(v.string()),
     nicheId: v.optional(v.string()),
     agentType: v.optional(v.string()),
@@ -239,16 +257,10 @@ export const retrieveSelectedContext = action({
     agent: Array<{ document: Doc<'agentMemories'>; score: number }>
     totalResults: number
   }> => {
-    const emptyResults = {
-      platform: [] as Array<{ document: Doc<'platformMemories'>; score: number }>,
-      niche: [] as Array<{ document: Doc<'nicheMemories'>; score: number }>,
-      business: [] as Array<{ document: Doc<'businessMemories'>; score: number }>,
-      agent: [] as Array<{ document: Doc<'agentMemories'>; score: number }>,
-      totalResults: 0,
-    }
+    assertMemoryApiToken(args.authToken, 'memoryRetrieval.retrieveSelectedContext')
 
-    if (!isEmbeddingConfigured()) return emptyResults
-    if (args.layers.length === 0) return emptyResults
+    if (!isEmbeddingConfigured()) return emptyLayerResults()
+    if (args.layers.length === 0) return emptyLayerResults()
 
     const layerSet = new Set(args.layers)
     const hasKeywordHints = args.keywordType || args.keywordSubjectType || args.keywordSubjectId
@@ -292,34 +304,12 @@ export const retrieveSelectedContext = action({
       (r) => r.document.expiresAt == null || r.document.expiresAt > now
     )
 
-    const trackingPromises: Promise<unknown>[] = []
-    const seenBusinessIds = new Set<string>()
-    for (const mem of business) {
-      const memoryId = mem.document._id
-      if (seenBusinessIds.has(memoryId)) continue
-      seenBusinessIds.add(memoryId)
-      trackingPromises.push(
-        ctx.scheduler.runAfter(0, internal.businessMemories.recordAccess, {
-          id: memoryId,
-          organizationId: args.organizationId,
-        })
-      )
-    }
-
-    const seenAgentIds = new Set<string>()
-    for (const mem of vectorResults.agent) {
-      const memoryId = mem.document._id
-      if (seenAgentIds.has(memoryId)) continue
-      seenAgentIds.add(memoryId)
-      trackingPromises.push(
-        ctx.scheduler.runAfter(0, internal.agentMemories.recordUse, {
-          id: memoryId,
-          organizationId: args.organizationId,
-          wasSuccessful: true,
-        })
-      )
-    }
-
+    const trackingPromises = scheduleAccessTracking(
+      ctx,
+      business,
+      vectorResults.agent,
+      args.organizationId
+    )
     if (trackingPromises.length > 0) {
       await Promise.allSettled(trackingPromises)
     }
@@ -346,6 +336,7 @@ export const searchMemories = action({
   args: {
     query: v.string(),
     organizationId: v.id('organizations'),
+    authToken: v.optional(v.string()),
     type: v.optional(businessMemoryTypeValidator),
     limit: v.optional(v.number()),
   },
@@ -366,6 +357,8 @@ export const searchMemories = action({
     totalResults: v.float64(),
   }),
   handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'memoryRetrieval.searchMemories')
+
     const emptyResponse = { results: [], totalResults: 0 }
     const limit = Math.min(args.limit ?? 10, 50)
 

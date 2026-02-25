@@ -431,6 +431,7 @@ export default defineSchema({
         lastUserMessage: v.optional(v.string()),
         finishReason: v.string(),
         latencyMs: v.optional(v.number()),
+        needsArchival: v.optional(v.boolean()),
       }),
       v.object({
         type: v.literal('tool_result'),
@@ -477,6 +478,12 @@ export default defineSchema({
     .index('by_org_unprocessed', ['organizationId', 'processed'])
     .index('by_org_created', ['organizationId', 'createdAt'])
     .index('by_org_status_created', ['organizationId', 'status', 'createdAt'])
+    .index('by_org_type_processed_created', [
+      'organizationId',
+      'eventType',
+      'processed',
+      'createdAt',
+    ])
     .index('by_org_idempotency', ['organizationId', 'idempotencyKey'])
     .index('by_type', ['eventType', 'processed'])
     .index('by_created', ['createdAt']),
