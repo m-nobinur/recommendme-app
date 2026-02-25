@@ -1,3 +1,4 @@
+import { paginationOptsValidator } from 'convex/server'
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
@@ -31,6 +32,7 @@ const LIFECYCLE_ARCHIVE = 0.3
 const LIFECYCLE_EXPIRED = 0.1
 
 const BATCH_SIZE = 100
+const ORG_PAGE_SIZE = 100
 
 function getBaseDecayRate(memoryType: string): number {
   return DECAY_RATES[memoryType] ?? 0.1
@@ -64,15 +66,15 @@ function calculateDecayStrength(
 export const getActiveBusinessBatch = internalQuery({
   args: {
     organizationId: v.id('organizations'),
-    limit: v.number(),
+    paginationOpts: paginationOptsValidator,
   },
-  handler: async (ctx, args): Promise<Doc<'businessMemories'>[]> => {
+  handler: async (ctx, args) => {
     return ctx.db
       .query('businessMemories')
       .withIndex('by_org_active', (q) =>
         q.eq('organizationId', args.organizationId).eq('isActive', true)
       )
-      .take(args.limit)
+      .paginate(args.paginationOpts)
   },
 })
 
@@ -82,25 +84,31 @@ export const getActiveBusinessBatch = internalQuery({
 export const getActiveAgentBatch = internalQuery({
   args: {
     organizationId: v.id('organizations'),
-    limit: v.number(),
+    paginationOpts: paginationOptsValidator,
   },
-  handler: async (ctx, args): Promise<Doc<'agentMemories'>[]> => {
+  handler: async (ctx, args) => {
     return ctx.db
       .query('agentMemories')
-      .withIndex('by_org_agent_active', (q) => q.eq('organizationId', args.organizationId))
-      .take(args.limit * 3)
-      .then((results) => results.filter((m) => m.isActive).slice(0, args.limit))
+      .withIndex('by_org_active', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isActive', true)
+      )
+      .paginate(args.paginationOpts)
   },
 })
 
 /**
- * Get all distinct organization IDs that have active business memories.
+ * Paginated organization fetch for decay processing.
  */
-export const getOrgsWithActiveMemories = internalQuery({
-  args: {},
-  handler: async (ctx): Promise<Id<'organizations'>[]> => {
-    const orgs = await ctx.db.query('organizations').collect()
-    return orgs.map((o) => o._id)
+export const listOrganizations = internalQuery({
+  args: {
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    return ctx.db
+      .query('organizations')
+      .withIndex('by_created')
+      .order('desc')
+      .paginate(args.paginationOpts)
   },
 })
 
@@ -122,6 +130,9 @@ export const updateBusinessDecayBatch = internalMutation({
       if (!memory || !memory.isActive) continue
 
       const timeSinceAccess = now - memory.lastAccessedAt
+      // successRate is intentionally 0 for business memories: they don't have an
+      // outcome-based success metric (unlike agent memories which track successRate).
+      // Access frequency alone (accessCount) drives reinforcement for business memories.
       const reinforcement = computeReinforcement(memory.accessCount, 0)
       const newScore = calculateDecayStrength(memory.type, timeSinceAccess, reinforcement)
 
@@ -195,46 +206,87 @@ export const updateAgentDecayBatch = internalMutation({
 export const runDecayUpdate = internalAction({
   args: {},
   handler: async (ctx): Promise<{ totalUpdated: number; totalTransitioned: number }> => {
-    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
-      internal.memoryDecay.getOrgsWithActiveMemories
-    )
-
     let totalUpdated = 0
     let totalTransitioned = 0
 
-    for (const orgId of orgIds) {
-      const businessMemories: Doc<'businessMemories'>[] = await ctx.runQuery(
-        internal.memoryDecay.getActiveBusinessBatch,
-        { organizationId: orgId, limit: BATCH_SIZE }
-      )
+    let orgCursor: string | null = null
+    let orgsVisited = 0
 
-      if (businessMemories.length > 0) {
-        const ids = businessMemories.map((m) => m._id)
-        const result = await ctx.runMutation(internal.memoryDecay.updateBusinessDecayBatch, {
-          memoryIds: ids,
-        })
-        totalUpdated += result.updated
-        totalTransitioned += result.transitioned
+    do {
+      const orgPage: {
+        page: Array<{ _id: Id<'organizations'> }>
+        isDone: boolean
+        continueCursor: string
+      } = await ctx.runQuery(internal.memoryDecay.listOrganizations, {
+        paginationOpts: {
+          numItems: ORG_PAGE_SIZE,
+          cursor: orgCursor,
+        },
+      })
+
+      for (const org of orgPage.page) {
+        orgsVisited++
+        const orgId = org._id as Id<'organizations'>
+
+        let businessCursor: string | null = null
+        do {
+          const businessPage: {
+            page: Doc<'businessMemories'>[]
+            isDone: boolean
+            continueCursor: string
+          } = await ctx.runQuery(internal.memoryDecay.getActiveBusinessBatch, {
+            organizationId: orgId,
+            paginationOpts: {
+              numItems: BATCH_SIZE,
+              cursor: businessCursor,
+            },
+          })
+
+          if (businessPage.page.length > 0) {
+            const ids = businessPage.page.map((m) => m._id)
+            const result = await ctx.runMutation(internal.memoryDecay.updateBusinessDecayBatch, {
+              memoryIds: ids,
+            })
+            totalUpdated += result.updated
+            totalTransitioned += result.transitioned
+          }
+
+          businessCursor = businessPage.isDone ? null : businessPage.continueCursor
+        } while (businessCursor)
+
+        let agentCursor: string | null = null
+        do {
+          const agentPage: {
+            page: Doc<'agentMemories'>[]
+            isDone: boolean
+            continueCursor: string
+          } = await ctx.runQuery(internal.memoryDecay.getActiveAgentBatch, {
+            organizationId: orgId,
+            paginationOpts: {
+              numItems: BATCH_SIZE,
+              cursor: agentCursor,
+            },
+          })
+
+          if (agentPage.page.length > 0) {
+            const ids = agentPage.page.map((m) => m._id)
+            const result = await ctx.runMutation(internal.memoryDecay.updateAgentDecayBatch, {
+              memoryIds: ids,
+            })
+            totalUpdated += result.updated
+            totalTransitioned += result.transitioned
+          }
+
+          agentCursor = agentPage.isDone ? null : agentPage.continueCursor
+        } while (agentCursor)
       }
 
-      const agentMemories: Doc<'agentMemories'>[] = await ctx.runQuery(
-        internal.memoryDecay.getActiveAgentBatch,
-        { organizationId: orgId, limit: BATCH_SIZE }
-      )
-
-      if (agentMemories.length > 0) {
-        const ids = agentMemories.map((m) => m._id)
-        const result = await ctx.runMutation(internal.memoryDecay.updateAgentDecayBatch, {
-          memoryIds: ids,
-        })
-        totalUpdated += result.updated
-        totalTransitioned += result.transitioned
-      }
-    }
+      orgCursor = orgPage.isDone ? null : orgPage.continueCursor
+    } while (orgCursor)
 
     if (totalUpdated > 0 || totalTransitioned > 0) {
       console.log(
-        `[Decay] Updated ${totalUpdated} memories, ${totalTransitioned} lifecycle transitions across ${orgIds.length} orgs`
+        `[Decay] Updated ${totalUpdated} memories, ${totalTransitioned} lifecycle transitions across ${orgsVisited} orgs`
       )
     }
 

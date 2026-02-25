@@ -21,6 +21,7 @@ const serverEnvSchema = z.object({
 
   OPENROUTER_API_KEY: z.string().optional(),
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
+  MEMORY_API_TOKEN: z.string().optional(),
 
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 })
@@ -48,14 +49,18 @@ export function validateServerEnv(): ServerEnv {
       .map(([key, value]) => `  ${key}: ${value?.errors?.join(', ') || 'Invalid'}`)
       .join('\n')
 
-    console.error(`Invalid server environment variables:\n${errorMessages}`)
-
-    if (process.env.NODE_ENV === 'development') {
-      throw new Error(`Invalid server environment variables:\n${errorMessages}`)
-    }
+    const errorMsg = `Invalid server environment variables:\n${errorMessages}`
+    console.error(errorMsg)
+    throw new Error(errorMsg)
   }
 
-  return result.data ?? ({} as ServerEnv)
+  const parsed = result.data
+
+  if (parsed.NODE_ENV === 'production' && !parsed.MEMORY_API_TOKEN) {
+    throw new Error('MEMORY_API_TOKEN is required in production.')
+  }
+
+  return parsed
 }
 
 /**

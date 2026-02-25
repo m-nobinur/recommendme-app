@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
+import { assertUserInOrganization } from './lib/auth'
 
 const leadStatusValues = v.union(
   v.literal('New'),
@@ -26,6 +27,8 @@ export const create = mutation({
     value: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
     const now = Date.now()
     const leadId = await ctx.db.insert('leads', {
       organizationId: args.organizationId,
@@ -50,7 +53,9 @@ export const create = mutation({
  */
 export const update = mutation({
   args: {
+    userId: v.id('appUsers'),
     id: v.id('leads'),
+    organizationId: v.id('organizations'),
     status: v.optional(leadStatusValues),
     phone: v.optional(v.string()),
     email: v.optional(v.string()),
@@ -60,7 +65,14 @@ export const update = mutation({
     lastContact: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const { id, ...updates } = args
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const { id, organizationId, userId: _, ...updates } = args
+    const existing = await ctx.db.get(id)
+    if (!existing || existing.organizationId !== organizationId) {
+      throw new Error('Lead not found or access denied')
+    }
+
     const filteredUpdates = Object.fromEntries(
       Object.entries(updates).filter(([_, val]) => val !== undefined)
     )
@@ -81,6 +93,7 @@ export const update = mutation({
  */
 export const updateByName = mutation({
   args: {
+    userId: v.id('appUsers'),
     organizationId: v.id('organizations'),
     nameOrId: v.string(),
     status: v.optional(leadStatusValues),
@@ -91,6 +104,8 @@ export const updateByName = mutation({
     value: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
     // Try to find by exact ID first
     let lead: Doc<'leads'> | null = null
     try {
@@ -102,7 +117,12 @@ export const updateByName = mutation({
           // Type assertion is safe here because we'll verify the table
           const docWithId = possibleDoc as Doc<'leads'>
           // Check if it has lead-specific properties
-          if ('name' in docWithId && 'organizationId' in docWithId && 'status' in docWithId) {
+          if (
+            'name' in docWithId &&
+            'organizationId' in docWithId &&
+            'status' in docWithId &&
+            docWithId.organizationId === args.organizationId
+          ) {
             lead = docWithId
           }
         }
@@ -153,8 +173,19 @@ export const updateByName = mutation({
  * Delete a lead
  */
 export const remove = mutation({
-  args: { id: v.id('leads') },
+  args: {
+    userId: v.id('appUsers'),
+    id: v.id('leads'),
+    organizationId: v.id('organizations'),
+  },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const existing = await ctx.db.get(args.id)
+    if (!existing || existing.organizationId !== args.organizationId) {
+      throw new Error('Lead not found or access denied')
+    }
+
     await ctx.db.delete(args.id)
     return { success: true }
   },
@@ -164,9 +195,19 @@ export const remove = mutation({
  * Get a single lead
  */
 export const get = query({
-  args: { id: v.id('leads') },
+  args: {
+    userId: v.id('appUsers'),
+    id: v.id('leads'),
+    organizationId: v.id('organizations'),
+  },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id)
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const lead = await ctx.db.get(args.id)
+    if (!lead || lead.organizationId !== args.organizationId) {
+      return null
+    }
+    return lead
   },
 })
 
@@ -175,11 +216,14 @@ export const get = query({
  */
 export const list = query({
   args: {
+    userId: v.id('appUsers'),
     organizationId: v.id('organizations'),
     status: v.optional(leadStatusValues),
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
     const query = ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
@@ -206,10 +250,13 @@ export const list = query({
  */
 export const search = query({
   args: {
+    userId: v.id('appUsers'),
     organizationId: v.id('organizations'),
     query: v.string(),
   },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
     const results = await ctx.db
       .query('leads')
       .withSearchIndex('search_leads', (q) =>
@@ -225,8 +272,13 @@ export const search = query({
  * Get lead statistics
  */
 export const getStats = query({
-  args: { organizationId: v.id('organizations') },
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+  },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
     const leads = await ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))

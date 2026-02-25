@@ -357,6 +357,33 @@ export interface MemoryEvent {
   createdAt: number
 }
 
+// ============================================
+// AGENT FRAMEWORK TYPES
+// ============================================
+
+export type { AgentConfig, AgentHandler } from '@/lib/ai/agents/core'
+export type {
+  ActionResult,
+  AgentAction,
+  AgentContext,
+  AgentPlan,
+  AgentType,
+  ExecutionStatus,
+  ExecutionSummary,
+  MemoryLayer,
+  PlanPrompt,
+  RiskAssessment,
+  RiskLevel,
+  TriggerType,
+} from '@/lib/ai/agents/core/types'
+export {
+  AGENT_TYPES,
+  EXECUTION_STATUSES,
+  MEMORY_LAYERS,
+  RISK_LEVELS,
+  TRIGGER_TYPES,
+} from '@/lib/ai/agents/core/types'
+
 export interface Notification {
   id: string
   title: string

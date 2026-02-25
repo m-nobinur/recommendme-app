@@ -5,7 +5,9 @@ import type { Id } from '@convex/_generated/dataModel'
 import { useMutation, useQuery } from 'convex/react'
 import { useCallback, useMemo } from 'react'
 import type {
+  Appointment,
   AppointmentDisplay,
+  Invoice,
   InvoiceDisplay,
   Lead,
   LeadCreateInput,
@@ -20,6 +22,7 @@ import type {
 
 interface UseLeadsOptions {
   organizationId: Id<'organizations'>
+  userId: Id<'appUsers'>
   status?: LeadStatus
   limit?: number
 }
@@ -28,7 +31,7 @@ interface UseLeadsReturn {
   leads: LeadDisplay[]
   isLoading: boolean
   stats: LeadStats | undefined
-  createLead: (input: LeadCreateInput, userId: Id<'appUsers'>) => Promise<Id<'leads'>>
+  createLead: (input: LeadCreateInput) => Promise<Id<'leads'>>
   updateLead: (id: Id<'leads'>, updates: Partial<Lead>) => Promise<void>
   deleteLead: (id: Id<'leads'>) => Promise<void>
 }
@@ -36,9 +39,14 @@ interface UseLeadsReturn {
 /**
  * Hook for managing leads
  */
-export function useLeads({ organizationId, status, limit }: UseLeadsOptions): UseLeadsReturn {
-  const leadsData = useQuery(api.leads.list, { organizationId, status, limit })
-  const statsData = useQuery(api.leads.getStats, { organizationId })
+export function useLeads({
+  organizationId,
+  userId,
+  status,
+  limit,
+}: UseLeadsOptions): UseLeadsReturn {
+  const leadsData = useQuery(api.leads.list, { userId, organizationId, status, limit })
+  const statsData = useQuery(api.leads.getStats, { userId, organizationId })
 
   const createMutation = useMutation(api.leads.create)
   const updateMutation = useMutation(api.leads.update)
@@ -46,7 +54,7 @@ export function useLeads({ organizationId, status, limit }: UseLeadsOptions): Us
 
   const leads = useMemo<LeadDisplay[]>(() => {
     if (!leadsData) return []
-    return leadsData.map((lead) => ({
+    return leadsData.map((lead: Lead) => ({
       id: lead._id,
       name: lead.name,
       phone: lead.phone,
@@ -69,7 +77,7 @@ export function useLeads({ organizationId, status, limit }: UseLeadsOptions): Us
   }, [statsData])
 
   const createLead = useCallback(
-    async (input: LeadCreateInput, userId: Id<'appUsers'>) => {
+    async (input: LeadCreateInput) => {
       return await createMutation({
         organizationId,
         userId,
@@ -81,13 +89,15 @@ export function useLeads({ organizationId, status, limit }: UseLeadsOptions): Us
         value: input.value,
       })
     },
-    [createMutation, organizationId]
+    [createMutation, organizationId, userId]
   )
 
   const updateLead = useCallback(
     async (id: Id<'leads'>, updates: Partial<Lead>) => {
       await updateMutation({
+        userId,
         id,
+        organizationId,
         status: updates.status,
         phone: updates.phone,
         email: updates.email,
@@ -97,14 +107,18 @@ export function useLeads({ organizationId, status, limit }: UseLeadsOptions): Us
         lastContact: updates.lastContact,
       })
     },
-    [updateMutation]
+    [organizationId, updateMutation, userId]
   )
 
   const deleteLead = useCallback(
     async (id: Id<'leads'>) => {
-      await deleteMutation({ id })
+      await deleteMutation({
+        userId,
+        id,
+        organizationId,
+      })
     },
-    [deleteMutation]
+    [deleteMutation, organizationId, userId]
   )
 
   return {
@@ -148,7 +162,7 @@ export function useAppointments({
 
   const appointments = useMemo<AppointmentDisplay[]>(() => {
     if (!appointmentsData) return []
-    return appointmentsData.map((appt) => ({
+    return appointmentsData.map((appt: Appointment) => ({
       id: appt._id,
       title: appt.title || 'Appointment',
       date: appt.date,
@@ -195,7 +209,7 @@ export function useInvoices({
 
   const invoices = useMemo<InvoiceDisplay[]>(() => {
     if (!invoicesData) return []
-    return invoicesData.map((invoice) => ({
+    return invoicesData.map((invoice: Invoice) => ({
       id: invoice._id,
       leadName: invoice.leadName,
       amount: invoice.amount,
@@ -216,21 +230,22 @@ export function useInvoices({
 
 interface UseLeadSearchOptions {
   organizationId: Id<'organizations'>
+  userId: Id<'appUsers'>
   query: string
 }
 
 /**
  * Hook for searching leads
  */
-export function useLeadSearch({ organizationId, query }: UseLeadSearchOptions) {
+export function useLeadSearch({ organizationId, userId, query }: UseLeadSearchOptions) {
   const searchResults = useQuery(
     api.leads.search,
-    query.length > 0 ? { organizationId, query } : 'skip'
+    query.length > 0 ? { userId, organizationId, query } : 'skip'
   )
 
   const results = useMemo<LeadDisplay[]>(() => {
     if (!searchResults) return []
-    return searchResults.map((lead) => ({
+    return searchResults.map((lead: Lead) => ({
       id: lead._id,
       name: lead.name,
       phone: lead.phone,

@@ -45,7 +45,16 @@ Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert
 ```
 
 ### Testing
-No test framework configured. Validation relies on `bun run check:all`.
+Unit tests use Node's built-in test runner (`node:test`) — no external framework required.
+
+```bash
+bun test                         # Run all unit tests
+bun test ./src/lib/ai/memory/    # Run memory-layer unit tests (8 tests)
+bun run test:memory:smoke        # End-to-end memory pipeline smoke test
+bun run test:memory:all          # Full memory test suite (smoke + validate + tools)
+```
+
+Test files live alongside source files (`*.test.ts`). Validation also relies on `bun run check:all`.
 
 ## Code Style Guidelines
 

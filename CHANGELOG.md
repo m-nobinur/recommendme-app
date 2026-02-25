@@ -9,10 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Agent Framework Foundation (Phase 7a)
+- Core agent framework at `src/lib/ai/agents/core/` with AgentHandler interface, pipeline runner, risk engine, memory helpers, and guardrail enforcement
+- Followup Agent at `src/lib/ai/agents/followup/` — identifies stale leads, plans actions via LLM, learns from outcomes
+- Agent registry with type-safe handler factory mapping (`src/lib/ai/agents/registry.ts`)
+- Convex persistence: `agentDefinitions` table for per-org agent config, `agentExecutions` table for execution lifecycle tracking
+- `agentRunner.ts` Convex internalAction with LLM integration (OpenRouter/OpenAI fallback), structured JSON output, and retry logic
+- Daily followup agent cron job (14:00 UTC) in `src/convex/crons.ts`
+- Heuristic risk assessment with per-agent overrides and approval thresholds
+- Config-driven guardrails: action whitelists, max actions per run, risk level gates
+- Agent memory access helpers for reading patterns and recording learnings
+- Validation test script `scripts/test-agent-framework.sh` (48+ checks)
+- Type exports wired into `src/types/index.ts` and `src/lib/ai/index.ts`
+
 #### Memory Schema & CRUD (Phase 1)
 - 4-layer memory hierarchy: `platformMemories`, `nicheMemories`, `businessMemories`, `agentMemories`
 - `memoryRelations` and `memoryEvents` tables with full CRUD operations
-- Memory validation library (`src/lib/memory/validation.ts`) with content length, confidence, and PII detection
+- Memory validation library (`src/lib/ai/memory/validation.ts`) with content length, confidence, and PII detection
 - Centralized memory types in `src/types/index.ts`
 
 #### Embedding & Vector Search (Phase 2)
@@ -21,20 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vector search across all 4 memory layers in `src/convex/vectorSearch.ts`
 - Hybrid search with Reciprocal Rank Fusion (RRF) in `src/convex/hybridSearch.ts`
 - Fuzzy name matching utility in `src/convex/fuzzyMatch.ts`
-- Shared embedding constants and math in `src/lib/memory/embedding.ts`
+- Shared embedding constants and math in `src/lib/ai/memory/embedding.ts`
 - Auto-embedding on memory create/update via `ctx.scheduler.runAfter`
 
 #### Memory Retrieval & Context (Phase 3)
 - Full retrieval pipeline: query analysis, parallel vector search, scoring, token budgeting
-- Context formatter for injecting memory into system prompt (`src/lib/memory/contextFormatter.ts`)
-- Query analysis with entity extraction and intent detection (`src/lib/memory/queryAnalysis.ts`)
-- Scoring with decay-aware and confidence-weighted ranking (`src/lib/memory/scoring.ts`)
+- Context formatter for injecting memory into system prompt (`src/lib/ai/memory/contextFormatter.ts`)
+- Query analysis with entity extraction and intent detection (`src/lib/ai/memory/queryAnalysis.ts`)
+- Scoring with decay-aware and confidence-weighted ranking (`src/lib/ai/memory/scoring.ts`)
 - Convex action gateway in `src/convex/memoryRetrieval.ts`
 - Early-start parallelism for memory retrieval in chat route
 
 #### Memory Extraction Pipeline (Phase 4)
 - LLM-based memory extraction worker in `src/convex/memoryExtraction.ts`
-- Extraction prompt with Zod output schema in `src/lib/memory/extractionPrompt.ts`
+- Extraction prompt with Zod output schema in `src/lib/ai/memory/extractionPrompt.ts`
 - Memory event emission in chat route: `conversation_end`, `tool_success`, `tool_failure`
 - Deduplication via vector similarity (threshold 0.92) with version chaining
 - Cron job for extraction processing every 2 minutes
@@ -42,9 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Business memory history fields (`previousVersionId`, `correctedAt`, `correctedBy`)
 
 #### Memory Lifecycle (Phase 5)
-- Ebbinghaus-based decay algorithm in `src/lib/memory/decay.ts` with 7 type-specific decay rates
+- Ebbinghaus-based decay algorithm in `src/lib/ai/memory/decay.ts` with 7 type-specific decay rates
 - Decay workers in `src/convex/memoryDecay.ts`: hourly batch updates + on-access boost via scheduler
-- TTL management in `src/lib/memory/ttl.ts` with per-type defaults (30 days to never)
+- TTL management in `src/lib/ai/memory/ttl.ts` with per-type defaults (30 days to never)
 - Auto-set `expiresAt` on memory creation in `businessMemories.ts` and `memoryExtraction.ts`
 - Archival workers in `src/convex/memoryArchival.ts`:
   - Daily: archive memories with decay score < 0.3
@@ -53,11 +66,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `by_org_archived` index on `businessMemories` for efficient archival queries
 - Scheduled cron jobs: decay (hourly), archival (daily 8:00 UTC), cleanup (weekly Sunday 8:00 UTC)
 
+#### Memory Tools & Chat Integration (Phase 6)
+- 4 memory management tools for chat AI in `src/lib/ai/tools/memory.ts`:
+  - `rememberFact`: Explicitly store facts, preferences, instructions, and business rules
+  - `forgetMemory`: Search and soft-delete matching memories on user request
+  - `searchMemories`: Vector search through stored business knowledge
+  - `updatePreference`: Upsert preferences with similarity-based dedup (threshold 0.6)
+- Lightweight `searchMemories` public action in `src/convex/memoryRetrieval.ts` for tool-level business memory search (single-layer, no scoring/budgeting overhead)
+- Conversation summary with sliding window in `src/lib/ai/memory/conversationSummary.ts`:
+  - Keeps last 6 messages in full, summarizes older messages via lightweight LLM call
+  - Archive threshold at 50+ messages triggers extraction event
+  - Summary injected into system prompt via `{{conversation_summary}}` placeholder
+- Memory tool instructions added to v2 system prompt with usage guidelines
+- Chat route wires memory tools alongside CRM tools, gated behind `enableMemory` feature flag
+- End-to-end memory loop: store → retrieve → use → learn (via extraction pipeline)
+
+#### Retrieval Optimization (Phase 6.5)
+- Intent-aware layer routing: `memory_command` intent (remember/forget/store) skips retrieval entirely
+- Selective layer search: scheduling/lead queries only search business + agent (skip platform + niche)
+- `searchSelectedLayers` Convex action in `src/convex/vectorSearch.ts` for partial-layer search
+- `retrieveSelectedContext` Convex action in `src/convex/memoryRetrieval.ts` with layer filtering
+- Layer routing via `getRequiredLayers()` and `isMemoryCommand()` in `src/lib/ai/memory/queryAnalysis.ts`
+- ConvexHttpClient reuse: tools share the route's singleton client instead of creating new ones
+- Shared test infrastructure in `scripts/lib/test-helpers.sh` extracted from 4 test scripts
+
+#### Memory Hardening Foundations
+- Hybrid dedup optimization: business hybrid search reuses precomputed vector results (no duplicate business vector query)
+- Route-level latency improvement: optional niche lookup no longer blocks memory retrieval startup
+- Configurable short-TTL caches for memory retrieval + embeddings behind `AI_ENABLE_CACHING`
+- Memory event idempotency with `idempotencyKey` + `by_org_idempotency` index to prevent duplicate ingestion
+- Event processing state machine (`pending`/`processing`/`processed`/`failed`) with retry counts and dead-letter storage
+- Public memory retrieval/event surfaces are token-gated via `MEMORY_API_TOKEN` (with explicit dev bypass)
+- `memoryEvents.listByType` is organization-scoped to prevent cross-tenant reads
+- Extraction handlers added for `user_correction`, `explicit_instruction`, `approval_*`, and `feedback` events
+- TTL consistency for versioned/superseded/consolidated business memory writes
+- Added memory compression + lifecycle health-check crons
+- Added memory unit tests and CI memory smoke gate
+- Added load-test harness for memory retrieval latency (`scripts/load-test-memory.sh`)
+
 #### Developer Tooling
 - Dev environment setup script (`scripts/dev-setup.sh`)
 - Memory pipeline validation script (`scripts/validate-memory.sh`)
 - Phase 4 extraction test script (`scripts/test-extraction-pipeline.sh`)
 - Phase 5 lifecycle test script (`scripts/test-decay-lifecycle.sh`)
+- Phase 6 memory tools test script (`scripts/test-memory-tools.sh`)
+- Shared test helpers library (`scripts/lib/test-helpers.sh`) with reusable colors, counters, output functions, env loading, gates, assertions, and cleanup
 
 ### Changed
 
@@ -69,6 +122,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gated embedding debug logs behind `DEBUG_MEMORY` flag
 - Excluded inactive and archived docs from vector search results
 - Standardized retrieval warning context when embeddings are unavailable
+
+#### Chat Route Enhancements (Phase 6)
+- Memory tools merged with CRM tools in chat route via spread composition
+- Conversation summary applied to long sessions before LLM context
+- Parallel resolution of memory retrieval and conversation summary
+- Archival memory event emitted for conversations exceeding 50 messages
+- `getSystemPrompt` now accepts optional conversation summary parameter
+
+#### Retrieval Performance (Phase 6.5)
+- Retrieval pipeline skips entirely for `memory_command` intents (0ms for remember/forget)
+- Selective layer search skips platform + niche for scheduling/lead queries (~40% fewer vector searches)
+- Tools reuse the chat route's ConvexHttpClient singleton (eliminates redundant connection setup)
+- Debug logging now reports skipped layers for visibility into optimization impact
+
+#### Reliability & Observability
+- Structured trace propagation from chat route to retrieval (`traceId`)
+- Retrieval stage timing logs for analysis/search/scoring/budget/format substeps
+- SLO warning logs for retrieval latency and end-to-end chat latency threshold breaches
+- CI now enforces a dedicated memory smoke test job
 
 #### Memory System Maturity
 - Full lifecycle management: extraction → decay → archival → purge
@@ -287,15 +359,16 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-**Phase 6 — Memory Tools & Chat Integration:**
-- Explicit memory tools in chat (rememberFact, forgetMemory, searchMemories, updatePreference)
-- Conversation summary with sliding window for long sessions
-- End-to-end memory loop completion
+**Phase 7 — Agent Framework with LangGraph:**
+- Background agent execution (followup, reminder, invoice agents)
+- Multi-step reasoning workflows with state machines
+- Human-in-the-loop approval patterns
 
 **Planned features for future releases:**
-- Agent framework with LangGraph for background workflows (Phase 7)
+- Worker architecture and background jobs (Phase 8)
 - Guardrails, approval queue, and audit logging (Phase 9)
 - Observability and cost tracking (Phase 10)
+- Continuous improvement and learning system (Phase 11)
 - Memory UI and admin dashboard (Phase 12)
 - Email verification and 2FA for authentication
 - Calendar integrations (Google Calendar, Outlook)

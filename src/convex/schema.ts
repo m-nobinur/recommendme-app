@@ -76,7 +76,9 @@ export default defineSchema({
         nicheId: v.optional(v.string()),
       })
     ),
-  }).index('by_slug', ['slug']),
+  })
+    .index('by_slug', ['slug'])
+    .index('by_created', ['createdAt']),
 
   // ============================================
   // AUTHENTICATION: Application Users (Managed by Better Auth Component)
@@ -356,6 +358,7 @@ export default defineSchema({
     .index('by_org_agent', ['organizationId', 'agentType'])
     .index('by_org_agent_category', ['organizationId', 'agentType', 'category'])
     .index('by_org_agent_active', ['organizationId', 'agentType', 'isActive'])
+    .index('by_org_active', ['organizationId', 'isActive'])
     .vectorIndex('by_embedding', {
       vectorField: 'embedding',
       dimensions: 3072,
@@ -422,6 +425,7 @@ export default defineSchema({
     ),
     sourceType: v.union(v.literal('message'), v.literal('tool_call'), v.literal('agent_action')),
     sourceId: v.string(),
+    idempotencyKey: v.optional(v.string()),
     data: v.union(
       v.object({
         type: v.literal('conversation_end'),
@@ -430,6 +434,7 @@ export default defineSchema({
         lastUserMessage: v.optional(v.string()),
         finishReason: v.string(),
         latencyMs: v.optional(v.number()),
+        needsArchival: v.optional(v.boolean()),
       }),
       v.object({
         type: v.literal('tool_result'),
@@ -458,11 +463,128 @@ export default defineSchema({
       })
     ),
     processed: v.boolean(),
+    status: v.optional(
+      v.union(
+        v.literal('pending'),
+        v.literal('processing'),
+        v.literal('processed'),
+        v.literal('failed')
+      )
+    ),
+    retryCount: v.optional(v.number()),
+    processingStartedAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
     processedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index('by_org_unprocessed', ['organizationId', 'processed'])
     .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_org_status_created', ['organizationId', 'status', 'createdAt'])
+    .index('by_org_type_processed_created', [
+      'organizationId',
+      'eventType',
+      'processed',
+      'createdAt',
+    ])
+    .index('by_org_idempotency', ['organizationId', 'idempotencyKey'])
     .index('by_type', ['eventType', 'processed'])
+    .index('by_status_created', ['status', 'createdAt'])
+    .index('by_status_processing_started', ['status', 'processingStartedAt'])
     .index('by_created', ['createdAt']),
+
+  // ============================================
+  // AGENT FRAMEWORK: Definitions
+  // Per-org agent configuration and enablement
+  // ============================================
+  agentDefinitions: defineTable({
+    organizationId: v.id('organizations'),
+    agentType: v.string(),
+    enabled: v.boolean(),
+    triggerType: v.union(v.literal('cron'), v.literal('event'), v.literal('manual')),
+    riskLevel: v.union(v.literal('low'), v.literal('medium'), v.literal('high')),
+    settings: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_org', ['organizationId'])
+    .index('by_org_agent', ['organizationId', 'agentType'])
+    .index('by_org_enabled', ['organizationId', 'enabled'])
+    .index('by_agent_enabled', ['agentType', 'enabled']),
+
+  // ============================================
+  // AGENT FRAMEWORK: Executions
+  // Tracks each agent run lifecycle
+  // ============================================
+  agentExecutions: defineTable({
+    organizationId: v.id('organizations'),
+    agentType: v.string(),
+    triggerType: v.string(),
+    triggerId: v.optional(v.string()),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('loading_context'),
+      v.literal('planning'),
+      v.literal('risk_assessing'),
+      v.literal('executing'),
+      v.literal('awaiting_approval'),
+      v.literal('completed'),
+      v.literal('failed'),
+      v.literal('skipped')
+    ),
+    plan: v.optional(v.any()),
+    results: v.optional(v.any()),
+    actionsPlanned: v.optional(v.number()),
+    actionsExecuted: v.optional(v.number()),
+    actionsSkipped: v.optional(v.number()),
+    memoryContext: v.optional(v.string()),
+    error: v.optional(v.string()),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    durationMs: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index('by_org', ['organizationId'])
+    .index('by_org_agent', ['organizationId', 'agentType'])
+    .index('by_org_status', ['organizationId', 'status'])
+    .index('by_org_agent_status', ['organizationId', 'agentType', 'status'])
+    .index('by_created', ['createdAt']),
+
+  // ============================================
+  // AGENT FRAMEWORK: Execution Locks
+  // Prevent duplicate concurrent executions per org+agent
+  // ============================================
+  agentExecutionLocks: defineTable({
+    organizationId: v.id('organizations'),
+    agentType: v.string(),
+    executionId: v.id('agentExecutions'),
+    acquiredAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index('by_org_agent', ['organizationId', 'agentType'])
+    .index('by_expires', ['expiresAt']),
+
+  memoryEventDeadLetters: defineTable({
+    organizationId: v.id('organizations'),
+    eventId: v.id('memoryEvents'),
+    eventType: v.union(
+      v.literal('conversation_end'),
+      v.literal('tool_success'),
+      v.literal('tool_failure'),
+      v.literal('user_correction'),
+      v.literal('explicit_instruction'),
+      v.literal('approval_granted'),
+      v.literal('approval_rejected'),
+      v.literal('feedback')
+    ),
+    sourceType: v.union(v.literal('message'), v.literal('tool_call'), v.literal('agent_action')),
+    sourceId: v.string(),
+    data: v.any(),
+    retryCount: v.number(),
+    error: v.string(),
+    failedAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_event', ['eventId']),
 })

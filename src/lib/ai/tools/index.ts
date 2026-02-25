@@ -3,32 +3,24 @@ import { tool } from 'ai'
 import { ConvexHttpClient } from 'convex/browser'
 import { z } from 'zod'
 import type { LeadStatus } from '@/types'
+import { asAppUserId, asOrganizationId, getApi } from '../shared/convex'
 
 /**
- * Tool context containing user and organization info
+ * Tool context containing user and organization info.
+ * When `convexClient` is provided, tools reuse it instead of creating a new one.
  */
 export interface ToolContext {
   organizationId: string
   userId: string
   convexUrl: string
+  convexClient?: ConvexHttpClient
+  memoryAuthToken?: string
 }
 
 /**
  * Lead status schema for Zod validation
  */
 const leadStatusSchema = z.enum(['New', 'Contacted', 'Qualified', 'Proposal', 'Booked', 'Closed'])
-
-/**
- * Type-safe ID conversion helper
- * Convex IDs are strings at runtime but have branded types at compile time
- */
-function asOrganizationId(id: string): Id<'organizations'> {
-  return id as Id<'organizations'>
-}
-
-function asAppUserId(id: string): Id<'appUsers'> {
-  return id as Id<'appUsers'>
-}
 
 /**
  * Lead data from Convex query
@@ -56,39 +48,29 @@ interface ConvexAppointment {
 }
 
 /**
- * Tool result types
+ * Shared tool result types.
+ * Re-exported so memory tools and any future tool modules can reuse them.
  */
-interface ToolSuccess<T = unknown> {
+export interface ToolSuccess<T = unknown> {
   success: true
   data?: T
   message?: string
 }
 
-interface ToolError {
+export interface ToolError {
   success: false
   error: string
 }
 
-type ToolResult<T = unknown> = ToolSuccess<T> | ToolError
+export type ToolResult<T = unknown> = ToolSuccess<T> | ToolError
 
-/**
- * Cached API module promise for efficient reuse across tool executions
- * This avoids repeated dynamic imports while keeping the initial bundle small
- */
-let cachedApiPromise: Promise<typeof import('@convex/_generated/api')> | null = null
-
-function getApi() {
-  if (!cachedApiPromise) {
-    cachedApiPromise = import('@convex/_generated/api')
-  }
-  return cachedApiPromise
-}
+export { getApi } from '../shared/convex'
 
 /**
  * Create CRM tools with Convex integration
  */
 export function createCRMTools(ctx: ToolContext) {
-  const convex = new ConvexHttpClient(ctx.convexUrl)
+  const convex = ctx.convexClient ?? new ConvexHttpClient(ctx.convexUrl)
   const orgId = asOrganizationId(ctx.organizationId)
   const userId = asAppUserId(ctx.userId)
 
@@ -156,6 +138,7 @@ export function createCRMTools(ctx: ToolContext) {
         try {
           const { api } = await getApi()
           const result = await convex.mutation(api.leads.updateByName, {
+            userId,
             organizationId: orgId,
             nameOrId: args.nameOrId,
             status: args.status,
@@ -300,6 +283,7 @@ export function createCRMTools(ctx: ToolContext) {
         try {
           const { api } = await getApi()
           const leads = (await convex.query(api.leads.list, {
+            userId,
             organizationId: orgId,
             status: args.status,
             limit: args.limit,
@@ -387,3 +371,5 @@ export function createCRMTools(ctx: ToolContext) {
  * Export tool types for use in API routes
  */
 export type CRMTools = ReturnType<typeof createCRMTools>
+
+export { createMemoryTools, type MemoryTools } from './memory'

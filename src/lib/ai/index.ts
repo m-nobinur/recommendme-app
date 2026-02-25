@@ -10,7 +10,25 @@
  * - Utilities: Request IDs, retry logic, rate limiting, monitoring
  */
 
-// Configuration
+export type {
+  AgentConfig,
+  AgentHandler,
+  AgentType,
+  ExecutionStatus,
+  ExecutionSummary,
+  RiskLevel,
+} from './agents'
+
+export {
+  AGENT_TYPES,
+  EXECUTION_STATUSES,
+  getAgentHandler,
+  getRegisteredAgentTypes,
+  isAgentImplemented,
+  RISK_LEVELS,
+  TRIGGER_TYPES,
+} from './agents'
+
 export {
   type AIConfig,
   getAIConfig,
@@ -23,20 +41,24 @@ export {
   logAIConfig,
   resetAIConfig,
 } from './config'
-
 export {
   AI_PROVIDERS,
   type AIProviderType,
   MODEL_TIERS,
   type ModelTierType,
 } from './config/constants'
-
 export {
   getActiveSuggestionPromptVersion,
   getActiveSystemPromptVersion,
 } from './config/versions'
 
-// Prompts
+export { buildConversationWindow, formatSummaryForPrompt } from './memory/conversationSummary'
+export {
+  type RetrievalParams,
+  type RetrievalResult,
+  retrieveMemoryContext,
+} from './memory/retrieval'
+
 export {
   clearTemplateCache,
   DEFAULT_SUGGESTION_CONFIG,
@@ -52,7 +74,6 @@ export {
   SYSTEM_PROMPTS,
 } from './prompts'
 
-// Providers
 export {
   type AIProvider,
   createAIProvider,
@@ -73,7 +94,6 @@ export {
   TIER_INFO,
 } from './providers'
 
-// Services
 export {
   type GenerateSuggestionsOptions,
   generateSuggestions,
@@ -83,10 +103,16 @@ export {
   type SuggestionResult,
 } from './services'
 
-// Tools
+export {
+  asAppUserId,
+  asBusinessMemoryId,
+  asLeadId,
+  asOrganizationId,
+  getApi,
+} from './shared'
+
 export { type CRMTools, createCRMTools, type ToolContext } from './tools'
 
-// Utilities
 export {
   checkRateLimit,
   clearMetrics,
