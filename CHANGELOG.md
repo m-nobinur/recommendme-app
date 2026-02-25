@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Heuristic risk assessment with per-agent overrides and approval thresholds
 - Config-driven guardrails: action whitelists, max actions per run, risk level gates
 - Agent memory access helpers for reading patterns and recording learnings
-- Validation test script `scripts/test-agent-framework.sh` (41 checks)
+- Validation test script `scripts/test-agent-framework.sh` (48+ checks)
 - Type exports wired into `src/types/index.ts` and `src/lib/ai/index.ts`
 
 #### Memory Schema & CRUD (Phase 1)
