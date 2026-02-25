@@ -5,12 +5,15 @@ import { z } from 'zod'
 import type { LeadStatus } from '@/types'
 
 /**
- * Tool context containing user and organization info
+ * Tool context containing user and organization info.
+ * When `convexClient` is provided, tools reuse it instead of creating a new one.
  */
 export interface ToolContext {
   organizationId: string
   userId: string
   convexUrl: string
+  convexClient?: ConvexHttpClient
+  memoryAuthToken?: string
 }
 
 /**
@@ -56,28 +59,29 @@ interface ConvexAppointment {
 }
 
 /**
- * Tool result types
+ * Shared tool result types.
+ * Re-exported so memory tools and any future tool modules can reuse them.
  */
-interface ToolSuccess<T = unknown> {
+export interface ToolSuccess<T = unknown> {
   success: true
   data?: T
   message?: string
 }
 
-interface ToolError {
+export interface ToolError {
   success: false
   error: string
 }
 
-type ToolResult<T = unknown> = ToolSuccess<T> | ToolError
+export type ToolResult<T = unknown> = ToolSuccess<T> | ToolError
 
 /**
- * Cached API module promise for efficient reuse across tool executions
- * This avoids repeated dynamic imports while keeping the initial bundle small
+ * Cached API module promise for efficient reuse across tool executions.
+ * Exported so memory tools and any future tool modules can share the singleton.
  */
 let cachedApiPromise: Promise<typeof import('@convex/_generated/api')> | null = null
 
-function getApi() {
+export function getApi() {
   if (!cachedApiPromise) {
     cachedApiPromise = import('@convex/_generated/api')
   }
@@ -88,7 +92,7 @@ function getApi() {
  * Create CRM tools with Convex integration
  */
 export function createCRMTools(ctx: ToolContext) {
-  const convex = new ConvexHttpClient(ctx.convexUrl)
+  const convex = ctx.convexClient ?? new ConvexHttpClient(ctx.convexUrl)
   const orgId = asOrganizationId(ctx.organizationId)
   const userId = asAppUserId(ctx.userId)
 
@@ -387,3 +391,5 @@ export function createCRMTools(ctx: ToolContext) {
  * Export tool types for use in API routes
  */
 export type CRMTools = ReturnType<typeof createCRMTools>
+
+export { createMemoryTools, type MemoryTools } from './memory'

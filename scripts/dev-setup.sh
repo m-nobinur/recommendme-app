@@ -194,8 +194,9 @@ else
 fi
 
 info "Checking memory events table..."
+MEMORY_API_TOKEN=$(grep -E '^MEMORY_API_TOKEN=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'" || true)
 EVENTS_CHECK=$(npx convex run memoryEvents:listRecent \
-  "{\"organizationId\": \"${ORG_ID}\", \"limit\": 5}" 2>&1)
+  "{\"organizationId\": \"${ORG_ID}\", \"authToken\": \"${MEMORY_API_TOKEN}\", \"limit\": 5}" 2>&1)
 if echo "$EVENTS_CHECK" | grep -q "\[\]\|organizationId"; then
   ok "memoryEvents query works (may be empty — events emit during chat)"
 else

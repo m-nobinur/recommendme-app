@@ -15,11 +15,12 @@ import { getChatConfig, getFeatureFlags, getPerformanceConfig } from '@/lib/ai/c
 import { getSystemPrompt } from '@/lib/ai/prompts/system'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers'
 import { createAIProvider, isValidProvider, isValidTier } from '@/lib/ai/providers'
-import { createCRMTools } from '@/lib/ai/tools'
+import { createCRMTools, createMemoryTools } from '@/lib/ai/tools'
 import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
 import { HTTP_STATUS, LIMITS } from '@/lib/constants'
+import { buildConversationWindow, formatSummaryForPrompt } from '@/lib/memory/conversationSummary'
 import { retrieveMemoryContext } from '@/lib/memory/retrieval'
 
 interface PersistedToolCall {
@@ -27,6 +28,39 @@ interface PersistedToolCall {
   name: string
   args: string
   result?: string
+}
+
+type MemorySignalType =
+  | 'user_correction'
+  | 'explicit_instruction'
+  | 'approval_granted'
+  | 'approval_rejected'
+  | 'feedback'
+
+type MemoryEventData =
+  | {
+      type: 'user_input'
+      content: string
+      originalContent?: string
+    }
+  | {
+      type: 'approval'
+      actionDescription: string
+      approved: boolean
+      reason?: string
+    }
+  | {
+      type: 'feedback'
+      rating?: number
+      comment?: string
+      messageId?: string
+    }
+
+interface NormalizedMemorySignal {
+  eventType: MemorySignalType
+  sourceType: 'message' | 'agent_action'
+  sourceId: string
+  data: MemoryEventData
 }
 
 let convexClient: ConvexHttpClient | null = null
@@ -45,6 +79,8 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
+const MEMORY_RETRIEVAL_SLO_MS = Number(process.env.AI_MEMORY_RETRIEVAL_SLO_MS ?? 1800)
+const CHAT_LATENCY_SLO_MS = Number(process.env.AI_CHAT_LATENCY_SLO_MS ?? 12000)
 
 export async function POST(req: Request) {
   const requestId = generateRequestId()
@@ -52,6 +88,7 @@ export async function POST(req: Request) {
   const chatConfig = getChatConfig()
   const featureFlags = getFeatureFlags()
   const performanceConfig = getPerformanceConfig()
+  const memoryAuthToken = process.env.MEMORY_API_TOKEN
   const timeoutMs = performanceConfig.requestTimeout
   const isDevMode = process.env.DISABLE_AUTH_IN_DEV === 'true'
 
@@ -65,11 +102,13 @@ export async function POST(req: Request) {
       provider,
       tier,
       conversationId,
+      memorySignals,
     }: {
       messages: UIMessage[]
       provider?: string
       tier?: string
       conversationId?: string
+      memorySignals?: unknown
     } = body
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -110,6 +149,8 @@ export async function POST(req: Request) {
       ? resolvedProvider
       : chatConfig.provider
     const modelTier: ModelTier = isValidTier(resolvedTier) ? resolvedTier : chatConfig.tier
+    const validConversationId =
+      conversationId && UUID_REGEX.test(conversationId) ? conversationId : undefined
 
     let userId: string | undefined
     let organizationId: string | undefined
@@ -142,48 +183,83 @@ export async function POST(req: Request) {
       }
     }
     const lastUserMessageText = lastUserMessage ? extractTextContent(lastUserMessage) : ''
+    const normalizedMemorySignals = normalizeMemorySignals(
+      memorySignals,
+      lastUserMessage,
+      validConversationId
+    )
+    const inferredSignals = inferMemorySignalsFromMessage(lastUserMessage)
+    const memorySignalsToEmit = dedupeMemorySignals([
+      ...normalizedMemorySignals,
+      ...inferredSignals,
+    ])
 
-    let nicheId: string | undefined
-    if (featureFlags.enableMemory && organizationId) {
-      const convex = getConvexClient()
-      if (convex) {
-        try {
-          const org = await convex.query(api.organizations.getOrganization, {
-            id: organizationId as Id<'organizations'>,
-          })
-          nicheId = org?.settings?.nicheId ?? undefined
-        } catch {
-          // nicheId is optional; niche layer simply gets skipped
-        }
-      }
-    }
+    const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? ''
+    const convexForMemory = getConvexClient()
+
+    const nicheLookupPromise: Promise<string | undefined> =
+      featureFlags.enableMemory && organizationId && convexForMemory
+        ? convexForMemory
+            .query(api.organizations.getOrganization, {
+              id: organizationId as Id<'organizations'>,
+            })
+            .then((org) => org?.settings?.nicheId ?? undefined)
+            .catch(() => undefined)
+        : Promise.resolve(undefined)
 
     const memoryPromise =
       featureFlags.enableMemory && organizationId
-        ? retrieveMemoryContext({
-            query: lastUserMessageText,
-            organizationId,
-            nicheId,
-            agentType: 'chat',
-            convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL ?? '',
-          })
+        ? (async () => {
+            const nicheId = await Promise.race<string | undefined>([
+              nicheLookupPromise,
+              new Promise((resolve) => setTimeout(() => resolve(undefined), 75)),
+            ])
+            return retrieveMemoryContext({
+              query: lastUserMessageText,
+              organizationId,
+              authToken: memoryAuthToken,
+              nicheId,
+              agentType: 'chat',
+              convexUrl,
+              traceId: requestId,
+            })
+          })()
         : Promise.resolve(null)
-
-    const tools =
+    const toolCtx =
       userId && organizationId
-        ? createCRMTools({
+        ? {
             organizationId,
             userId,
-            convexUrl: process.env.NEXT_PUBLIC_CONVEX_URL ?? '',
-          })
-        : undefined
+            convexUrl,
+            convexClient: convexForMemory ?? undefined,
+            memoryAuthToken,
+          }
+        : null
+
+    const crmTools = toolCtx ? createCRMTools(toolCtx) : undefined
+    const memoryTools =
+      featureFlags.enableMemory && toolCtx ? createMemoryTools(toolCtx) : undefined
+    const tools = crmTools || memoryTools ? { ...crmTools, ...memoryTools } : undefined
 
     const model = createAIProvider(aiProvider, modelTier)
 
-    const memoryResult = await memoryPromise
-    const systemPrompt = getSystemPrompt(memoryResult?.context ?? '')
+    const [memoryResult, summaryResult] = await Promise.all([
+      memoryPromise,
+      featureFlags.enableMemory && messages.length > 6
+        ? buildConversationWindow(messages)
+        : Promise.resolve(null),
+    ])
+
+    const conversationSummaryText = summaryResult
+      ? formatSummaryForPrompt(summaryResult.summary)
+      : ''
+    const systemPrompt = getSystemPrompt(memoryResult?.context ?? '', conversationSummaryText)
+    const llmMessages = summaryResult?.wasTrimmed ? summaryResult.messages : messages
 
     if (chatConfig.debug && memoryResult) {
+      const skippedLayers = (['platform', 'niche', 'business', 'agent'] as const).filter(
+        (l) => memoryResult.layerBreakdown[l] === 0
+      )
       console.log('[Reme:Memory] Retrieved context:', {
         requestId,
         organizationId,
@@ -191,11 +267,28 @@ export async function POST(req: Request) {
         tokenCount: memoryResult.tokenCount,
         latencyMs: memoryResult.latencyMs,
         layerBreakdown: memoryResult.layerBreakdown,
+        ...(skippedLayers.length > 0 && { skippedLayers }),
       })
     }
 
-    const validConversationId =
-      conversationId && UUID_REGEX.test(conversationId) ? conversationId : undefined
+    if (memoryResult && memoryResult.latencyMs > MEMORY_RETRIEVAL_SLO_MS) {
+      console.warn('[Reme:SLO] Memory retrieval latency breach', {
+        requestId,
+        organizationId,
+        latencyMs: memoryResult.latencyMs,
+        sloMs: MEMORY_RETRIEVAL_SLO_MS,
+      })
+    }
+
+    if (chatConfig.debug && summaryResult?.wasTrimmed) {
+      console.log('[Reme:Summary] Conversation trimmed:', {
+        requestId,
+        originalMessages: summaryResult.totalOriginal,
+        windowMessages: summaryResult.messages.length,
+        hasSummary: summaryResult.summary.length > 0,
+        needsArchival: summaryResult.needsArchival,
+      })
+    }
 
     const convex = getConvexClient()
     const canPersist =
@@ -235,7 +328,7 @@ export async function POST(req: Request) {
       const result = streamText({
         model,
         system: systemPrompt,
-        messages: await convertToModelMessages(messages),
+        messages: await convertToModelMessages(llmMessages),
         tools,
         stopWhen: stepCountIs(chatConfig.maxSteps),
         abortSignal: controller.signal,
@@ -246,6 +339,14 @@ export async function POST(req: Request) {
         onFinish: ({ responseMessage, finishReason }) => {
           clearTimeout(timeout)
           const latencyMs = Date.now() - requestStartTime
+          if (latencyMs > CHAT_LATENCY_SLO_MS) {
+            console.warn('[Reme:SLO] Chat latency breach', {
+              requestId,
+              organizationId,
+              latencyMs,
+              sloMs: CHAT_LATENCY_SLO_MS,
+            })
+          }
 
           if (canPersist) {
             const content = extractTextContent(responseMessage)
@@ -295,16 +396,21 @@ export async function POST(req: Request) {
               try {
                 await convex.mutation(api.memoryEvents.create, {
                   organizationId: orgId,
+                  authToken: memoryAuthToken,
                   eventType: 'conversation_end' as const,
                   sourceType: 'message' as const,
                   sourceId: validConversationId,
+                  idempotencyKey: `${validConversationId}:conversation_end`,
                   data: {
                     type: 'conversation_end' as const,
                     conversationId: validConversationId,
-                    messageCount: messages.length,
+                    messageCount: summaryResult?.totalOriginal ?? messages.length,
                     lastUserMessage: lastUserMessageText.slice(0, 500),
-                    finishReason: finishReason ?? 'unknown',
+                    finishReason: summaryResult?.needsArchival
+                      ? 'archive_threshold'
+                      : (finishReason ?? 'unknown'),
                     latencyMs,
+                    needsArchival: summaryResult?.needsArchival ?? false,
                   },
                 })
               } catch (err) {
@@ -321,13 +427,23 @@ export async function POST(req: Request) {
             if (toolCallParts.length > 0) {
               after(async () => {
                 for (const tc of toolCallParts) {
-                  const hasError = tc.result?.includes('"error"') || tc.result?.includes('Error')
+                  let hasError = false
+                  if (tc.result) {
+                    try {
+                      const parsed = JSON.parse(tc.result)
+                      hasError = parsed?.success === false || parsed?.error !== undefined
+                    } catch {
+                      hasError = false
+                    }
+                  }
                   try {
                     await convex.mutation(api.memoryEvents.create, {
                       organizationId: orgId,
+                      authToken: memoryAuthToken,
                       eventType: hasError ? ('tool_failure' as const) : ('tool_success' as const),
                       sourceType: 'tool_call' as const,
                       sourceId: tc.id,
+                      idempotencyKey: `${tc.id}:${hasError ? 'tool_failure' : 'tool_success'}`,
                       data: {
                         type: 'tool_result' as const,
                         toolName: tc.name,
@@ -347,6 +463,40 @@ export async function POST(req: Request) {
                 }
               })
             }
+          }
+
+          if (
+            featureFlags.enableMemory &&
+            organizationId &&
+            convex &&
+            memorySignalsToEmit.length > 0
+          ) {
+            const orgId = organizationId as Id<'organizations'>
+
+            after(async () => {
+              for (const signal of memorySignalsToEmit) {
+                const eventScopeId = validConversationId ?? signal.sourceId
+                try {
+                  await convex.mutation(api.memoryEvents.create, {
+                    organizationId: orgId,
+                    authToken: memoryAuthToken,
+                    eventType: signal.eventType,
+                    sourceType: signal.sourceType,
+                    sourceId: signal.sourceId,
+                    idempotencyKey: `${eventScopeId}:${signal.eventType}:${signal.sourceId}`,
+                    data: signal.data,
+                  })
+                } catch (err) {
+                  console.error('[Reme:Chat] Failed to emit user memory signal event:', {
+                    requestId,
+                    organizationId,
+                    eventType: signal.eventType,
+                    sourceId: signal.sourceId,
+                    error: err instanceof Error ? err.message : 'Unknown error',
+                  })
+                }
+              }
+            })
           }
 
           if (chatConfig.debug) {
@@ -414,4 +564,284 @@ function extractToolCalls(message: UIMessage): PersistedToolCall[] {
   }
 
   return toolCalls
+}
+
+function normalizeMemorySignals(
+  rawSignals: unknown,
+  lastUserMessage: UIMessage | undefined,
+  conversationId: string | undefined
+): NormalizedMemorySignal[] {
+  if (!Array.isArray(rawSignals)) {
+    return []
+  }
+
+  const defaultSourceId = lastUserMessage?.id ?? conversationId
+  if (!defaultSourceId) {
+    return []
+  }
+
+  const normalized: NormalizedMemorySignal[] = []
+
+  for (const signal of rawSignals) {
+    if (!signal || typeof signal !== 'object') {
+      continue
+    }
+
+    const candidate = signal as {
+      type?: unknown
+      sourceId?: unknown
+      content?: unknown
+      originalContent?: unknown
+      actionDescription?: unknown
+      reason?: unknown
+      rating?: unknown
+      comment?: unknown
+      messageId?: unknown
+    }
+
+    if (typeof candidate.type !== 'string') {
+      continue
+    }
+
+    const sourceId =
+      typeof candidate.sourceId === 'string' && candidate.sourceId.trim().length > 0
+        ? candidate.sourceId.trim()
+        : defaultSourceId
+
+    if (candidate.type === 'user_correction' || candidate.type === 'explicit_instruction') {
+      if (typeof candidate.content !== 'string') {
+        continue
+      }
+      const content = candidate.content.trim().slice(0, 500)
+      if (content.length < 10) {
+        continue
+      }
+      const originalContent =
+        typeof candidate.originalContent === 'string' && candidate.originalContent.trim().length > 0
+          ? candidate.originalContent.trim().slice(0, 500)
+          : undefined
+
+      normalized.push({
+        eventType: candidate.type,
+        sourceType: 'message',
+        sourceId,
+        data: {
+          type: 'user_input',
+          content,
+          originalContent,
+        },
+      })
+      continue
+    }
+
+    if (candidate.type === 'approval_granted' || candidate.type === 'approval_rejected') {
+      if (typeof candidate.actionDescription !== 'string') {
+        continue
+      }
+      const actionDescription = candidate.actionDescription.trim().slice(0, 500)
+      if (actionDescription.length < 3) {
+        continue
+      }
+
+      const reason =
+        typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
+          ? candidate.reason.trim().slice(0, 500)
+          : undefined
+
+      normalized.push({
+        eventType: candidate.type,
+        sourceType: 'agent_action',
+        sourceId,
+        data: {
+          type: 'approval',
+          actionDescription,
+          approved: candidate.type === 'approval_granted',
+          reason,
+        },
+      })
+      continue
+    }
+
+    if (candidate.type === 'feedback') {
+      const rating =
+        typeof candidate.rating === 'number' && candidate.rating >= 1 && candidate.rating <= 5
+          ? candidate.rating
+          : undefined
+      const comment =
+        typeof candidate.comment === 'string' && candidate.comment.trim().length > 0
+          ? candidate.comment.trim().slice(0, 500)
+          : undefined
+      const messageId =
+        typeof candidate.messageId === 'string' && candidate.messageId.trim().length > 0
+          ? candidate.messageId.trim().slice(0, 100)
+          : undefined
+
+      if (rating === undefined && !comment) {
+        continue
+      }
+
+      normalized.push({
+        eventType: 'feedback',
+        sourceType: 'message',
+        sourceId,
+        data: {
+          type: 'feedback',
+          rating,
+          comment,
+          messageId,
+        },
+      })
+    }
+  }
+
+  return normalized
+}
+
+function inferMemorySignalsFromMessage(
+  lastUserMessage: UIMessage | undefined
+): NormalizedMemorySignal[] {
+  if (!lastUserMessage?.id) {
+    return []
+  }
+
+  const text = extractTextContent(lastUserMessage).trim()
+  if (!text) {
+    return []
+  }
+
+  const inferred: NormalizedMemorySignal[] = []
+  const correctionContent = extractPrefixedContent(text, [
+    'correction:',
+    'correct this:',
+    "that's incorrect:",
+    'you are wrong:',
+  ])
+  if (correctionContent && correctionContent.length >= 10) {
+    inferred.push({
+      eventType: 'user_correction',
+      sourceType: 'message',
+      sourceId: lastUserMessage.id,
+      data: {
+        type: 'user_input',
+        content: correctionContent.slice(0, 500),
+      },
+    })
+  }
+
+  const instructionContent = extractPrefixedContent(text, [
+    'instruction:',
+    'remember:',
+    'rule:',
+    'from now on:',
+  ])
+  if (instructionContent && instructionContent.length >= 10) {
+    inferred.push({
+      eventType: 'explicit_instruction',
+      sourceType: 'message',
+      sourceId: lastUserMessage.id,
+      data: {
+        type: 'user_input',
+        content: instructionContent.slice(0, 500),
+      },
+    })
+  }
+
+  const approvalGranted = extractPrefixedContent(text, [
+    'approve:',
+    'approved:',
+    'approval granted:',
+  ])
+  if (approvalGranted && approvalGranted.length >= 3) {
+    inferred.push({
+      eventType: 'approval_granted',
+      sourceType: 'agent_action',
+      sourceId: lastUserMessage.id,
+      data: {
+        type: 'approval',
+        actionDescription: approvalGranted.slice(0, 500),
+        approved: true,
+      },
+    })
+  }
+
+  const approvalRejected = extractPrefixedContent(text, [
+    'reject:',
+    'rejected:',
+    'approval rejected:',
+  ])
+  if (approvalRejected && approvalRejected.length >= 3) {
+    inferred.push({
+      eventType: 'approval_rejected',
+      sourceType: 'agent_action',
+      sourceId: lastUserMessage.id,
+      data: {
+        type: 'approval',
+        actionDescription: approvalRejected.slice(0, 500),
+        approved: false,
+      },
+    })
+  }
+
+  const feedbackContent = extractPrefixedContent(text, ['feedback:'])
+  if (feedbackContent && feedbackContent.length > 0) {
+    const rating = parseFeedbackRating(feedbackContent)
+    const comment = feedbackContent.slice(0, 500)
+    if (rating !== undefined || comment.length > 0) {
+      inferred.push({
+        eventType: 'feedback',
+        sourceType: 'message',
+        sourceId: lastUserMessage.id,
+        data: {
+          type: 'feedback',
+          rating,
+          comment,
+        },
+      })
+    }
+  }
+
+  return inferred
+}
+
+function dedupeMemorySignals(signals: NormalizedMemorySignal[]): NormalizedMemorySignal[] {
+  const seen = new Set<string>()
+  const deduped: NormalizedMemorySignal[] = []
+
+  for (const signal of signals) {
+    const key = `${signal.eventType}:${signal.sourceId}:${JSON.stringify(signal.data)}`
+    if (seen.has(key)) {
+      continue
+    }
+    seen.add(key)
+    deduped.push(signal)
+  }
+
+  return deduped
+}
+
+function extractPrefixedContent(text: string, prefixes: string[]): string | undefined {
+  const trimmed = text.trim()
+  const lower = trimmed.toLowerCase()
+
+  for (const prefix of prefixes) {
+    if (lower.startsWith(prefix)) {
+      return trimmed.slice(prefix.length).trim()
+    }
+  }
+
+  return undefined
+}
+
+function parseFeedbackRating(content: string): number | undefined {
+  const slashMatch = content.match(/\b([1-5])\s*\/\s*5\b/)
+  if (slashMatch) {
+    return Number(slashMatch[1])
+  }
+
+  const keywordMatch = content.match(/\b(?:rating|score)\s*[:=]?\s*([1-5])\b/i)
+  if (keywordMatch) {
+    return Number(keywordMatch[1])
+  }
+
+  return undefined
 }

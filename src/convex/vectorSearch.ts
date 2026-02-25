@@ -321,3 +321,87 @@ export const searchAllLayers = internalAction({
     }
   },
 })
+
+/**
+ * Search only the specified memory layers in parallel.
+ *
+ * Intent-aware optimization: instead of always searching all 4 layers,
+ * the retrieval pipeline tells us which layers are relevant and we only
+ * search those. Skipped layers return empty arrays with zero latency.
+ */
+export const searchSelectedLayers = internalAction({
+  args: {
+    query: v.string(),
+    organizationId: v.id('organizations'),
+    layers: v.array(v.string()),
+    nicheId: v.optional(v.string()),
+    agentType: v.optional(v.string()),
+    platformLimit: v.optional(v.number()),
+    nicheLimit: v.optional(v.number()),
+    businessLimit: v.optional(v.number()),
+    agentLimit: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    args
+  ): Promise<{
+    platform: Array<{ document: Doc<'platformMemories'>; score: number }>
+    niche: Array<{ document: Doc<'nicheMemories'>; score: number }>
+    business: Array<{ document: Doc<'businessMemories'>; score: number }>
+    agent: Array<{ document: Doc<'agentMemories'>; score: number }>
+    embedding: number[]
+    totalResults: number
+  }> => {
+    const layerSet = new Set(args.layers)
+    const empty = <T>(): Array<{ document: T; score: number }> =>
+      [] as Array<{ document: T; score: number }>
+
+    const embedding: number[] = await ctx.runAction(internal.embedding.generateEmbedding, {
+      text: args.query,
+    })
+
+    const [platformResults, nicheResults, businessResults, agentResults] = await Promise.all([
+      layerSet.has('platform')
+        ? ctx.runAction(internal.vectorSearch.searchPlatformMemories, {
+            embedding,
+            limit: args.platformLimit ?? 5,
+          })
+        : Promise.resolve(empty<Doc<'platformMemories'>>()),
+
+      layerSet.has('niche') && args.nicheId
+        ? ctx.runAction(internal.vectorSearch.searchNicheMemories, {
+            embedding,
+            nicheId: args.nicheId,
+            limit: args.nicheLimit ?? 10,
+          })
+        : Promise.resolve(empty<Doc<'nicheMemories'>>()),
+
+      layerSet.has('business')
+        ? ctx.runAction(internal.vectorSearch.searchBusinessMemories, {
+            embedding,
+            organizationId: args.organizationId,
+            limit: args.businessLimit ?? 20,
+          })
+        : Promise.resolve(empty<Doc<'businessMemories'>>()),
+
+      layerSet.has('agent')
+        ? ctx.runAction(internal.vectorSearch.searchAgentMemories, {
+            embedding,
+            organizationId: args.organizationId,
+            agentType: args.agentType,
+            limit: args.agentLimit ?? 10,
+          })
+        : Promise.resolve(empty<Doc<'agentMemories'>>()),
+    ])
+
+    return {
+      platform: platformResults,
+      niche: nicheResults,
+      business: businessResults,
+      agent: agentResults,
+      embedding,
+      totalResults:
+        platformResults.length + nicheResults.length + businessResults.length + agentResults.length,
+    }
+  },
+})

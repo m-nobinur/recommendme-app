@@ -21,7 +21,7 @@
 export const EMBEDDING_DIMENSIONS = 3072
 
 /** Minimum cosine similarity score to consider a result relevant */
-export const SIMILARITY_THRESHOLD = 0.5
+export const SIMILARITY_THRESHOLD = 0.2
 
 /** Cosine similarity score above which two memories are considered duplicates */
 export const DUPLICATE_THRESHOLD = 0.92
