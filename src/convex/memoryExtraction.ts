@@ -35,7 +35,7 @@ const DEBUG = process.env.DEBUG_MEMORY === 'true'
 
 const EXTRACTION_BATCH_SIZE = 5
 const MAX_MESSAGES_FOR_EXTRACTION = 30
-const DEDUP_SIMILARITY_THRESHOLD = 0.85
+const DEDUP_SIMILARITY_THRESHOLD = 0.92
 const DEDUP_SEARCH_LIMIT = 10
 const MAX_LLM_RETRIES = 2
 const MAX_EVENT_RETRIES = 3
@@ -916,7 +916,13 @@ async function createExtractedMemories(
     try {
       const id = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
         organizationId,
-        type: mem.type as any,
+        type: mem.type as
+          | 'fact'
+          | 'preference'
+          | 'instruction'
+          | 'context'
+          | 'relationship'
+          | 'episodic',
         content: mem.content,
         importance: mem.importance,
         confidence: mem.confidence,
@@ -972,7 +978,7 @@ async function createExtractedMemories(
       const id = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
         organizationId,
         agentType: mem.agentType,
-        category: mem.category as any,
+        category: mem.category as 'pattern' | 'preference' | 'success' | 'failure',
         content: mem.content,
         confidence: mem.confidence,
       })
@@ -1004,7 +1010,12 @@ async function createExtractedMemories(
         sourceId: normalizeSubjectName(rel.sourceName) ?? rel.sourceName,
         targetType: rel.targetType,
         targetId: normalizeSubjectName(rel.targetName) ?? rel.targetName,
-        relationType: rel.relationType as any,
+        relationType: rel.relationType as
+          | 'prefers'
+          | 'related_to'
+          | 'leads_to'
+          | 'requires'
+          | 'conflicts_with',
         strength: rel.strength,
         evidence: rel.evidence.slice(0, 200),
       })
@@ -1117,6 +1128,112 @@ async function processToolOutcome(
   }
 }
 
+async function processUserInputEvent(
+  ctx: {
+    runMutation: (...args: any[]) => Promise<any>
+    runAction: (...args: any[]) => Promise<any>
+  },
+  event: Doc<'memoryEvents'>,
+  memoryType: 'instruction' | 'context',
+  importance: number,
+  confidence: number
+): Promise<{ memoriesCreated: number; relationsCreated: number }> {
+  const eventData = event.data as Record<string, any>
+  const content = (eventData.content as string | undefined)?.trim()
+  if (!content || content.length < 10 || content.length > 500) {
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+
+  try {
+    const id = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
+      organizationId: event.organizationId,
+      type: memoryType,
+      content: content.slice(0, 500),
+      importance,
+      confidence,
+      source: 'explicit' as const,
+      sourceMessageId: event.sourceId,
+    })
+
+    await ctx.runAction(internal.embedding.generateAndStore, {
+      tableName: 'businessMemories' as const,
+      documentId: id,
+      content: content.slice(0, 500),
+    })
+
+    return { memoriesCreated: 1, relationsCreated: 0 }
+  } catch (error) {
+    console.error('[Extraction] Failed to process user input event:', {
+      organizationId: String(event.organizationId),
+      eventId: event._id,
+      eventType: event.eventType,
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+}
+
+async function processFeedbackOrApprovalEvent(
+  ctx: {
+    runMutation: (...args: any[]) => Promise<any>
+    runAction: (...args: any[]) => Promise<any>
+  },
+  event: Doc<'memoryEvents'>
+): Promise<{ memoriesCreated: number; relationsCreated: number }> {
+  const eventData = event.data as Record<string, any>
+
+  let content = ''
+  let confidence = 0.75
+
+  if (event.eventType === 'feedback') {
+    const rating = typeof eventData.rating === 'number' ? eventData.rating : undefined
+    const comment = typeof eventData.comment === 'string' ? eventData.comment : ''
+    content = rating
+      ? `User feedback received (rating: ${rating}${comment ? `, comment: ${comment}` : ''})`
+      : `User feedback received${comment ? `: ${comment}` : ''}`
+    confidence = 0.7
+  } else {
+    const approved = event.eventType === 'approval_granted'
+    const actionDescription = (eventData.actionDescription as string | undefined) ?? 'agent action'
+    const reason = (eventData.reason as string | undefined) ?? ''
+    content = approved
+      ? `Approval granted for ${actionDescription}${reason ? ` (${reason})` : ''}`
+      : `Approval rejected for ${actionDescription}${reason ? ` (${reason})` : ''}`
+    confidence = 0.85
+  }
+
+  const normalized = content.trim().slice(0, 500)
+  if (normalized.length < 10) {
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+
+  try {
+    const id = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
+      organizationId: event.organizationId,
+      agentType: 'chat',
+      category: event.eventType === 'approval_rejected' ? 'failure' : 'pattern',
+      content: normalized,
+      confidence,
+    })
+
+    await ctx.runAction(internal.embedding.generateAndStore, {
+      tableName: 'agentMemories' as const,
+      documentId: id,
+      content: normalized,
+    })
+
+    return { memoriesCreated: 1, relationsCreated: 0 }
+  } catch (error) {
+    console.error('[Extraction] Failed to process feedback/approval event:', {
+      organizationId: String(event.organizationId),
+      eventId: event._id,
+      eventType: event.eventType,
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+}
+
 export const processExtractionBatch = internalAction({
   args: {
     organizationId: v.optional(v.id('organizations')),
@@ -1175,22 +1292,23 @@ export const processExtractionBatch = internalAction({
           result = await processConversationEnd(ctx, event, provider)
         } else if (event.eventType === 'tool_success' || event.eventType === 'tool_failure') {
           result = await processToolOutcome(ctx, event, provider)
-        } else if (
-          event.eventType === 'user_correction' ||
-          event.eventType === 'explicit_instruction'
-        ) {
-          // TODO(Phase 8): Implement user_correction (update/override existing memory)
-          //   and explicit_instruction (store as high-priority instruction) handlers.
-          //   See DEVELOPMENT_PLAN.md §12 "Worker Architecture".
+        } else if (event.eventType === 'user_correction') {
+          result = await processUserInputEvent(ctx, event, 'context', 0.85, 1.0)
+        } else if (event.eventType === 'explicit_instruction') {
+          result = await processUserInputEvent(ctx, event, 'instruction', 0.95, 1.0)
         } else if (
           event.eventType === 'approval_granted' ||
-          event.eventType === 'approval_rejected'
+          event.eventType === 'approval_rejected' ||
+          event.eventType === 'feedback'
         ) {
-          // TODO(Phase 9): Implement approval workflow handlers.
-          //   See DEVELOPMENT_PLAN.md §13 "Guardrails, Security & Approval Workflow".
-        } else if (event.eventType === 'feedback') {
-          // TODO(Phase 11): Implement feedback signal processing.
-          //   See DEVELOPMENT_PLAN.md §15 "Continuous Improvement & Learning System".
+          result = await processFeedbackOrApprovalEvent(ctx, event)
+        } else {
+          console.warn('[Extraction] Unrecognized event type — skipping:', {
+            batchId,
+            eventId: event._id,
+            eventType: event.eventType,
+            organizationId: String(event.organizationId),
+          })
         }
 
         totalMemoriesCreated += result.memoriesCreated

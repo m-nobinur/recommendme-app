@@ -25,6 +25,7 @@
 
 import { generateText, type UIMessage } from 'ai'
 import { createAIProvider } from '@/lib/ai/providers'
+import type { AIProvider, ModelTier } from '@/lib/ai/providers/types'
 
 const DEFAULT_WINDOW_SIZE = 6
 const DEFAULT_SUMMARY_MAX_TOKENS = 200
@@ -53,6 +54,8 @@ export interface ConversationSummaryResult {
 export interface ConversationSummaryOptions {
   windowSize?: number
   summaryMaxTokens?: number
+  provider?: AIProvider
+  modelTier?: ModelTier
 }
 
 function extractTextFromMessage(msg: UIMessage): string {
@@ -105,10 +108,14 @@ export async function buildConversationWindow(
   const recentMessages = messages.slice(splitIndex)
 
   let summary = ''
+  const provider = options?.provider ?? 'gemini'
+  const modelTier = options?.modelTier ?? 'regular'
+  const fallbackProviders: AIProvider[] = provider === 'gemini' ? ['openrouter'] : ['gemini']
+
   try {
     const transcript = formatMessagesForSummary(olderMessages)
     if (transcript.length > 0) {
-      const model = createAIProvider('gemini', 'regular')
+      const model = createAIProvider(provider, modelTier)
       const result = await generateText({
         model,
         system: SUMMARY_SYSTEM_PROMPT,
@@ -118,12 +125,34 @@ export async function buildConversationWindow(
       })
       summary = result.text.trim()
     }
-  } catch (error) {
-    console.error('[Reme:Summary] Failed to generate conversation summary:', {
-      messageCount: olderMessages.length,
-      error: error instanceof Error ? error.message : 'Unknown error',
+  } catch (primaryError) {
+    console.warn('[Reme:Summary] Primary provider failed, trying fallback:', {
+      provider,
+      error: primaryError instanceof Error ? primaryError.message : 'Unknown error',
     })
-    // Graceful degradation: return recent messages without summary
+
+    for (const fallback of fallbackProviders) {
+      try {
+        const transcript = formatMessagesForSummary(olderMessages)
+        if (transcript.length > 0) {
+          const model = createAIProvider(fallback, modelTier)
+          const result = await generateText({
+            model,
+            system: SUMMARY_SYSTEM_PROMPT,
+            prompt: `Summarize this conversation excerpt (${olderMessages.length} messages):\n\n${transcript.slice(0, 4000)}`,
+            maxOutputTokens: options?.summaryMaxTokens ?? DEFAULT_SUMMARY_MAX_TOKENS,
+            temperature: 0.3,
+          })
+          summary = result.text.trim()
+          break
+        }
+      } catch (fallbackError) {
+        console.error('[Reme:Summary] Fallback provider also failed:', {
+          fallback,
+          error: fallbackError instanceof Error ? fallbackError.message : 'Unknown error',
+        })
+      }
+    }
   }
 
   return {

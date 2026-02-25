@@ -54,4 +54,11 @@ crons.interval(
   {}
 )
 
+crons.interval(
+  'recover stuck processing events',
+  { minutes: 10 },
+  internal.memoryEvents.recoverStuckProcessingEvents,
+  {}
+)
+
 export default crons
