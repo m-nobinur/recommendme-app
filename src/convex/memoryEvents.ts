@@ -467,13 +467,7 @@ export const recoverStuckProcessingEvents = internalMutation({
 
     const stuckEvents = await ctx.db
       .query('memoryEvents')
-      .filter((q) =>
-        q.and(
-          q.eq(q.field('status'), 'processing'),
-          q.eq(q.field('processed'), false),
-          q.lt(q.field('processingStartedAt'), cutoff)
-        )
-      )
+      .withIndex('by_status_created', (q) => q.eq('status', 'processing').lt('createdAt', cutoff))
       .take(50)
 
     let recovered = 0

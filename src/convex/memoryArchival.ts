@@ -1,8 +1,9 @@
 import { ActionRetrier } from '@convex-dev/action-retrier'
-import { ConvexError, v } from 'convex/values'
+import { v } from 'convex/values'
 import { components, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { type ResolvedLLMProvider, resolveLLMProvider } from './llmProvider'
 
 /**
  * Memory Archival & Cleanup Workers
@@ -38,44 +39,6 @@ function computeTTLExpiresAt(type: string, createdAt: number): number | undefine
   return createdAt + days * TTL_MS_PER_DAY
 }
 
-const LLM_PROVIDERS = {
-  openrouter: {
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    envVar: 'OPENROUTER_API_KEY',
-    model: 'openai/gpt-4o-mini',
-    name: 'OpenRouter',
-  },
-  openai: {
-    url: 'https://api.openai.com/v1/chat/completions',
-    envVar: 'OPENAI_API_KEY',
-    model: 'gpt-4o-mini',
-    name: 'OpenAI',
-  },
-} as const
-
-type LLMProviderKey = keyof typeof LLM_PROVIDERS
-
-interface ResolvedLLMProvider {
-  url: string
-  apiKey: string
-  model: string
-  name: string
-}
-
-function resolveLLMProvider(): ResolvedLLMProvider | null {
-  const order: LLMProviderKey[] = ['openrouter', 'openai']
-
-  for (const key of order) {
-    const provider = LLM_PROVIDERS[key]
-    const apiKey = process.env[provider.envVar]
-    if (apiKey && apiKey.trim().length > 0) {
-      return { url: provider.url, apiKey, model: provider.model, name: provider.name }
-    }
-  }
-
-  return null
-}
-
 const retrier = new ActionRetrier(components.actionRetrier, {
   initialBackoffMs: 500,
   base: 2,
@@ -86,21 +49,18 @@ const retrier = new ActionRetrier(components.actionRetrier, {
  * Fetch business memories in the archive decay range that are not yet archived.
  */
 export const getArchiveCandidates = internalQuery({
-  args: { limit: v.number() },
+  args: { organizationId: v.id('organizations'), limit: v.number() },
   handler: async (ctx, args): Promise<Doc<'businessMemories'>[]> => {
     const all = await ctx.db
       .query('businessMemories')
-      .withIndex('by_created')
-      .order('desc')
+      .withIndex('by_org_active', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isActive', true)
+      )
       .take(args.limit * 5)
 
     return all
       .filter(
-        (m) =>
-          m.isActive &&
-          !m.isArchived &&
-          m.decayScore > EXPIRE_THRESHOLD &&
-          m.decayScore <= ARCHIVE_THRESHOLD
+        (m) => !m.isArchived && m.decayScore > EXPIRE_THRESHOLD && m.decayScore <= ARCHIVE_THRESHOLD
       )
       .slice(0, args.limit)
   },
@@ -145,21 +105,18 @@ export const getArchivedMemoriesBySubject = internalQuery({
  * Fetch memories eligible for soft-delete (decayScore < 0.1 or past TTL).
  */
 export const getPurgeCandidates = internalQuery({
-  args: { limit: v.number() },
+  args: { organizationId: v.id('organizations'), limit: v.number() },
   handler: async (ctx, args): Promise<Doc<'businessMemories'>[]> => {
     const now = Date.now()
     const all = await ctx.db
       .query('businessMemories')
-      .withIndex('by_created')
-      .order('asc')
+      .withIndex('by_org_active', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isActive', true)
+      )
       .take(args.limit * 5)
 
     return all
-      .filter(
-        (m) =>
-          m.isActive &&
-          (m.decayScore <= EXPIRE_THRESHOLD || (m.expiresAt != null && m.expiresAt < now))
-      )
+      .filter((m) => m.decayScore <= EXPIRE_THRESHOLD || (m.expiresAt != null && m.expiresAt < now))
       .slice(0, args.limit)
   },
 })
@@ -168,13 +125,12 @@ export const getPurgeCandidates = internalQuery({
  * Fetch soft-deleted memories that have been inactive for 90+ days.
  */
 export const getHardDeleteCandidates = internalQuery({
-  args: { limit: v.number() },
+  args: { organizationId: v.id('organizations'), limit: v.number() },
   handler: async (ctx, args): Promise<Doc<'businessMemories'>[]> => {
     const cutoff = Date.now() - HARD_DELETE_GRACE_MS
     const all = await ctx.db
       .query('businessMemories')
-      .withIndex('by_created')
-      .order('asc')
+      .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
       .take(args.limit * 5)
 
     return all.filter((m) => !m.isActive && m.updatedAt < cutoff).slice(0, args.limit)
@@ -357,27 +313,35 @@ export const insertConsolidatedMemory = internalMutation({
 
 /**
  * Mark decayed memories (0.1 < score <= 0.3) as archived. Runs daily.
+ * Iterates per-org to avoid cross-org table scans.
  */
 export const archiveDecayedMemories = internalAction({
   args: {},
   handler: async (ctx): Promise<{ archived: number }> => {
-    const candidates: Doc<'businessMemories'>[] = await ctx.runQuery(
-      internal.memoryArchival.getArchiveCandidates,
-      { limit: MAX_ARCHIVE_BATCH }
+    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
+      internal.memoryDecay.getOrgsWithActiveMemories
     )
 
-    if (candidates.length === 0) return { archived: 0 }
+    let archived = 0
+    for (const orgId of orgIds) {
+      const candidates: Doc<'businessMemories'>[] = await ctx.runQuery(
+        internal.memoryArchival.getArchiveCandidates,
+        { organizationId: orgId, limit: MAX_ARCHIVE_BATCH }
+      )
 
-    const ids = candidates.map((m) => m._id)
-    const result = await ctx.runMutation(internal.memoryArchival.markBatchArchived, {
-      memoryIds: ids,
-    })
+      if (candidates.length === 0) continue
 
-    if (result.archived > 0) {
-      console.log(`[Archival] Archived ${result.archived} decayed memories`)
+      const result = await ctx.runMutation(internal.memoryArchival.markBatchArchived, {
+        memoryIds: candidates.map((m) => m._id),
+      })
+      archived += result.archived
     }
 
-    return result
+    if (archived > 0) {
+      console.log(`[Archival] Archived ${archived} decayed memories across ${orgIds.length} orgs`)
+    }
+
+    return { archived }
   },
 })
 
@@ -441,7 +405,7 @@ export const compressMemoryGroup = internalAction({
     avgConfidence: v.float64(),
   },
   handler: async (ctx, args) => {
-    const provider = resolveLLMProvider()
+    const provider = resolveLLMProvider({ throwOnMissing: false })
     if (!provider) {
       console.warn('[Archival] Skipping compression — no LLM provider configured')
       return
@@ -485,7 +449,7 @@ export const compressMemoryGroup = internalAction({
 export const compressArchivedMemories = internalAction({
   args: {},
   handler: async (ctx): Promise<{ groupsCompressed: number }> => {
-    const provider = resolveLLMProvider()
+    const provider = resolveLLMProvider({ throwOnMissing: false })
     if (!provider) {
       console.warn('[Archival] Skipping compression — no LLM provider configured')
       return { groupsCompressed: 0 }
@@ -553,37 +517,44 @@ export const compressArchivedMemories = internalAction({
 
 /**
  * Soft-delete expired memories and hard-delete old soft-deleted ones.
- * Runs weekly.
+ * Runs weekly. Iterates per-org to avoid cross-org table scans.
  */
 export const purgeExpiredMemories = internalAction({
   args: {},
   handler: async (
     ctx
   ): Promise<{ softDeleted: number; hardDeleted: number; orphansRemoved: number }> => {
-    const purgeCandidates: Doc<'businessMemories'>[] = await ctx.runQuery(
-      internal.memoryArchival.getPurgeCandidates,
-      { limit: MAX_PURGE_BATCH }
+    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
+      internal.memoryDecay.getOrgsWithActiveMemories
     )
 
     let softDeleted = 0
-    if (purgeCandidates.length > 0) {
-      const result = await ctx.runMutation(internal.memoryArchival.softDeleteBatch, {
-        memoryIds: purgeCandidates.map((m) => m._id),
-      })
-      softDeleted = result.deleted
-    }
-
-    const hardDeleteCandidates: Doc<'businessMemories'>[] = await ctx.runQuery(
-      internal.memoryArchival.getHardDeleteCandidates,
-      { limit: MAX_PURGE_BATCH }
-    )
-
     let hardDeleted = 0
-    if (hardDeleteCandidates.length > 0) {
-      const result = await ctx.runMutation(internal.memoryArchival.hardDeleteBatch, {
-        memoryIds: hardDeleteCandidates.map((m) => m._id),
-      })
-      hardDeleted = result.deleted
+
+    for (const orgId of orgIds) {
+      const purgeCandidates: Doc<'businessMemories'>[] = await ctx.runQuery(
+        internal.memoryArchival.getPurgeCandidates,
+        { organizationId: orgId, limit: MAX_PURGE_BATCH }
+      )
+
+      if (purgeCandidates.length > 0) {
+        const result = await ctx.runMutation(internal.memoryArchival.softDeleteBatch, {
+          memoryIds: purgeCandidates.map((m) => m._id),
+        })
+        softDeleted += result.deleted
+      }
+
+      const hardDeleteCandidates: Doc<'businessMemories'>[] = await ctx.runQuery(
+        internal.memoryArchival.getHardDeleteCandidates,
+        { organizationId: orgId, limit: MAX_PURGE_BATCH }
+      )
+
+      if (hardDeleteCandidates.length > 0) {
+        const result = await ctx.runMutation(internal.memoryArchival.hardDeleteBatch, {
+          memoryIds: hardDeleteCandidates.map((m) => m._id),
+        })
+        hardDeleted += result.deleted
+      }
     }
 
     const orphanIds: Id<'memoryRelations'>[] = await ctx.runQuery(
@@ -612,6 +583,7 @@ export const purgeExpiredMemories = internalAction({
 /**
  * Lightweight lifecycle sanity checks for archival pipelines.
  * Runs on a schedule to surface growing queues/backlogs early.
+ * Uses first available org as a probe; full per-org counts are available in runDecayUpdate logs.
  */
 export const lifecycleHealthCheck = internalAction({
   args: {},
@@ -624,18 +596,43 @@ export const lifecycleHealthCheck = internalAction({
     orphanedRelations: number
     checkedAt: number
   }> => {
-    const [archiveCandidates, purgeCandidates, hardDeleteCandidates, orphanedRelations] =
-      await Promise.all([
-        ctx.runQuery(internal.memoryArchival.getArchiveCandidates, { limit: MAX_ARCHIVE_BATCH }),
-        ctx.runQuery(internal.memoryArchival.getPurgeCandidates, { limit: MAX_PURGE_BATCH }),
-        ctx.runQuery(internal.memoryArchival.getHardDeleteCandidates, { limit: MAX_PURGE_BATCH }),
-        ctx.runQuery(internal.memoryArchival.getOrphanedRelations, { limit: MAX_ORPHAN_CLEANUP }),
+    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
+      internal.memoryDecay.getOrgsWithActiveMemories
+    )
+
+    let archiveCandidatesTotal = 0
+    let purgeCandidatesTotal = 0
+    let hardDeleteCandidatesTotal = 0
+
+    for (const orgId of orgIds) {
+      const [archive, purge, hardDelete] = await Promise.all([
+        ctx.runQuery(internal.memoryArchival.getArchiveCandidates, {
+          organizationId: orgId,
+          limit: MAX_ARCHIVE_BATCH,
+        }),
+        ctx.runQuery(internal.memoryArchival.getPurgeCandidates, {
+          organizationId: orgId,
+          limit: MAX_PURGE_BATCH,
+        }),
+        ctx.runQuery(internal.memoryArchival.getHardDeleteCandidates, {
+          organizationId: orgId,
+          limit: MAX_PURGE_BATCH,
+        }),
       ])
+      archiveCandidatesTotal += archive.length
+      purgeCandidatesTotal += purge.length
+      hardDeleteCandidatesTotal += hardDelete.length
+    }
+
+    const orphanedRelations: Id<'memoryRelations'>[] = await ctx.runQuery(
+      internal.memoryArchival.getOrphanedRelations,
+      { limit: MAX_ORPHAN_CLEANUP }
+    )
 
     const result = {
-      archiveCandidates: archiveCandidates.length,
-      purgeCandidates: purgeCandidates.length,
-      hardDeleteCandidates: hardDeleteCandidates.length,
+      archiveCandidates: archiveCandidatesTotal,
+      purgeCandidates: purgeCandidatesTotal,
+      hardDeleteCandidates: hardDeleteCandidatesTotal,
       orphanedRelations: orphanedRelations.length,
       checkedAt: Date.now(),
     }

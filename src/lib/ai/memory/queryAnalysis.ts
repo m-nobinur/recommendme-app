@@ -14,12 +14,12 @@
  * │    ↓ detectIntents()  — keyword matching (sync, <1ms)            │
  * │  Intent[]                                                        │
  * │    ├── if specific intent found → use it (fast path)             │
- * │    └── if only 'general' → detectIntentsWithAI() (async, ~200ms)│
- * │    ↓ extractEntities()  — regex patterns                        │
+ * │    └── if only 'general' → detectIntentsWithAI() (async, ~200ms) │
+ * │    ↓ extractEntities()  — regex patterns (fast)                  │
  * │  Entity[]                                                        │
- * │    ↓ mapIntentsToContextTypes()                                 │
+ * │    ↓ mapIntentsToContextTypes() (fast)                           │
  * │  BusinessMemoryType[]                                            │
- * │    ↓ buildSubjectHints()                                        │
+ * │    ↓ buildSubjectHints() (fast)                                  │
  * │  SubjectHint[]                                                   │
  * │                                                                  │
  * │  Output: QueryAnalysis                                           │
@@ -29,8 +29,8 @@
 import { generateText, Output } from 'ai'
 import { z } from 'zod'
 import type { BusinessMemoryType } from '@/types'
-import { getAIConfig } from '../ai/config'
-import { createAIProvider } from '../ai/providers'
+import { getAIConfig } from '../config'
+import { createAIProvider } from '../providers'
 
 export type QueryIntent =
   | 'scheduling'

@@ -9,10 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Agent Framework Foundation (Phase 7a)
+- Core agent framework at `src/lib/ai/agents/core/` with AgentHandler interface, pipeline runner, risk engine, memory helpers, and guardrail enforcement
+- Followup Agent at `src/lib/ai/agents/followup/` — identifies stale leads, plans actions via LLM, learns from outcomes
+- Agent registry with type-safe handler factory mapping (`src/lib/ai/agents/registry.ts`)
+- Convex persistence: `agentDefinitions` table for per-org agent config, `agentExecutions` table for execution lifecycle tracking
+- `agentRunner.ts` Convex internalAction with LLM integration (OpenRouter/OpenAI fallback), structured JSON output, and retry logic
+- Daily followup agent cron job (14:00 UTC) in `src/convex/crons.ts`
+- Heuristic risk assessment with per-agent overrides and approval thresholds
+- Config-driven guardrails: action whitelists, max actions per run, risk level gates
+- Agent memory access helpers for reading patterns and recording learnings
+- Validation test script `scripts/test-agent-framework.sh` (41 checks)
+- Type exports wired into `src/types/index.ts` and `src/lib/ai/index.ts`
+
 #### Memory Schema & CRUD (Phase 1)
 - 4-layer memory hierarchy: `platformMemories`, `nicheMemories`, `businessMemories`, `agentMemories`
 - `memoryRelations` and `memoryEvents` tables with full CRUD operations
-- Memory validation library (`src/lib/memory/validation.ts`) with content length, confidence, and PII detection
+- Memory validation library (`src/lib/ai/memory/validation.ts`) with content length, confidence, and PII detection
 - Centralized memory types in `src/types/index.ts`
 
 #### Embedding & Vector Search (Phase 2)
@@ -21,20 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vector search across all 4 memory layers in `src/convex/vectorSearch.ts`
 - Hybrid search with Reciprocal Rank Fusion (RRF) in `src/convex/hybridSearch.ts`
 - Fuzzy name matching utility in `src/convex/fuzzyMatch.ts`
-- Shared embedding constants and math in `src/lib/memory/embedding.ts`
+- Shared embedding constants and math in `src/lib/ai/memory/embedding.ts`
 - Auto-embedding on memory create/update via `ctx.scheduler.runAfter`
 
 #### Memory Retrieval & Context (Phase 3)
 - Full retrieval pipeline: query analysis, parallel vector search, scoring, token budgeting
-- Context formatter for injecting memory into system prompt (`src/lib/memory/contextFormatter.ts`)
-- Query analysis with entity extraction and intent detection (`src/lib/memory/queryAnalysis.ts`)
-- Scoring with decay-aware and confidence-weighted ranking (`src/lib/memory/scoring.ts`)
+- Context formatter for injecting memory into system prompt (`src/lib/ai/memory/contextFormatter.ts`)
+- Query analysis with entity extraction and intent detection (`src/lib/ai/memory/queryAnalysis.ts`)
+- Scoring with decay-aware and confidence-weighted ranking (`src/lib/ai/memory/scoring.ts`)
 - Convex action gateway in `src/convex/memoryRetrieval.ts`
 - Early-start parallelism for memory retrieval in chat route
 
 #### Memory Extraction Pipeline (Phase 4)
 - LLM-based memory extraction worker in `src/convex/memoryExtraction.ts`
-- Extraction prompt with Zod output schema in `src/lib/memory/extractionPrompt.ts`
+- Extraction prompt with Zod output schema in `src/lib/ai/memory/extractionPrompt.ts`
 - Memory event emission in chat route: `conversation_end`, `tool_success`, `tool_failure`
 - Deduplication via vector similarity (threshold 0.92) with version chaining
 - Cron job for extraction processing every 2 minutes
@@ -42,9 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Business memory history fields (`previousVersionId`, `correctedAt`, `correctedBy`)
 
 #### Memory Lifecycle (Phase 5)
-- Ebbinghaus-based decay algorithm in `src/lib/memory/decay.ts` with 7 type-specific decay rates
+- Ebbinghaus-based decay algorithm in `src/lib/ai/memory/decay.ts` with 7 type-specific decay rates
 - Decay workers in `src/convex/memoryDecay.ts`: hourly batch updates + on-access boost via scheduler
-- TTL management in `src/lib/memory/ttl.ts` with per-type defaults (30 days to never)
+- TTL management in `src/lib/ai/memory/ttl.ts` with per-type defaults (30 days to never)
 - Auto-set `expiresAt` on memory creation in `businessMemories.ts` and `memoryExtraction.ts`
 - Archival workers in `src/convex/memoryArchival.ts`:
   - Daily: archive memories with decay score < 0.3
@@ -60,7 +73,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `searchMemories`: Vector search through stored business knowledge
   - `updatePreference`: Upsert preferences with similarity-based dedup (threshold 0.6)
 - Lightweight `searchMemories` public action in `src/convex/memoryRetrieval.ts` for tool-level business memory search (single-layer, no scoring/budgeting overhead)
-- Conversation summary with sliding window in `src/lib/memory/conversationSummary.ts`:
+- Conversation summary with sliding window in `src/lib/ai/memory/conversationSummary.ts`:
   - Keeps last 6 messages in full, summarizes older messages via lightweight LLM call
   - Archive threshold at 50+ messages triggers extraction event
   - Summary injected into system prompt via `{{conversation_summary}}` placeholder
@@ -73,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Selective layer search: scheduling/lead queries only search business + agent (skip platform + niche)
 - `searchSelectedLayers` Convex action in `src/convex/vectorSearch.ts` for partial-layer search
 - `retrieveSelectedContext` Convex action in `src/convex/memoryRetrieval.ts` with layer filtering
-- Layer routing via `getRequiredLayers()` and `isMemoryCommand()` in `src/lib/memory/queryAnalysis.ts`
+- Layer routing via `getRequiredLayers()` and `isMemoryCommand()` in `src/lib/ai/memory/queryAnalysis.ts`
 - ConvexHttpClient reuse: tools share the route's singleton client instead of creating new ones
 - Shared test infrastructure in `scripts/lib/test-helpers.sh` extracted from 4 test scripts
 

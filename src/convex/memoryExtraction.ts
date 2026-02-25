@@ -1,8 +1,9 @@
-import { ConvexError, v } from 'convex/values'
+import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
 import { isEmbeddingConfigured } from './embedding'
+import { type ResolvedLLMProvider, resolveLLMProvider } from './llmProvider'
 
 /**
  * Memory Extraction Pipeline
@@ -66,47 +67,6 @@ function computeTTLExpiresAt(type: string, createdAt: number): number | undefine
   const days = TTL_DAYS[type]
   if (days === null || days === undefined) return undefined
   return createdAt + days * TTL_MS_PER_DAY
-}
-
-const LLM_PROVIDERS = {
-  openrouter: {
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    envVar: 'OPENROUTER_API_KEY',
-    model: 'openai/gpt-4o-mini',
-    name: 'OpenRouter',
-  },
-  openai: {
-    url: 'https://api.openai.com/v1/chat/completions',
-    envVar: 'OPENAI_API_KEY',
-    model: 'gpt-4o-mini',
-    name: 'OpenAI',
-  },
-} as const
-
-type LLMProviderKey = keyof typeof LLM_PROVIDERS
-
-interface ResolvedLLMProvider {
-  url: string
-  apiKey: string
-  model: string
-  name: string
-}
-
-function resolveLLMProvider(): ResolvedLLMProvider {
-  const order: LLMProviderKey[] = ['openrouter', 'openai']
-
-  for (const key of order) {
-    const provider = LLM_PROVIDERS[key]
-    const apiKey = process.env[provider.envVar]
-    if (apiKey && apiKey.trim().length > 0) {
-      return { url: provider.url, apiKey, model: provider.model, name: provider.name }
-    }
-  }
-
-  throw new ConvexError({
-    code: 'CONFIGURATION_ERROR',
-    message: 'No LLM provider configured for extraction. Set OPENROUTER_API_KEY or OPENAI_API_KEY.',
-  })
 }
 
 const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction engine for a CRM assistant called "Reme".
@@ -1128,6 +1088,91 @@ async function processToolOutcome(
   }
 }
 
+/**
+ * Process a `user_correction` event through the full supersede pipeline.
+ *
+ * When the event carries `originalContent` (the old fact the user is correcting),
+ * we embed it and search for the matching memory. If a high-confidence match is
+ * found (score ≥ 0.8) we supersede it so history is preserved and the stale
+ * memory is deactivated. If no match is found we fall back to inserting the new
+ * content as a standalone `preference` memory so no information is lost.
+ */
+async function processUserCorrectionEvent(
+  ctx: {
+    runMutation: (...args: any[]) => Promise<any>
+    runAction: (...args: any[]) => Promise<any>
+  },
+  event: Doc<'memoryEvents'>
+): Promise<{ memoriesCreated: number; relationsCreated: number }> {
+  const eventData = event.data as Record<string, any>
+  const newContent = (eventData.content as string | undefined)?.trim()
+  const originalContent = (eventData.originalContent as string | undefined)?.trim()
+
+  if (!newContent || newContent.length < 10 || newContent.length > 500) {
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+
+  try {
+    // Attempt to find and supersede the old memory when the original is known.
+    if (originalContent && originalContent.length >= 5) {
+      const embedding: number[] = await ctx.runAction(internal.embedding.generateEmbedding, {
+        text: originalContent,
+      })
+
+      const results: Array<{ document: Doc<'businessMemories'>; score: number }> =
+        await ctx.runAction(internal.vectorSearch.searchBusinessMemories, {
+          embedding,
+          organizationId: event.organizationId,
+          limit: 3,
+        })
+
+      const best = results.find((r) => r.score >= 0.8)
+      if (best) {
+        const newId = await ctx.runMutation(internal.memoryExtraction.supersedeBusinessMemory, {
+          oldId: best.document._id,
+          organizationId: event.organizationId,
+          content: newContent.slice(0, 500),
+          importance: 0.9,
+          confidence: 1.0,
+          source: 'explicit' as const,
+          sourceMessageId: event.sourceId,
+          reason: 'Superseded by explicit user correction',
+        })
+        await ctx.runAction(internal.embedding.generateAndStore, {
+          tableName: 'businessMemories' as const,
+          documentId: newId,
+          content: newContent.slice(0, 500),
+        })
+        return { memoriesCreated: 1, relationsCreated: 0 }
+      }
+    }
+
+    // Fallback: no matching memory found — insert as a new preference memory.
+    const id = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
+      organizationId: event.organizationId,
+      type: 'preference' as const,
+      content: newContent.slice(0, 500),
+      importance: 0.9,
+      confidence: 1.0,
+      source: 'explicit' as const,
+      sourceMessageId: event.sourceId,
+    })
+    await ctx.runAction(internal.embedding.generateAndStore, {
+      tableName: 'businessMemories' as const,
+      documentId: id,
+      content: newContent.slice(0, 500),
+    })
+    return { memoriesCreated: 1, relationsCreated: 0 }
+  } catch (error) {
+    console.error('[Extraction] Failed to process user correction event:', {
+      organizationId: String(event.organizationId),
+      eventId: event._id,
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+}
+
 async function processUserInputEvent(
   ctx: {
     runMutation: (...args: any[]) => Promise<any>
@@ -1293,7 +1338,7 @@ export const processExtractionBatch = internalAction({
         } else if (event.eventType === 'tool_success' || event.eventType === 'tool_failure') {
           result = await processToolOutcome(ctx, event, provider)
         } else if (event.eventType === 'user_correction') {
-          result = await processUserInputEvent(ctx, event, 'context', 0.85, 1.0)
+          result = await processUserCorrectionEvent(ctx, event)
         } else if (event.eventType === 'explicit_instruction') {
           result = await processUserInputEvent(ctx, event, 'instruction', 0.95, 1.0)
         } else if (

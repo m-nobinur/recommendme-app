@@ -95,12 +95,26 @@ export const getActiveAgentBatch = internalQuery({
 
 /**
  * Get all distinct organization IDs that have active business memories.
+ * Scans the businessMemories table using by_org_active index to find only
+ * orgs that actually have work to do, avoiding a full organizations table scan.
  */
 export const getOrgsWithActiveMemories = internalQuery({
   args: {},
   handler: async (ctx): Promise<Id<'organizations'>[]> => {
-    const orgs = await ctx.db.query('organizations').collect()
-    return orgs.map((o) => o._id)
+    // Pull a generous batch of active memories; dedup org IDs in-process.
+    // This avoids scanning the organizations table (which may contain orgs with no memories).
+    const memories = await ctx.db
+      .query('businessMemories')
+      .withIndex('by_created')
+      .order('desc')
+      .take(5000)
+
+    const orgIds = new Set<Id<'organizations'>>()
+    for (const m of memories) {
+      if (m.isActive) orgIds.add(m.organizationId)
+    }
+
+    return Array.from(orgIds)
   },
 })
 

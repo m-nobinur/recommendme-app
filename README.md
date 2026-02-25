@@ -193,12 +193,15 @@ recommendme-app/
 │   │   └── auth.ts             # Better Auth integration
 │   ├── lib/
 │   │   ├── ai/
+│   │   │   ├── agents/         # Agent framework (core, followup, registry)
+│   │   │   ├── memory/         # Retrieval, summaries, extraction prompts, validation
+│   │   │   ├── shared/         # Shared Convex helpers and typed ID adapters
 │   │   │   ├── config/         # Configuration constants & versions
 │   │   │   ├── config.ts       # Centralized AI config with Zod
-│   │   │   ├── providers/      # Multi-provider factory (5 providers)
+│   │   │   ├── providers/      # Multi-provider factory
 │   │   │   ├── services/       # AI services (suggestions, etc.)
 │   │   │   ├── utils/          # Monitoring, retry, rate-limit
-│   │   │   ├── tools/          # CRM tool definitions
+│   │   │   ├── tools/          # CRM + memory tool definitions
 │   │   │   └── prompts/        # System & suggestion prompts
 │   │   ├── auth/               # Auth helpers (client/server)
 │   │   └── env.ts              # Environment validation

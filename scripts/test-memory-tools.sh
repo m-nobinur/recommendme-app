@@ -139,7 +139,7 @@ fi
 # ─── 7. Conversation Summary Module ─────────────────────────
 header "Conversation Summary Module"
 
-SUMMARY_FILE="src/lib/memory/conversationSummary.ts"
+SUMMARY_FILE="src/lib/ai/memory/conversationSummary.ts"
 assert_file_exists "$SUMMARY_FILE" "Conversation summary module exists"
 
 if [[ -f "$SUMMARY_FILE" ]]; then

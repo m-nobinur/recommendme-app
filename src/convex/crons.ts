@@ -61,4 +61,15 @@ crons.interval(
   {}
 )
 
+// ============================================
+// AGENT FRAMEWORK: Scheduled Agent Runs
+// ============================================
+
+crons.daily(
+  'followup agent',
+  { hourUTC: 14, minuteUTC: 0 },
+  internal.agentRunner.runFollowupAgent,
+  {}
+)
+
 export default crons

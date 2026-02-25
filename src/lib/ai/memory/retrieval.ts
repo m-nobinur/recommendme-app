@@ -22,7 +22,7 @@
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { ConvexHttpClient } from 'convex/browser'
-import { getPerformanceConfig } from '@/lib/ai/config'
+import { getPerformanceConfig } from '../config'
 import { formatContext } from './contextFormatter'
 import {
   analyzeQuery,

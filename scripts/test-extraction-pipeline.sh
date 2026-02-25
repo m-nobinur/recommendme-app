@@ -49,7 +49,7 @@ header "File Existence & Structure"
 REQUIRED_FILES=(
   "src/convex/memoryExtraction.ts"
   "src/convex/crons.ts"
-  "src/lib/memory/extractionPrompt.ts"
+  "src/lib/ai/memory/extractionPrompt.ts"
   "src/convex/memoryEvents.ts"
 )
 
@@ -73,9 +73,9 @@ else
 fi
 
 info "Checking extraction prompt..."
-assert_file_contains "src/lib/memory/extractionPrompt.ts" "EXTRACTION_SYSTEM_PROMPT" "EXTRACTION_SYSTEM_PROMPT defined"
-assert_file_contains "src/lib/memory/extractionPrompt.ts" "extractionOutputSchema" "Zod extractionOutputSchema defined"
-assert_file_contains "src/lib/memory/extractionPrompt.ts" "buildExtractionPrompt" "buildExtractionPrompt helper defined"
+assert_file_contains "src/lib/ai/memory/extractionPrompt.ts" "EXTRACTION_SYSTEM_PROMPT" "EXTRACTION_SYSTEM_PROMPT defined"
+assert_file_contains "src/lib/ai/memory/extractionPrompt.ts" "extractionOutputSchema" "Zod extractionOutputSchema defined"
+assert_file_contains "src/lib/ai/memory/extractionPrompt.ts" "buildExtractionPrompt" "buildExtractionPrompt helper defined"
 
 info "Checking memory event internal query..."
 assert_file_contains "src/convex/memoryEvents.ts" "listUnprocessedInternal" "listUnprocessedInternal internalQuery defined"

@@ -1,8 +1,8 @@
-import type { Id } from '@convex/_generated/dataModel'
 import { tool } from 'ai'
 import { ConvexHttpClient } from 'convex/browser'
 import { z } from 'zod'
-import type { ToolContext } from './index'
+import { asBusinessMemoryId, asOrganizationId, getApi } from '../shared/convex'
+import type { ToolContext, ToolResult } from './index'
 
 const BUSINESS_MEMORY_TYPES = [
   'fact',
@@ -14,36 +14,6 @@ const BUSINESS_MEMORY_TYPES = [
 ] as const
 
 const memoryTypeSchema = z.enum(BUSINESS_MEMORY_TYPES)
-
-interface ToolSuccess<T = unknown> {
-  success: true
-  data?: T
-  message?: string
-}
-
-interface ToolError {
-  success: false
-  error: string
-}
-
-type ToolResult<T = unknown> = ToolSuccess<T> | ToolError
-
-function asOrganizationId(id: string): Id<'organizations'> {
-  return id as Id<'organizations'>
-}
-
-function asBusinessMemoryId(id: string): Id<'businessMemories'> {
-  return id as Id<'businessMemories'>
-}
-
-let cachedApiPromise: Promise<typeof import('@convex/_generated/api')> | null = null
-
-function getApi() {
-  if (!cachedApiPromise) {
-    cachedApiPromise = import('@convex/_generated/api')
-  }
-  return cachedApiPromise
-}
 
 /**
  * Create memory management tools for the chat AI.
@@ -206,13 +176,22 @@ export function createMemoryTools(ctx: ToolContext) {
             limit: args.limit ?? 5,
           })
 
-          const memories = searchResults.results.map((r) => ({
-            content: r.content,
-            type: r.type,
-            confidence: r.confidence,
-            importance: r.importance,
-            subject: r.subjectName ?? r.subjectType,
-          }))
+          const memories = searchResults.results.map(
+            (r: {
+              content: string
+              type: string
+              confidence: number
+              importance: number
+              subjectName?: string
+              subjectType?: string
+            }) => ({
+              content: r.content,
+              type: r.type,
+              confidence: r.confidence,
+              importance: r.importance,
+              subject: r.subjectName ?? r.subjectType,
+            })
+          )
 
           return {
             success: true,
@@ -259,7 +238,7 @@ export function createMemoryTools(ctx: ToolContext) {
           const SIMILARITY_UPDATE_THRESHOLD = 0.6
           const normalizedSubject = args.subjectName?.trim().toLowerCase()
           const existingMatch = searchResults.results.find(
-            (r) => r.score >= SIMILARITY_UPDATE_THRESHOLD
+            (r: { score: number }) => r.score >= SIMILARITY_UPDATE_THRESHOLD
           )
 
           if (existingMatch) {

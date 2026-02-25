@@ -403,9 +403,6 @@ export async function POST(req: Request) {
                   eventType: 'conversation_end' as const,
                   sourceType: 'message' as const,
                   sourceId: validConversationId,
-                  // Include the last user message ID to scope this key to the current turn.
-                  // Without this, only the first turn's conversation_end event would be stored
-                  // for any given conversation — all subsequent turns would be silently deduped.
                   idempotencyKey: `${validConversationId}:conversation_end:${lastUserMessage?.id ?? Date.now()}`,
                   data: {
                     type: 'conversation_end' as const,
@@ -814,7 +811,6 @@ function dedupeMemorySignals(signals: NormalizedMemorySignal[]): NormalizedMemor
   const deduped: NormalizedMemorySignal[] = []
 
   for (const signal of signals) {
-    // Sort keys before stringifying to ensure a deterministic key regardless of object property order.
     const key = `${signal.eventType}:${signal.sourceId}:${JSON.stringify(signal.data, Object.keys(signal.data).sort())}`
     if (seen.has(key)) {
       continue

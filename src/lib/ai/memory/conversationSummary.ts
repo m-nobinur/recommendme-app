@@ -24,8 +24,8 @@
  */
 
 import { generateText, type UIMessage } from 'ai'
-import { createAIProvider } from '@/lib/ai/providers'
-import type { AIProvider, ModelTier } from '@/lib/ai/providers/types'
+import { createAIProvider } from '../providers'
+import type { AIProvider, ModelTier } from '../providers/types'
 
 const DEFAULT_WINDOW_SIZE = 6
 const DEFAULT_SUMMARY_MAX_TOKENS = 200
