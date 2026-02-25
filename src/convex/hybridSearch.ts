@@ -85,7 +85,8 @@ export const keywordSearchBusiness = internalQuery({
             q.eq('organizationId', args.organizationId).eq('isActive', true)
           )
           .order('desc')
-          .take(50)
+          // Expanded to 100 (from 50) to broaden the lookback window for keyword-based fallback searches.
+          .take(100)
 
         const existingIds = new Set(results.map((r) => r._id))
         const contentMatches = allActive.filter(

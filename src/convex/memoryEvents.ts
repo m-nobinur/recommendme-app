@@ -465,10 +465,31 @@ export const recoverStuckProcessingEvents = internalMutation({
     const threshold = args.staleThresholdMs ?? 10 * 60 * 1000
     const cutoff = Date.now() - threshold
 
-    const stuckEvents = await ctx.db
+    const staleByProcessingStart = await ctx.db
+      .query('memoryEvents')
+      .withIndex('by_status_processing_started', (q) =>
+        q.eq('status', 'processing').lt('processingStartedAt', cutoff)
+      )
+      .take(50)
+
+    const staleLegacyEvents = await ctx.db
       .query('memoryEvents')
       .withIndex('by_status_created', (q) => q.eq('status', 'processing').lt('createdAt', cutoff))
       .take(50)
+
+    const seen = new Set(staleByProcessingStart.map((event) => event._id))
+    const stuckEvents = [...staleByProcessingStart]
+    for (const event of staleLegacyEvents) {
+      if (event.processingStartedAt !== undefined) {
+        continue
+      }
+      if (!seen.has(event._id)) {
+        stuckEvents.push(event)
+      }
+      if (stuckEvents.length >= 50) {
+        break
+      }
+    }
 
     let recovered = 0
     for (const event of stuckEvents) {

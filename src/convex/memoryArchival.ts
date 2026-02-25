@@ -23,6 +23,7 @@ const MAX_PURGE_BATCH = 100
 const MAX_COMPRESS_GROUPS = 10
 const MIN_GROUP_SIZE_FOR_COMPRESSION = 3
 const MAX_ORPHAN_CLEANUP = 50
+const ORG_PAGE_SIZE = 100
 const TTL_MS_PER_DAY = 86_400_000
 const TTL_DAYS: Record<string, number | null> = {
   fact: 180,
@@ -45,24 +46,65 @@ const retrier = new ActionRetrier(components.actionRetrier, {
   maxFailures: 3,
 })
 
+async function listAllOrganizationIds(ctx: {
+  runQuery: (...args: any[]) => Promise<any>
+}): Promise<Id<'organizations'>[]> {
+  const orgIds: Id<'organizations'>[] = []
+  let cursor: string | null = null
+
+  do {
+    const page = await ctx.runQuery(internal.memoryDecay.listOrganizations, {
+      paginationOpts: {
+        numItems: ORG_PAGE_SIZE,
+        cursor,
+      },
+    })
+
+    for (const org of page.page) {
+      orgIds.push(org._id as Id<'organizations'>)
+    }
+
+    cursor = page.isDone ? null : page.continueCursor
+  } while (cursor)
+
+  return orgIds
+}
+
 /**
  * Fetch business memories in the archive decay range that are not yet archived.
  */
 export const getArchiveCandidates = internalQuery({
   args: { organizationId: v.id('organizations'), limit: v.number() },
   handler: async (ctx, args): Promise<Doc<'businessMemories'>[]> => {
-    const all = await ctx.db
-      .query('businessMemories')
-      .withIndex('by_org_active', (q) =>
-        q.eq('organizationId', args.organizationId).eq('isActive', true)
-      )
-      .take(args.limit * 5)
+    const matches: Doc<'businessMemories'>[] = []
+    let cursor: string | null = null
 
-    return all
-      .filter(
-        (m) => !m.isArchived && m.decayScore > EXPIRE_THRESHOLD && m.decayScore <= ARCHIVE_THRESHOLD
-      )
-      .slice(0, args.limit)
+    do {
+      const page = await ctx.db
+        .query('businessMemories')
+        .withIndex('by_org_active', (q) =>
+          q.eq('organizationId', args.organizationId).eq('isActive', true)
+        )
+        .paginate({
+          numItems: Math.min(Math.max(args.limit, 20), 100),
+          cursor,
+        })
+
+      for (const memory of page.page) {
+        if (
+          !memory.isArchived &&
+          memory.decayScore > EXPIRE_THRESHOLD &&
+          memory.decayScore <= ARCHIVE_THRESHOLD
+        ) {
+          matches.push(memory)
+          if (matches.length >= args.limit) break
+        }
+      }
+
+      cursor = page.isDone || matches.length >= args.limit ? null : page.continueCursor
+    } while (cursor)
+
+    return matches
   },
 })
 
@@ -78,8 +120,6 @@ export const getArchivedMemoriesBySubject = internalQuery({
     ctx,
     args
   ): Promise<{ subjectKey: string; memories: Doc<'businessMemories'>[] }[]> => {
-    // Use the by_org_archived index to fetch only archived memories directly,
-    // avoiding an in-memory post-filter over a large active-memory scan.
     const candidates = await ctx.db
       .query('businessMemories')
       .withIndex('by_org_archived', (q) =>
@@ -111,16 +151,34 @@ export const getPurgeCandidates = internalQuery({
   args: { organizationId: v.id('organizations'), limit: v.number() },
   handler: async (ctx, args): Promise<Doc<'businessMemories'>[]> => {
     const now = Date.now()
-    const all = await ctx.db
-      .query('businessMemories')
-      .withIndex('by_org_active', (q) =>
-        q.eq('organizationId', args.organizationId).eq('isActive', true)
-      )
-      .take(args.limit * 5)
+    const matches: Doc<'businessMemories'>[] = []
+    let cursor: string | null = null
 
-    return all
-      .filter((m) => m.decayScore <= EXPIRE_THRESHOLD || (m.expiresAt != null && m.expiresAt < now))
-      .slice(0, args.limit)
+    do {
+      const page = await ctx.db
+        .query('businessMemories')
+        .withIndex('by_org_active', (q) =>
+          q.eq('organizationId', args.organizationId).eq('isActive', true)
+        )
+        .paginate({
+          numItems: Math.min(Math.max(args.limit, 20), 100),
+          cursor,
+        })
+
+      for (const memory of page.page) {
+        if (
+          memory.decayScore <= EXPIRE_THRESHOLD ||
+          (memory.expiresAt != null && memory.expiresAt < now)
+        ) {
+          matches.push(memory)
+          if (matches.length >= args.limit) break
+        }
+      }
+
+      cursor = page.isDone || matches.length >= args.limit ? null : page.continueCursor
+    } while (cursor)
+
+    return matches
   },
 })
 
@@ -131,12 +189,29 @@ export const getHardDeleteCandidates = internalQuery({
   args: { organizationId: v.id('organizations'), limit: v.number() },
   handler: async (ctx, args): Promise<Doc<'businessMemories'>[]> => {
     const cutoff = Date.now() - HARD_DELETE_GRACE_MS
-    const all = await ctx.db
-      .query('businessMemories')
-      .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .take(args.limit * 5)
+    const matches: Doc<'businessMemories'>[] = []
+    let cursor: string | null = null
 
-    return all.filter((m) => !m.isActive && m.updatedAt < cutoff).slice(0, args.limit)
+    do {
+      const page = await ctx.db
+        .query('businessMemories')
+        .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
+        .paginate({
+          numItems: Math.min(Math.max(args.limit, 20), 100),
+          cursor,
+        })
+
+      for (const memory of page.page) {
+        if (!memory.isActive && memory.updatedAt < cutoff) {
+          matches.push(memory)
+          if (matches.length >= args.limit) break
+        }
+      }
+
+      cursor = page.isDone || matches.length >= args.limit ? null : page.continueCursor
+    } while (cursor)
+
+    return matches
   },
 })
 
@@ -321,9 +396,7 @@ export const insertConsolidatedMemory = internalMutation({
 export const archiveDecayedMemories = internalAction({
   args: {},
   handler: async (ctx): Promise<{ archived: number }> => {
-    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
-      internal.memoryDecay.getOrgsWithActiveMemories
-    )
+    const orgIds = await listAllOrganizationIds(ctx)
 
     let archived = 0
     for (const orgId of orgIds) {
@@ -458,9 +531,7 @@ export const compressArchivedMemories = internalAction({
       return { groupsCompressed: 0 }
     }
 
-    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
-      internal.memoryDecay.getOrgsWithActiveMemories
-    )
+    const orgIds = await listAllOrganizationIds(ctx)
 
     let groupsCompressed = 0
 
@@ -527,9 +598,7 @@ export const purgeExpiredMemories = internalAction({
   handler: async (
     ctx
   ): Promise<{ softDeleted: number; hardDeleted: number; orphansRemoved: number }> => {
-    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
-      internal.memoryDecay.getOrgsWithActiveMemories
-    )
+    const orgIds = await listAllOrganizationIds(ctx)
 
     let softDeleted = 0
     let hardDeleted = 0
@@ -599,9 +668,7 @@ export const lifecycleHealthCheck = internalAction({
     orphanedRelations: number
     checkedAt: number
   }> => {
-    const orgIds: Id<'organizations'>[] = await ctx.runQuery(
-      internal.memoryDecay.getOrgsWithActiveMemories
-    )
+    const orgIds = await listAllOrganizationIds(ctx)
 
     let archiveCandidatesTotal = 0
     let purgeCandidatesTotal = 0

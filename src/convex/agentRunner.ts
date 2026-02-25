@@ -11,6 +11,8 @@ import {
 import { assessAction } from './agentLogic/risk'
 import { callLLM, resolveLLMProvider } from './llmProvider'
 
+const ORG_EXECUTION_BATCH_SIZE = 10
+
 /**
  * Run the followup agent for all organizations that have it enabled.
  * Triggered by the daily cron job.
@@ -29,23 +31,46 @@ export const runFollowupAgent = internalAction({
     }
 
     let processed = 0
-    for (const def of enabledDefs) {
-      try {
-        await ctx.runAction(internal.agentRunner.runAgentForOrg, {
-          organizationId: def.organizationId,
-          agentType: 'followup',
-          triggerType: 'cron',
-        })
-        processed++
-      } catch (error) {
+    let skipped = 0
+    let failed = 0
+    let awaitingApproval = 0
+    for (let i = 0; i < enabledDefs.length; i += ORG_EXECUTION_BATCH_SIZE) {
+      const batch = enabledDefs.slice(i, i + ORG_EXECUTION_BATCH_SIZE)
+      const results = await Promise.allSettled(
+        batch.map((def) =>
+          ctx.runAction(internal.agentRunner.runAgentForOrg, {
+            organizationId: def.organizationId,
+            agentType: 'followup',
+            triggerType: 'cron',
+          })
+        )
+      )
+
+      for (const [index, result] of results.entries()) {
+        if (result.status === 'fulfilled') {
+          const runStatus = result.value.status
+          if (runStatus === 'completed') {
+            processed++
+          } else if (runStatus === 'skipped') {
+            skipped++
+          } else if (runStatus === 'awaiting_approval') {
+            awaitingApproval++
+          } else {
+            failed++
+          }
+          continue
+        }
+
+        const def = batch[index]
+        failed++
         console.error('[AgentRunner] Failed for org:', {
           organizationId: String(def.organizationId),
-          error: error instanceof Error ? error.message : 'Unknown',
+          error: result.reason instanceof Error ? result.reason.message : 'Unknown',
         })
       }
     }
 
-    return { processed }
+    return { processed, skipped, failed, awaitingApproval }
   },
 })
 
@@ -105,6 +130,7 @@ export const runAgentForOrg = internalAction({
         staleDaysThreshold: 3,
         targetStatuses: ['Contacted', 'Qualified', 'Proposal'],
         maxLeads: 20,
+        now: Date.now(),
       })
 
       if (leads.length === 0) {
@@ -322,21 +348,37 @@ export const getStaleLeads = internalQuery({
     staleDaysThreshold: v.number(),
     targetStatuses: v.array(v.string()),
     maxLeads: v.number(),
+    now: v.number(),
   },
   handler: async (ctx, args) => {
-    const cutoff = Date.now() - args.staleDaysThreshold * MS_PER_DAY
-    const now = Date.now()
+    const now = args.now
+    const cutoff = now - args.staleDaysThreshold * MS_PER_DAY
 
-    const allLeads = await ctx.db
-      .query('leads')
-      .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+    const perStatusCap = args.maxLeads * 3
 
-    return allLeads
+    const leadsByStatus = await Promise.all(
+      args.targetStatuses.map((status) =>
+        ctx.db
+          .query('leads')
+          .withIndex('by_org_status', (q) =>
+            q
+              .eq('organizationId', args.organizationId)
+              .eq(
+                'status',
+                status as 'New' | 'Contacted' | 'Qualified' | 'Proposal' | 'Booked' | 'Closed'
+              )
+          )
+          .take(perStatusCap)
+      )
+    )
+
+    return leadsByStatus
+      .flat()
       .filter((lead) => {
         const lastContact = lead.lastContact ?? lead.createdAt
-        return args.targetStatuses.includes(lead.status) && lastContact < cutoff
+        return lastContact < cutoff
       })
+      .sort((a, b) => (a.lastContact ?? a.createdAt) - (b.lastContact ?? b.createdAt))
       .slice(0, args.maxLeads)
       .map((lead) => ({
         id: lead._id,

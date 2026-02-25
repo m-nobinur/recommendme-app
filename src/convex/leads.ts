@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
-import type { Doc, Id } from './_generated/dataModel'
+import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
+import { assertUserInOrganization } from './lib/auth'
 
 const leadStatusValues = v.union(
   v.literal('New'),
@@ -10,21 +11,6 @@ const leadStatusValues = v.union(
   v.literal('Booked'),
   v.literal('Closed')
 )
-
-async function assertUserInOrganization(
-  ctx: {
-    db: {
-      get: (id: Id<'appUsers'>) => Promise<Doc<'appUsers'> | null>
-    }
-  },
-  userId: Id<'appUsers'>,
-  organizationId: Id<'organizations'>
-) {
-  const user = await ctx.db.get(userId)
-  if (!user || user.organizationId !== organizationId) {
-    throw new Error('Access denied for organization')
-  }
-}
 
 /**
  * Create a new lead

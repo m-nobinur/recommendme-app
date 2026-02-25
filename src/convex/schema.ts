@@ -76,7 +76,9 @@ export default defineSchema({
         nicheId: v.optional(v.string()),
       })
     ),
-  }).index('by_slug', ['slug']),
+  })
+    .index('by_slug', ['slug'])
+    .index('by_created', ['createdAt']),
 
   // ============================================
   // AUTHENTICATION: Application Users (Managed by Better Auth Component)
@@ -356,6 +358,7 @@ export default defineSchema({
     .index('by_org_agent', ['organizationId', 'agentType'])
     .index('by_org_agent_category', ['organizationId', 'agentType', 'category'])
     .index('by_org_agent_active', ['organizationId', 'agentType', 'isActive'])
+    .index('by_org_active', ['organizationId', 'isActive'])
     .vectorIndex('by_embedding', {
       vectorField: 'embedding',
       dimensions: 3072,
@@ -487,6 +490,7 @@ export default defineSchema({
     .index('by_org_idempotency', ['organizationId', 'idempotencyKey'])
     .index('by_type', ['eventType', 'processed'])
     .index('by_status_created', ['status', 'createdAt'])
+    .index('by_status_processing_started', ['status', 'processingStartedAt'])
     .index('by_created', ['createdAt']),
 
   // ============================================
@@ -505,7 +509,8 @@ export default defineSchema({
   })
     .index('by_org', ['organizationId'])
     .index('by_org_agent', ['organizationId', 'agentType'])
-    .index('by_org_enabled', ['organizationId', 'enabled']),
+    .index('by_org_enabled', ['organizationId', 'enabled'])
+    .index('by_agent_enabled', ['agentType', 'enabled']),
 
   // ============================================
   // AGENT FRAMEWORK: Executions

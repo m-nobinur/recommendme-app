@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
-import type { Doc, Id } from './_generated/dataModel'
+import type { Doc } from './_generated/dataModel'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
+import { assertUserInOrganization } from './lib/auth'
 
 const agentTypeValues = v.union(
   v.literal('followup'),
@@ -13,18 +14,9 @@ const triggerTypeValues = v.union(v.literal('cron'), v.literal('event'), v.liter
 
 const riskLevelValues = v.union(v.literal('low'), v.literal('medium'), v.literal('high'))
 
-async function assertUserInOrganization(
-  ctx: {
-    db: {
-      get: (id: Id<'appUsers'>) => Promise<Doc<'appUsers'> | null>
-    }
-  },
-  userId: Id<'appUsers'>,
-  organizationId: Id<'organizations'>
-) {
-  const user = await ctx.db.get(userId)
-  if (!user || user.organizationId !== organizationId) {
-    throw new Error('Access denied for organization')
+function assertUserCanManageAgents(user: Doc<'appUsers'>) {
+  if (user.role !== 'owner' && user.role !== 'admin') {
+    throw new Error('Only organization owners/admins can manage agents')
   }
 }
 
@@ -39,7 +31,8 @@ export const create = mutation({
     settings: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    const user = await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    assertUserCanManageAgents(user)
 
     const existing = await ctx.db
       .query('agentDefinitions')
@@ -116,7 +109,8 @@ export const update = mutation({
     settings: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
-    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    const user = await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    assertUserCanManageAgents(user)
 
     const existing = await ctx.db.get(args.id)
     if (!existing || existing.organizationId !== args.organizationId) {
@@ -141,7 +135,8 @@ export const toggle = mutation({
     organizationId: v.id('organizations'),
   },
   handler: async (ctx, args) => {
-    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    const user = await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    assertUserCanManageAgents(user)
 
     const existing = await ctx.db.get(args.id)
     if (!existing || existing.organizationId !== args.organizationId) {
@@ -157,19 +152,21 @@ export const toggle = mutation({
 })
 
 export const listEnabledByType = internalQuery({
-  args: { agentType: v.string() },
+  args: { agentType: agentTypeValues },
   handler: async (ctx, args) => {
-    const all = await ctx.db.query('agentDefinitions').collect()
-    return all.filter((d: Doc<'agentDefinitions'>) => d.agentType === args.agentType && d.enabled)
+    return await ctx.db
+      .query('agentDefinitions')
+      .withIndex('by_agent_enabled', (q) => q.eq('agentType', args.agentType).eq('enabled', true))
+      .collect()
   },
 })
 
 export const ensureExists = internalMutation({
   args: {
     organizationId: v.id('organizations'),
-    agentType: v.string(),
-    triggerType: v.string(),
-    riskLevel: v.string(),
+    agentType: agentTypeValues,
+    triggerType: triggerTypeValues,
+    riskLevel: riskLevelValues,
     settings: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -187,8 +184,8 @@ export const ensureExists = internalMutation({
       organizationId: args.organizationId,
       agentType: args.agentType,
       enabled: true,
-      triggerType: args.triggerType as 'cron' | 'event' | 'manual',
-      riskLevel: args.riskLevel as 'low' | 'medium' | 'high',
+      triggerType: args.triggerType,
+      riskLevel: args.riskLevel,
       settings: args.settings,
       createdAt: now,
       updatedAt: now,

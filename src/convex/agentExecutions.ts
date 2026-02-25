@@ -1,6 +1,7 @@
 import { v } from 'convex/values'
-import type { Doc, Id } from './_generated/dataModel'
+import type { Doc } from './_generated/dataModel'
 import { internalMutation, internalQuery, query } from './_generated/server'
+import { assertUserInOrganization } from './lib/auth'
 
 const executionStatusValues = v.union(
   v.literal('pending'),
@@ -20,25 +21,9 @@ const ACTIVE_STATUSES = new Set([
   'planning',
   'risk_assessing',
   'executing',
-  'awaiting_approval',
 ])
 
 const EXECUTION_LOCK_TTL_MS = 90 * 60 * 1000
-
-async function assertUserInOrganization(
-  ctx: {
-    db: {
-      get: (id: Id<'appUsers'>) => Promise<Doc<'appUsers'> | null>
-    }
-  },
-  userId: Id<'appUsers'>,
-  organizationId: Id<'organizations'>
-) {
-  const user = await ctx.db.get(userId)
-  if (!user || user.organizationId !== organizationId) {
-    throw new Error('Access denied for organization')
-  }
-}
 
 export const create = internalMutation({
   args: {
@@ -116,13 +101,43 @@ export const createIfNotRunning = internalMutation({
       createdAt: now,
     })
 
-    await ctx.db.insert('agentExecutionLocks', {
+    const lockId = await ctx.db.insert('agentExecutionLocks', {
       organizationId: args.organizationId,
       agentType: args.agentType,
       executionId,
       acquiredAt: now,
       expiresAt: now + EXECUTION_LOCK_TTL_MS,
     })
+
+    const competingLocks = await ctx.db
+      .query('agentExecutionLocks')
+      .withIndex('by_org_agent', (q) =>
+        q.eq('organizationId', args.organizationId).eq('agentType', args.agentType)
+      )
+      .collect()
+
+    if (competingLocks.length > 1) {
+      const primary = [...competingLocks].sort((a, b) => {
+        if (a.acquiredAt !== b.acquiredAt) return a.acquiredAt - b.acquiredAt
+        return String(a._id).localeCompare(String(b._id))
+      })[0]
+
+      if (primary && primary._id !== lockId) {
+        await ctx.db.delete(lockId)
+        await ctx.db.patch(executionId, {
+          status: 'skipped',
+          completedAt: Date.now(),
+          durationMs: 0,
+          error: 'Skipped due to concurrent execution lock contention',
+        })
+
+        return {
+          skipped: true as const,
+          reason: 'already_running' as const,
+          executionId: primary.executionId,
+        }
+      }
+    }
 
     return {
       skipped: false as const,
