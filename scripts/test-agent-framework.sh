@@ -45,7 +45,7 @@ fi
 header "Unit Tests"
 
 info "Running agent framework unit tests..."
-TEST_OUTPUT=$(bun test src/lib/ai/agents/ 2>&1)
+TEST_OUTPUT=$(bun test src/lib/ai/agents/ src/convex/agentExecutions.test.ts src/convex/agentLogic/followup.test.ts 2>&1)
 TEST_EXIT=$?
 
 if [[ $TEST_EXIT -eq 0 ]]; then
@@ -77,6 +77,9 @@ assert_file_contains "src/convex/schema.ts" "by_org_agent_status" \
 
 assert_file_contains "src/convex/schema.ts" "by_org_enabled" \
   "by_org_enabled index defined for agentDefinitions"
+
+assert_file_contains "src/convex/schema.ts" "by_agent_enabled" \
+  "by_agent_enabled index defined for global enabled-by-type lookups"
 
 # ── 4. Cron Wiring ───────────────────────────────────────────
 
@@ -265,6 +268,9 @@ assert_file_contains "src/convex/agentRunner.ts" "Lead does not belong to this o
 
 assert_file_contains "src/lib/ai/agents/followup/tools.ts" "asOrganizationId(context.organizationId)" \
   "followup tools pass organizationId to secured lead mutations"
+
+assert_file_contains "src/convex/agentDefinitions.ts" "Only organization owners/admins can manage agents" \
+  "agentDefinitions mutations enforce owner/admin role for agent management"
 
 # ── Results ───────────────────────────────────────────────────
 

@@ -4,8 +4,6 @@ import { allocateTokenBudget, estimateTokens, resetTokenBudgetConfig } from './t
 
 describe('tokenBudget', () => {
   beforeEach(() => {
-    // Reset the resolved config cache between tests to prevent cross-test pollution
-    // from environment variables read at module load time.
     resetTokenBudgetConfig()
   })
 
