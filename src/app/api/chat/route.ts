@@ -12,6 +12,11 @@ import {
 import { ConvexHttpClient } from 'convex/browser'
 import { after } from 'next/server'
 import { getChatConfig, getFeatureFlags, getPerformanceConfig } from '@/lib/ai/config'
+import {
+  buildConversationWindow,
+  formatSummaryForPrompt,
+} from '@/lib/ai/memory/conversationSummary'
+import { retrieveMemoryContext } from '@/lib/ai/memory/retrieval'
 import { getSystemPrompt } from '@/lib/ai/prompts/system'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers'
 import { createAIProvider, isValidProvider, isValidTier } from '@/lib/ai/providers'
@@ -20,8 +25,6 @@ import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
 import { HTTP_STATUS, LIMITS } from '@/lib/constants'
-import { buildConversationWindow, formatSummaryForPrompt } from '@/lib/memory/conversationSummary'
-import { retrieveMemoryContext } from '@/lib/memory/retrieval'
 
 interface PersistedToolCall {
   id: string
@@ -400,7 +403,10 @@ export async function POST(req: Request) {
                   eventType: 'conversation_end' as const,
                   sourceType: 'message' as const,
                   sourceId: validConversationId,
-                  idempotencyKey: `${validConversationId}:conversation_end`,
+                  // Include the last user message ID to scope this key to the current turn.
+                  // Without this, only the first turn's conversation_end event would be stored
+                  // for any given conversation — all subsequent turns would be silently deduped.
+                  idempotencyKey: `${validConversationId}:conversation_end:${lastUserMessage?.id ?? Date.now()}`,
                   data: {
                     type: 'conversation_end' as const,
                     conversationId: validConversationId,
@@ -808,7 +814,8 @@ function dedupeMemorySignals(signals: NormalizedMemorySignal[]): NormalizedMemor
   const deduped: NormalizedMemorySignal[] = []
 
   for (const signal of signals) {
-    const key = `${signal.eventType}:${signal.sourceId}:${JSON.stringify(signal.data)}`
+    // Sort keys before stringifying to ensure a deterministic key regardless of object property order.
+    const key = `${signal.eventType}:${signal.sourceId}:${JSON.stringify(signal.data, Object.keys(signal.data).sort())}`
     if (seen.has(key)) {
       continue
     }
