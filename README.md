@@ -78,6 +78,7 @@ Create a `.env.local` file with the following variables:
 # Convex (required)
 NEXT_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
 CONVEX_DEPLOYMENT=your-deployment-name
+MEMORY_API_TOKEN=replace-with-random-secret
 
 # Authentication (required)
 BETTER_AUTH_SECRET=your-secret-key-at-least-32-characters-long
@@ -133,12 +134,35 @@ AI_DEBUG=true                        # Auto-enabled in development
 
 All AI settings are optional with sensible defaults. The application will work out-of-the-box with just the provider API keys.
 
+### Memory API Token (Required in Production)
+
+`MEMORY_API_TOKEN` protects public Convex memory retrieval/event endpoints.
+
+- Generate a token:
+
+   ```bash
+   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+- Set the same value in:
+   - `.env.local` as `MEMORY_API_TOKEN=...`
+   - Convex env:
+
+      ```bash
+      npx convex env set MEMORY_API_TOKEN 'your-token'
+      ```
+
+- Behavior:
+   - Production: token is required (fail-closed)
+   - Development: if missing, access is allowed only when `DISABLE_AUTH_IN_DEV=true`; otherwise requests fail closed
+
 ### Getting API Keys
 
 | Provider              | How to Get                                                      |
 | --------------------- | --------------------------------------------------------------- |
 | **Convex**            | Run `bun dev` and follow prompts on first run                   |
 | **better-auth**       | Generate with `openssl rand -base64 32`                         |
+| **Memory API Token**  | Generate with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | **Google Gemini**     | Get key from [Google AI Studio](https://aistudio.google.com/)   |
 | **OpenAI**            | Sign up at [platform.openai.com](https://platform.openai.com/)  |
 | **OpenRouter**        | Sign up at [openrouter.ai](https://openrouter.ai/)              |

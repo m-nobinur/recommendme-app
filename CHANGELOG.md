@@ -77,12 +77,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ConvexHttpClient reuse: tools share the route's singleton client instead of creating new ones
 - Shared test infrastructure in `scripts/lib/test-helpers.sh` extracted from 4 test scripts
 
-#### Memory Industry Hardening (Phases 7-9)
+#### Memory Hardening Foundations
 - Hybrid dedup optimization: business hybrid search reuses precomputed vector results (no duplicate business vector query)
 - Route-level latency improvement: optional niche lookup no longer blocks memory retrieval startup
 - Configurable short-TTL caches for memory retrieval + embeddings behind `AI_ENABLE_CACHING`
 - Memory event idempotency with `idempotencyKey` + `by_org_idempotency` index to prevent duplicate ingestion
 - Event processing state machine (`pending`/`processing`/`processed`/`failed`) with retry counts and dead-letter storage
+- Public memory retrieval/event surfaces are token-gated via `MEMORY_API_TOKEN` (with explicit dev bypass)
+- `memoryEvents.listByType` is organization-scoped to prevent cross-tenant reads
+- Extraction handlers added for `user_correction`, `explicit_instruction`, `approval_*`, and `feedback` events
 - TTL consistency for versioned/superseded/consolidated business memory writes
 - Added memory compression + lifecycle health-check crons
 - Added memory unit tests and CI memory smoke gate
