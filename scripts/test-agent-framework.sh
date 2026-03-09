@@ -45,7 +45,7 @@ fi
 header "Unit Tests"
 
 info "Running agent framework unit tests..."
-TEST_OUTPUT=$(bun test src/lib/ai/agents/ src/convex/agentExecutions.test.ts src/convex/agentLogic/followup.test.ts 2>&1)
+TEST_OUTPUT=$(bun test src/lib/ai/agents/ src/convex/agentExecutions.test.ts src/convex/agentRunner.reminder.test.ts src/convex/appointments.test.ts src/convex/agentLogic/followup.test.ts src/convex/agentLogic/reminder.test.ts 2>&1)
 TEST_EXIT=$?
 
 if [[ $TEST_EXIT -eq 0 ]]; then

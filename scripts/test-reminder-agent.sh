@@ -307,6 +307,154 @@ assert_file_contains "src/convex/agentLogic/index.ts" \
   "reminder" \
   "agentLogic/index.ts re-exports reminder module"
 
+# ── 13. Runtime Validation (Plan Validator) ───────────────────
+
+header "Plan Validator Edge Cases"
+
+VALIDATOR_SCRIPT='
+const { validateReminderPlan } = require("./src/convex/agentLogic/reminder");
+
+function test(name, fn) {
+  try {
+    fn();
+    console.log("PASS:" + name);
+  } catch (e) {
+    console.log("FAIL:" + name + ":" + e.message);
+  }
+}
+
+test("valid plan", () => {
+  const plan = validateReminderPlan({
+    actions: [{ type: "update_appointment_notes", target: "abc", params: { notes: "hi" }, riskLevel: "low", reasoning: "test" }],
+    summary: "ok",
+    reasoning: "ok"
+  });
+  if (plan.actions.length !== 1) throw new Error("expected 1 action");
+});
+
+test("empty actions array", () => {
+  const plan = validateReminderPlan({ actions: [], summary: "", reasoning: "" });
+  if (plan.actions.length !== 0) throw new Error("expected 0 actions");
+});
+
+test("missing actions throws", () => {
+  try { validateReminderPlan({}); throw new Error("should have thrown"); }
+  catch (e) { if (!e.message.includes("actions")) throw e; }
+});
+
+test("null input throws", () => {
+  try { validateReminderPlan(null); throw new Error("should have thrown"); }
+  catch (e) { if (!e.message.includes("object")) throw e; }
+});
+
+test("invalid riskLevel defaults to low", () => {
+  const plan = validateReminderPlan({
+    actions: [{ type: "x", target: "y", params: {}, riskLevel: "extreme", reasoning: "" }],
+    summary: "", reasoning: ""
+  });
+  if (plan.actions[0].riskLevel !== "low") throw new Error("expected low");
+});
+
+test("missing params defaults to empty object", () => {
+  const plan = validateReminderPlan({
+    actions: [{ type: "x", target: "y", riskLevel: "low", reasoning: "" }],
+    summary: "", reasoning: ""
+  });
+  if (typeof plan.actions[0].params !== "object") throw new Error("expected object");
+});
+'
+
+VALIDATOR_EXIT=0
+if command -v bun > /dev/null 2>&1; then
+  VALIDATOR_OUTPUT=$(cd "$SCRIPT_DIR/.." && bun --eval "$VALIDATOR_SCRIPT" 2>&1)
+  VALIDATOR_EXIT=$?
+elif command -v node > /dev/null 2>&1; then
+  VALIDATOR_OUTPUT=$(cd "$SCRIPT_DIR/.." && node --eval "$VALIDATOR_SCRIPT" 2>&1)
+  VALIDATOR_EXIT=$?
+else
+  VALIDATOR_OUTPUT=""
+  warn "Neither bun nor node available — skipping plan validator runtime tests"
+fi
+
+if [ -n "$VALIDATOR_OUTPUT" ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      PASS:*) ok "Validator: ${line#PASS:}" ;;
+      FAIL:*) err "Validator: ${line#FAIL:}" ;;
+    esac
+  done <<< "$VALIDATOR_OUTPUT"
+fi
+
+if [ "$VALIDATOR_EXIT" -ne 0 ]; then
+  err "Validator runtime execution failed (exit ${VALIDATOR_EXIT})"
+fi
+
+# ── 14. Behavioral Contracts ─────────────────────────────────
+
+header "Behavioral Contracts"
+
+assert_file_contains "src/lib/ai/agents/reminder/tools.ts" \
+  "Appended reminder note" \
+  "tools.ts: executeUpdateLeadNotes appends (not replaces)"
+
+assert_file_contains "src/lib/ai/agents/reminder/tools.ts" \
+  "Skipped empty notes" \
+  "tools.ts: executeUpdateLeadNotes skips empty notes"
+
+assert_file_contains "src/convex/agentRunner.ts" \
+  "Number.isNaN" \
+  "agentRunner.ts: hoursUntil guards against NaN"
+
+assert_file_contains "src/convex/agentRunner.ts" \
+  "Skipped: empty notes" \
+  "agentRunner.ts: execution skips empty notes"
+
+assert_file_contains "src/convex/agentRunner.ts" \
+  "LEARNING_DEDUP_WINDOW_MS" \
+  "agentRunner.ts: learning dedup window defined"
+
+assert_file_contains "src/lib/ai/agents/reminder/prompt.ts" \
+  "a.leadId" \
+  "prompt adapter uses actual leadId from context"
+
+assert_file_contains "src/lib/ai/agents/reminder/prompt.ts" \
+  "a.hoursUntil" \
+  "prompt adapter uses actual hoursUntil from context"
+
+assert_file_contains "src/lib/ai/agents/reminder/prompt.ts" \
+  "a.notes" \
+  "prompt adapter uses actual notes from context"
+
+assert_file_contains "src/convex/agentLogic/types.ts" \
+  "hoursUntil" \
+  "AppointmentSummary includes hoursUntil field"
+
+assert_file_contains "src/convex/agentLogic/types.ts" \
+  "leadId" \
+  "AppointmentSummary includes leadId field"
+
+# ── 15. DRY Runner ───────────────────────────────────────────
+
+header "DRY Runner"
+
+assert_file_contains "src/convex/agentRunner.ts" \
+  "runAgentBatch" \
+  "agentRunner uses shared runAgentBatch helper"
+
+if grep -c "runAgentBatch" src/convex/agentRunner.ts 2>/dev/null | grep -q "[3-9]"; then
+  ok "runAgentBatch used by both followup and reminder runners"
+else
+  err "runAgentBatch not shared across both agent runners"
+fi
+
+# ── 16. Handler Documentation ────────────────────────────────
+
+header "Handler Path Documentation"
+
+assert_file_contains "src/lib/ai/agents/reminder/handler.ts" \
+  "PRODUCTION NOTE" \
+  "Handler path has production usage documentation"
+
 # ── Results ────────────────────────────────────────────────────
 
 print_results
