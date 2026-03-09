@@ -1,6 +1,6 @@
 import { validateReminderPlan } from '@convex/agentLogic/reminder'
 import type { ConvexHttpClient } from 'convex/browser'
-import { asOrganizationId, getApi } from '../../shared/convex'
+import { asAppUserId, asOrganizationId, getApi } from '../../shared/convex'
 import type { AgentConfig } from '../core/config'
 import type { AgentHandler } from '../core/handler'
 import { recordLearning } from '../core/memory'
@@ -20,6 +20,16 @@ import { executeReminderAction } from './tools'
 
 const MS_PER_HOUR = 3_600_000
 
+/**
+ * Next.js-side handler for the Reminder Agent.
+ *
+ * PRODUCTION NOTE: The daily cron executes via the Convex-side path in
+ * `agentRunner.ts`, not through this handler. This class exists as a
+ * future-ready scaffold for API-route or manual triggers that need to run
+ * the agent pipeline outside of Convex (e.g., via `runAgentPipeline`).
+ * Both paths share the same prompt builder, plan validator, and config
+ * from `@convex/agentLogic/reminder`.
+ */
 export class ReminderHandler implements AgentHandler {
   readonly agentType: AgentType = 'reminder'
   readonly config: AgentConfig = REMINDER_CONFIG
@@ -39,6 +49,7 @@ export class ReminderHandler implements AgentHandler {
     const windowEnd = now + maxWindowHours * MS_PER_HOUR
 
     const allAppointments = await convex.query(api.appointments.list, {
+      userId: asAppUserId(userId),
       organizationId: asOrganizationId(organizationId),
     })
 
@@ -52,10 +63,13 @@ export class ReminderHandler implements AgentHandler {
         const status = String(a.status)
         const date = String(a.date)
         const notes = a.notes ? String(a.notes) : ''
+        const time = String(a.time)
+        const appointmentTime = Date.parse(`${date}T${time}:00Z`)
         return (
           status === 'scheduled' &&
           date >= todayStr &&
           date <= windowEndStr &&
+          appointmentTime > now &&
           !notes.includes('[Reminder')
         )
       })
@@ -63,29 +77,27 @@ export class ReminderHandler implements AgentHandler {
       .map((a: Record<string, unknown>) => {
         const dateStr = String(a.date)
         const timeStr = String(a.time)
-        const apptTime = new Date(`${dateStr}T${timeStr}:00`).getTime()
-        const hoursUntil = Math.max(0, Math.round((apptTime - now) / MS_PER_HOUR))
+        const apptTime = Date.parse(`${dateStr}T${timeStr}:00Z`)
+        const rawHours = Math.round((apptTime - now) / MS_PER_HOUR)
+        const hoursUntil = Number.isNaN(rawHours) ? 0 : Math.max(0, rawHours)
 
         return {
           id: String(a._id),
+          leadId: String(a.leadId),
           leadName: String(a.leadName),
           date: dateStr,
           time: timeStr,
           title: a.title ? String(a.title) : undefined,
+          notes: a.notes ? String(a.notes) : undefined,
           status: String(a.status),
           hoursUntil,
         }
       })
 
-    const leadIds = new Set<string>()
-    for (const a of allAppointments) {
-      if (upcomingAppointments.some((u) => u.id === String(a._id))) {
-        leadIds.add(String(a.leadId))
-      }
-    }
+    const leadIds = new Set(upcomingAppointments.map((appointment) => appointment.leadId))
 
     const allLeads = await convex.query(api.leads.list, {
-      userId: undefined as never,
+      userId: asAppUserId(userId),
       organizationId: asOrganizationId(organizationId),
     })
 

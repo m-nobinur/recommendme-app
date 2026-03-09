@@ -71,6 +71,9 @@ export interface AppointmentSummary {
   time: string
   title?: string
   status: string
+  leadId?: string
+  notes?: string
+  hoursUntil?: number
 }
 
 export interface AgentMemorySummary {

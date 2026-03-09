@@ -66,6 +66,7 @@ export class FollowupHandler implements AgentHandler {
       })
 
     const appointments = await convex.query(api.appointments.list, {
+      userId: asAppUserId(userId),
       organizationId: asOrganizationId(organizationId),
     })
 

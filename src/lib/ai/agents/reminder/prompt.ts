@@ -17,17 +17,21 @@ import { buildReminderUserPromptFromData } from '@convex/agentLogic/reminder'
  * Next.js-side handler to the plain-data args the shared builder expects.
  */
 export function buildReminderUserPrompt(context: AgentContext): string {
+  const now = context.timestamp
+
   return buildReminderUserPromptFromData(
     context.appointments.map((a) => ({
       id: a.id,
-      leadId: '',
+      leadId: a.leadId ?? '',
       leadName: a.leadName,
       date: a.date,
       time: a.time,
       title: a.title,
-      notes: undefined,
+      notes: a.notes,
       status: a.status,
-      hoursUntil: 0,
+      hoursUntil:
+        a.hoursUntil ??
+        Math.max(0, Math.round((Date.parse(`${a.date}T${a.time}:00Z`) - now) / 3_600_000)),
     })),
     context.leads.map((l) => ({
       id: l.id,

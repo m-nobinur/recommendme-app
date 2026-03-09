@@ -10,135 +10,237 @@ import {
 } from './agentLogic/followup'
 import {
   buildReminderUserPromptFromData,
+  DEFAULT_REMINDER_SETTINGS,
   REMINDER_CONFIG,
   REMINDER_SYSTEM_PROMPT,
+  type ReminderAgentSettings,
   validateReminderPlan,
 } from './agentLogic/reminder'
 import { assessAction } from './agentLogic/risk'
 import { callLLM, resolveLLMProvider } from './llmProvider'
 
 const ORG_EXECUTION_BATCH_SIZE = 10
+const MIN_REMINDER_WINDOW_HOURS = 1
+const MAX_REMINDER_WINDOW_HOURS = 168
+const MIN_REMINDER_BATCH_SIZE = 1
+const MAX_REMINDER_BATCH_SIZE = 100
 
-/**
- * Run the followup agent for all organizations that have it enabled.
- * Triggered by the daily cron job.
- */
+type PlannedAction = {
+  type: string
+  target: string
+  params: Record<string, unknown>
+  riskLevel: 'low' | 'medium' | 'high'
+  reasoning: string
+}
+
+type RejectedAction = {
+  type: string
+  target: string
+  reason: string
+}
+
+type ApprovedAction = {
+  type: string
+  target: string
+  params: Record<string, unknown>
+  riskLevel: 'low' | 'medium' | 'high'
+  reasoning: string
+}
+
+type ReviewedActions = {
+  approved: ApprovedAction[]
+  rejectedByPolicy: RejectedAction[]
+  rejectedForApproval: RejectedAction[]
+}
+
+type ExecutionOutcome = {
+  status: 'completed' | 'awaiting_approval' | 'failed'
+  error?: string
+}
+
+export function determineExecutionOutcome({
+  failureCount,
+  rejectedForApprovalCount,
+}: {
+  failureCount: number
+  rejectedForApprovalCount: number
+}): ExecutionOutcome {
+  if (failureCount > 0) {
+    return {
+      status: 'failed',
+      error: `${failureCount} action(s) failed during execution`,
+    }
+  }
+
+  if (rejectedForApprovalCount > 0) {
+    return { status: 'awaiting_approval' }
+  }
+
+  return { status: 'completed' }
+}
+
+export function sanitizeReminderSettings(raw: unknown): ReminderAgentSettings {
+  const fallback = DEFAULT_REMINDER_SETTINGS
+
+  if (!raw || typeof raw !== 'object') {
+    return fallback
+  }
+
+  const settings = raw as Record<string, unknown>
+  const reminderWindowHours = Array.isArray(settings.reminderWindowHours)
+    ? settings.reminderWindowHours
+        .map((value) => Number(value))
+        .filter(
+          (value) =>
+            Number.isFinite(value) &&
+            value >= MIN_REMINDER_WINDOW_HOURS &&
+            value <= MAX_REMINDER_WINDOW_HOURS
+        )
+    : []
+
+  const uniqueWindows = [...new Set(reminderWindowHours)].sort((a, b) => a - b)
+  const maxAppointmentsPerBatch = Number(settings.maxAppointmentsPerBatch)
+
+  return {
+    reminderWindowHours:
+      uniqueWindows.length > 0 ? uniqueWindows : [...fallback.reminderWindowHours],
+    maxAppointmentsPerBatch:
+      Number.isFinite(maxAppointmentsPerBatch) &&
+      maxAppointmentsPerBatch >= MIN_REMINDER_BATCH_SIZE &&
+      maxAppointmentsPerBatch <= MAX_REMINDER_BATCH_SIZE
+        ? Math.floor(maxAppointmentsPerBatch)
+        : fallback.maxAppointmentsPerBatch,
+  }
+}
+
+export function reviewPlannedActions(
+  actions: PlannedAction[],
+  guardrails: {
+    allowedActions: string[]
+    maxActionsPerRun: number
+    riskOverrides: Record<string, 'low' | 'medium' | 'high'>
+    requireApprovalAbove: 'low' | 'medium' | 'high'
+  },
+  agentType: 'followup' | 'reminder'
+): ReviewedActions {
+  const approved: ApprovedAction[] = []
+  const rejectedByPolicy: RejectedAction[] = []
+  const rejectedForApproval: RejectedAction[] = []
+  const boundedActions = actions.slice(0, guardrails.maxActionsPerRun)
+  const reminderDedupeKeys = new Set<string>()
+
+  for (const action of boundedActions) {
+    if (!guardrails.allowedActions.includes(action.type)) {
+      rejectedByPolicy.push({
+        type: action.type,
+        target: action.target,
+        reason: 'Action not in allowed list',
+      })
+      continue
+    }
+
+    if (agentType === 'reminder') {
+      const dedupeKey = `${action.type}:${action.target}`
+      if (reminderDedupeKeys.has(dedupeKey)) {
+        rejectedByPolicy.push({
+          type: action.type,
+          target: action.target,
+          reason: 'Duplicate reminder action for the same target',
+        })
+        continue
+      }
+      reminderDedupeKeys.add(dedupeKey)
+    }
+
+    const assessment = assessAction(action, guardrails)
+    if (!assessment.approved) {
+      rejectedForApproval.push({
+        type: action.type,
+        target: action.target,
+        reason: assessment.reason ?? `Risk level '${assessment.assessedRisk}' requires approval`,
+      })
+      continue
+    }
+
+    approved.push({
+      type: action.type,
+      target: action.target,
+      params: action.params,
+      riskLevel: assessment.assessedRisk,
+      reasoning: action.reasoning,
+    })
+  }
+
+  return { approved, rejectedByPolicy, rejectedForApproval }
+}
+
+type AgentBatchCounters = {
+  processed: number
+  skipped: number
+  failed: number
+  awaitingApproval: number
+}
+
+async function runAgentBatch(
+  ctx: { runQuery: any; runAction: any },
+  agentType: 'followup' | 'reminder'
+): Promise<AgentBatchCounters> {
+  const enabledDefs: Doc<'agentDefinitions'>[] = await ctx.runQuery(
+    internal.agentDefinitions.listEnabledByType,
+    { agentType }
+  )
+
+  if (enabledDefs.length === 0) {
+    console.log(`[AgentRunner] No enabled ${agentType} agents found`)
+    return { processed: 0, skipped: 0, failed: 0, awaitingApproval: 0 }
+  }
+
+  const counters: AgentBatchCounters = { processed: 0, skipped: 0, failed: 0, awaitingApproval: 0 }
+
+  for (let i = 0; i < enabledDefs.length; i += ORG_EXECUTION_BATCH_SIZE) {
+    const batch = enabledDefs.slice(i, i + ORG_EXECUTION_BATCH_SIZE)
+    const results = await Promise.allSettled(
+      batch.map((def) =>
+        ctx.runAction(internal.agentRunner.runAgentForOrg, {
+          organizationId: def.organizationId,
+          agentType,
+          triggerType: 'cron',
+          reminderSettings:
+            agentType === 'reminder' ? sanitizeReminderSettings(def.settings) : undefined,
+        })
+      )
+    )
+
+    for (const [index, result] of results.entries()) {
+      if (result.status === 'fulfilled') {
+        const runStatus = result.value.status
+        if (runStatus === 'completed') counters.processed++
+        else if (runStatus === 'skipped') counters.skipped++
+        else if (runStatus === 'awaiting_approval') counters.awaitingApproval++
+        else counters.failed++
+        continue
+      }
+
+      const def = batch[index]
+      counters.failed++
+      console.error(`[AgentRunner] ${agentType} failed for org:`, {
+        organizationId: String(def.organizationId),
+        error: result.reason instanceof Error ? result.reason.message : 'Unknown',
+      })
+    }
+  }
+
+  return counters
+}
+
 export const runFollowupAgent = internalAction({
   args: {},
-  handler: async (ctx) => {
-    const enabledDefs: Doc<'agentDefinitions'>[] = await ctx.runQuery(
-      internal.agentDefinitions.listEnabledByType,
-      { agentType: 'followup' }
-    )
-
-    if (enabledDefs.length === 0) {
-      console.log('[AgentRunner] No enabled followup agents found')
-      return { processed: 0 }
-    }
-
-    let processed = 0
-    let skipped = 0
-    let failed = 0
-    let awaitingApproval = 0
-    for (let i = 0; i < enabledDefs.length; i += ORG_EXECUTION_BATCH_SIZE) {
-      const batch = enabledDefs.slice(i, i + ORG_EXECUTION_BATCH_SIZE)
-      const results = await Promise.allSettled(
-        batch.map((def) =>
-          ctx.runAction(internal.agentRunner.runAgentForOrg, {
-            organizationId: def.organizationId,
-            agentType: 'followup',
-            triggerType: 'cron',
-          })
-        )
-      )
-
-      for (const [index, result] of results.entries()) {
-        if (result.status === 'fulfilled') {
-          const runStatus = result.value.status
-          if (runStatus === 'completed') {
-            processed++
-          } else if (runStatus === 'skipped') {
-            skipped++
-          } else if (runStatus === 'awaiting_approval') {
-            awaitingApproval++
-          } else {
-            failed++
-          }
-          continue
-        }
-
-        const def = batch[index]
-        failed++
-        console.error('[AgentRunner] Failed for org:', {
-          organizationId: String(def.organizationId),
-          error: result.reason instanceof Error ? result.reason.message : 'Unknown',
-        })
-      }
-    }
-
-    return { processed, skipped, failed, awaitingApproval }
-  },
+  handler: async (ctx) => runAgentBatch(ctx, 'followup'),
 })
 
-/**
- * Run the reminder agent for all organizations that have it enabled.
- * Triggered by the daily cron job.
- */
 export const runReminderAgent = internalAction({
   args: {},
-  handler: async (ctx) => {
-    const enabledDefs: Doc<'agentDefinitions'>[] = await ctx.runQuery(
-      internal.agentDefinitions.listEnabledByType,
-      { agentType: 'reminder' }
-    )
-
-    if (enabledDefs.length === 0) {
-      console.log('[AgentRunner] No enabled reminder agents found')
-      return { processed: 0 }
-    }
-
-    let processed = 0
-    let skipped = 0
-    let failed = 0
-    let awaitingApproval = 0
-    for (let i = 0; i < enabledDefs.length; i += ORG_EXECUTION_BATCH_SIZE) {
-      const batch = enabledDefs.slice(i, i + ORG_EXECUTION_BATCH_SIZE)
-      const results = await Promise.allSettled(
-        batch.map((def) =>
-          ctx.runAction(internal.agentRunner.runAgentForOrg, {
-            organizationId: def.organizationId,
-            agentType: 'reminder',
-            triggerType: 'cron',
-          })
-        )
-      )
-
-      for (const [index, result] of results.entries()) {
-        if (result.status === 'fulfilled') {
-          const runStatus = result.value.status
-          if (runStatus === 'completed') {
-            processed++
-          } else if (runStatus === 'skipped') {
-            skipped++
-          } else if (runStatus === 'awaiting_approval') {
-            awaitingApproval++
-          } else {
-            failed++
-          }
-          continue
-        }
-
-        const def = batch[index]
-        failed++
-        console.error('[AgentRunner] Reminder failed for org:', {
-          organizationId: String(def.organizationId),
-          error: result.reason instanceof Error ? result.reason.message : 'Unknown',
-        })
-      }
-    }
-
-    return { processed, skipped, failed, awaitingApproval }
-  },
+  handler: async (ctx) => runAgentBatch(ctx, 'reminder'),
 })
 
 /**
@@ -151,6 +253,12 @@ export const runAgentForOrg = internalAction({
     agentType: v.union(v.literal('followup'), v.literal('reminder')),
     triggerType: v.string(),
     triggerId: v.optional(v.string()),
+    reminderSettings: v.optional(
+      v.object({
+        reminderWindowHours: v.array(v.number()),
+        maxAppointmentsPerBatch: v.number(),
+      })
+    ),
   },
   handler: async (
     ctx,
@@ -206,12 +314,14 @@ export const runAgentForOrg = internalAction({
       let agentConfig: typeof FOLLOWUP_CONFIG
 
       if (args.agentType === 'reminder') {
+        const reminderSettings = sanitizeReminderSettings(args.reminderSettings)
+        const maxWindowHours = Math.max(...reminderSettings.reminderWindowHours)
         const upcomingAppointments = await ctx.runQuery(
           internal.agentRunner.getUpcomingAppointmentsForReminder,
           {
             organizationId: args.organizationId,
-            windowHours: 48,
-            maxAppointments: 20,
+            windowHours: maxWindowHours,
+            maxAppointments: reminderSettings.maxAppointmentsPerBatch,
             now: Date.now(),
           }
         )
@@ -251,6 +361,7 @@ export const runAgentForOrg = internalAction({
             appointmentsCount: upcomingAppointments.length,
             leadsCount: leads.length,
             memoriesCount: agentMemories.length + businessMemories.length,
+            reminderSettings,
           }),
         })
 
@@ -258,7 +369,8 @@ export const runAgentForOrg = internalAction({
           upcomingAppointments,
           leads,
           agentMemories,
-          businessMemories
+          businessMemories,
+          reminderSettings.reminderWindowHours
         )
 
         const provider = resolveLLMProvider()
@@ -330,49 +442,13 @@ export const runAgentForOrg = internalAction({
         plan: plan,
       })
 
-      const { guardrails } = agentConfig
-      const approved: Array<{
-        type: string
-        target: string
-        params: Record<string, unknown>
-        riskLevel: 'low' | 'medium' | 'high'
-        reasoning: string
-      }> = []
-      const rejected: Array<{ type: string; target: string; reason: string }> = []
-      const actions = plan.actions.slice(0, guardrails.maxActionsPerRun)
-
-      for (const action of actions) {
-        if (!guardrails.allowedActions.includes(action.type)) {
-          rejected.push({
-            type: action.type,
-            target: action.target,
-            reason: 'Action not in allowed list',
-          })
-          continue
-        }
-
-        const assessment = assessAction(action, guardrails)
-
-        if (!assessment.approved) {
-          rejected.push({
-            type: action.type,
-            target: action.target,
-            reason:
-              assessment.reason ?? `Risk level '${assessment.assessedRisk}' requires approval`,
-          })
-          continue
-        }
-
-        approved.push({
-          type: action.type,
-          target: action.target,
-          params: action.params,
-          riskLevel: assessment.assessedRisk,
-          reasoning: action.reasoning,
-        })
-      }
-
-      const skipped = plan.actions.length - approved.length
+      const reviewedActions = reviewPlannedActions(
+        plan.actions,
+        agentConfig.guardrails,
+        args.agentType
+      )
+      const skippedByPolicy = reviewedActions.rejectedByPolicy.length
+      const rejectedForApproval = reviewedActions.rejectedForApproval.length
 
       await ctx.runMutation(internal.agentExecutions.updateStatus, {
         id: executionId,
@@ -380,15 +456,28 @@ export const runAgentForOrg = internalAction({
       })
 
       let executed = 0
+      let skippedInExecution = 0
       const results: Array<{ type: string; target: string; success: boolean; message: string }> = []
 
-      for (const action of approved) {
+      for (const action of reviewedActions.approved) {
         try {
           if (action.type === 'update_lead_notes') {
+            const notesText = String(action.params?.notes ?? '').trim()
+            if (!notesText) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: empty notes',
+              })
+              skippedInExecution++
+              continue
+            }
             await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
               organizationId: args.organizationId,
               leadId: action.target as Id<'leads'>,
-              notes: String(action.params?.notes ?? ''),
+              notes: notesText,
+              agentType: args.agentType,
             })
             results.push({
               type: action.type,
@@ -409,10 +498,21 @@ export const runAgentForOrg = internalAction({
               message: `Status updated to ${action.params?.status}`,
             })
           } else if (action.type === 'update_appointment_notes') {
+            const apptNotes = String(action.params?.notes ?? '').trim()
+            if (!apptNotes) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: empty notes',
+              })
+              skippedInExecution++
+              continue
+            }
             await ctx.runMutation(internal.agentRunner.updateAppointmentNotes, {
               organizationId: args.organizationId,
               appointmentId: action.target as Id<'appointments'>,
-              notes: String(action.params?.notes ?? ''),
+              notes: apptNotes,
             })
             results.push({
               type: action.type,
@@ -430,6 +530,15 @@ export const runAgentForOrg = internalAction({
               success: true,
               message: String(action.params?.recommendation ?? ''),
             })
+          } else {
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: 'Skipped: unsupported action type',
+            })
+            skippedInExecution++
+            continue
           }
           executed++
         } catch (error) {
@@ -464,22 +573,29 @@ export const runAgentForOrg = internalAction({
         })
       }
 
-      const status = rejected.length > 0 ? ('awaiting_approval' as const) : ('completed' as const)
+      const actionsSkipped = skippedByPolicy + skippedInExecution
+      const executionOutcome = determineExecutionOutcome({
+        failureCount: failures.length,
+        rejectedForApprovalCount: rejectedForApproval,
+      })
+
       await ctx.runMutation(internal.agentExecutions.complete, {
         id: executionId,
-        status,
+        status: executionOutcome.status,
         results,
         actionsPlanned: plan.actions.length,
         actionsExecuted: executed,
-        actionsSkipped: skipped,
+        actionsSkipped,
+        error: executionOutcome.error,
       })
 
       return {
-        status,
+        status: executionOutcome.status,
+        error: executionOutcome.error,
         actionsPlanned: plan.actions.length,
         actionsExecuted: executed,
-        actionsSkipped: skipped,
-        actionsRejectedForApproval: rejected.length,
+        actionsSkipped,
+        actionsRejectedForApproval: rejectedForApproval,
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
@@ -631,6 +747,7 @@ export const updateLeadNotes = internalMutation({
     organizationId: v.id('organizations'),
     leadId: v.id('leads'),
     notes: v.string(),
+    agentType: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const lead = await ctx.db.get(args.leadId)
@@ -639,11 +756,18 @@ export const updateLeadNotes = internalMutation({
       throw new Error('Lead does not belong to this organization')
     }
 
+    const noteText = args.notes.trim()
+    if (!noteText) return
+
     const existingNotes = lead.notes ?? ''
     const timestamp = new Date().toISOString().split('T')[0]
+    const label = args.agentType === 'reminder' ? 'Reminder' : 'Agent'
+    if (label === 'Reminder' && existingNotes.includes(`[Reminder ${timestamp}]`)) {
+      return
+    }
     const updatedNotes = existingNotes
-      ? `${existingNotes}\n[Agent ${timestamp}] ${args.notes}`
-      : `[Agent ${timestamp}] ${args.notes}`
+      ? `${existingNotes}\n[${label} ${timestamp}] ${noteText}`
+      : `[${label} ${timestamp}] ${noteText}`
 
     await ctx.db.patch(args.leadId, {
       notes: updatedNotes,
@@ -679,8 +803,72 @@ export const updateLeadStatus = internalMutation({
 })
 
 // ── Reminder-specific helpers ─────────────────────────────────────────
+// NOTE: All date/time comparisons use UTC. Appointment dates are stored as
+// YYYY-MM-DD strings and times as HH:MM. The cron runs at 09:00 UTC.
+// hoursUntil is computed by parsing "{date}T{time}:00" as UTC.
 
 const MS_PER_HOUR = 3_600_000
+
+interface ReminderAppointmentDoc {
+  _id: Id<'appointments'> | string
+  leadId: Id<'leads'> | string
+  leadName: string
+  date: string
+  time: string
+  title?: string
+  notes?: string
+  status: string
+}
+
+interface ReminderAppointmentCandidate {
+  id: string
+  leadId: string
+  leadName: string
+  date: string
+  time: string
+  title?: string
+  notes?: string
+  status: string
+  hoursUntil: number
+  appointmentTime: number
+}
+
+function toAppointmentTimestampUtc(date: string, time: string): number {
+  return Date.parse(`${date}T${time}:00Z`)
+}
+
+export function selectReminderCandidates(
+  appointments: ReminderAppointmentDoc[],
+  now: number,
+  windowEnd: number
+): ReminderAppointmentCandidate[] {
+  return appointments
+    .filter((appointment) => {
+      if (appointment.status !== 'scheduled') return false
+      if (appointment.notes?.includes('[Reminder')) return false
+
+      const appointmentTime = toAppointmentTimestampUtc(appointment.date, appointment.time)
+      if (Number.isNaN(appointmentTime)) return false
+      if (appointmentTime <= now || appointmentTime > windowEnd) return false
+      return true
+    })
+    .map((appointment) => {
+      const appointmentTime = toAppointmentTimestampUtc(appointment.date, appointment.time)
+      const rawHours = Math.round((appointmentTime - now) / MS_PER_HOUR)
+      return {
+        id: String(appointment._id),
+        leadId: String(appointment.leadId),
+        leadName: appointment.leadName,
+        date: appointment.date,
+        time: appointment.time,
+        title: appointment.title,
+        notes: appointment.notes,
+        status: appointment.status,
+        hoursUntil: Number.isNaN(rawHours) ? 0 : Math.max(0, rawHours),
+        appointmentTime,
+      }
+    })
+}
 
 export const getUpcomingAppointmentsForReminder = internalQuery({
   args: {
@@ -696,36 +884,41 @@ export const getUpcomingAppointmentsForReminder = internalQuery({
     const today = new Date(now).toISOString().split('T')[0]
     const windowEndDate = new Date(windowEnd).toISOString().split('T')[0]
 
-    const appointments = await ctx.db
-      .query('appointments')
-      .withIndex('by_org_date', (q) =>
-        q.eq('organizationId', args.organizationId).gte('date', today)
-      )
-      .take(args.maxAppointments * 3)
+    const pageSize = Math.max(args.maxAppointments * 3, 50)
+    const maxBuffer = Math.max(args.maxAppointments * 10, 200)
+    const candidates: ReminderAppointmentCandidate[] = []
+    let cursor: string | null = null
+    let done = false
 
-    return appointments
-      .filter((a) => {
-        if (a.status !== 'scheduled') return false
-        if (a.date > windowEndDate) return false
-        if (a.notes?.includes('[Reminder')) return false
-        return true
-      })
+    while (!done) {
+      const page = await ctx.db
+        .query('appointments')
+        .withIndex('by_org_date', (q) =>
+          q.eq('organizationId', args.organizationId).gte('date', today).lte('date', windowEndDate)
+        )
+        .order('asc')
+        .paginate({ numItems: pageSize, cursor })
+
+      const pageCandidates = selectReminderCandidates(
+        page.page as ReminderAppointmentDoc[],
+        now,
+        windowEnd
+      )
+      candidates.push(...pageCandidates)
+
+      if (candidates.length > maxBuffer) {
+        candidates.sort((left, right) => left.appointmentTime - right.appointmentTime)
+        candidates.splice(maxBuffer)
+      }
+
+      done = page.isDone
+      cursor = page.continueCursor
+    }
+
+    return candidates
+      .sort((left, right) => left.appointmentTime - right.appointmentTime)
       .slice(0, args.maxAppointments)
-      .map((a) => {
-        const apptTime = new Date(`${a.date}T${a.time}:00`).getTime()
-        const hoursUntil = Math.max(0, Math.round((apptTime - now) / MS_PER_HOUR))
-        return {
-          id: String(a._id),
-          leadId: String(a.leadId),
-          leadName: a.leadName,
-          date: a.date,
-          time: a.time,
-          title: a.title,
-          notes: a.notes,
-          status: a.status,
-          hoursUntil,
-        }
-      })
+      .map(({ appointmentTime: _appointmentTime, ...appointment }) => appointment)
   },
 })
 
@@ -773,10 +966,16 @@ export const updateAppointmentNotes = internalMutation({
     }
 
     const timestamp = new Date().toISOString().split('T')[0]
+    const reminderText = args.notes.trim()
+    if (!reminderText) return
+
     const existingNotes = appointment.notes ?? ''
+    if (existingNotes.includes(`[Reminder ${timestamp}]`)) {
+      return
+    }
     const updatedNotes = existingNotes
-      ? `${existingNotes}\n[Reminder ${timestamp}] ${args.notes}`
-      : `[Reminder ${timestamp}] ${args.notes}`
+      ? `${existingNotes}\n[Reminder ${timestamp}] ${reminderText}`
+      : `[Reminder ${timestamp}] ${reminderText}`
 
     await ctx.db.patch(args.appointmentId, {
       notes: updatedNotes,
@@ -784,6 +983,8 @@ export const updateAppointmentNotes = internalMutation({
     })
   },
 })
+
+const LEARNING_DEDUP_WINDOW_MS = 24 * 60 * 60 * 1000
 
 export const recordAgentLearning = internalMutation({
   args: {
@@ -800,6 +1001,34 @@ export const recordAgentLearning = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now()
+    const cutoff = now - LEARNING_DEDUP_WINDOW_MS
+
+    const recentSimilar = await ctx.db
+      .query('agentMemories')
+      .withIndex('by_org_agent_active', (q) =>
+        q
+          .eq('organizationId', args.organizationId)
+          .eq('agentType', args.agentType)
+          .eq('isActive', true)
+      )
+      .order('desc')
+      .take(10)
+
+    const duplicate = recentSimilar.find(
+      (m) => m.category === args.category && m.createdAt > cutoff
+    )
+
+    if (duplicate) {
+      await ctx.db.patch(duplicate._id, {
+        content: args.content,
+        confidence: Math.max(duplicate.confidence, args.confidence),
+        useCount: duplicate.useCount + 1,
+        lastUsedAt: now,
+        updatedAt: now,
+      })
+      return duplicate._id
+    }
+
     return await ctx.db.insert('agentMemories', {
       organizationId: args.organizationId,
       agentType: args.agentType,

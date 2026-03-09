@@ -137,6 +137,7 @@ export function useLeads({
 
 interface UseAppointmentsOptions {
   organizationId: Id<'organizations'>
+  userId: Id<'appUsers'>
   startDate?: string
   endDate?: string
 }
@@ -151,10 +152,12 @@ interface UseAppointmentsReturn {
  */
 export function useAppointments({
   organizationId,
+  userId,
   startDate,
   endDate,
 }: UseAppointmentsOptions): UseAppointmentsReturn {
   const appointmentsData = useQuery(api.appointments.list, {
+    userId,
     organizationId,
     startDate,
     endDate,

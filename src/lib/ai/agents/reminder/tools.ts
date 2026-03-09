@@ -16,15 +16,25 @@ export const REMINDER_ACTIONS = [
 
 async function executeUpdateAppointmentNotes(
   action: AgentAction,
-  _context: AgentContext,
+  context: AgentContext,
   convex: ConvexHttpClient
 ): Promise<ActionResult> {
   const start = Date.now()
   try {
-    const notes = String(action.params.notes ?? '')
+    const notes = String(action.params.notes ?? '').trim()
+    if (!notes) {
+      return {
+        action,
+        success: true,
+        message: `Skipped empty notes for appointment ${action.target}`,
+        durationMs: Date.now() - start,
+      }
+    }
     const { api } = await getApi()
 
     const appointment = await convex.query(api.appointments.get, {
+      userId: asAppUserId(context.userId),
+      organizationId: asOrganizationId(context.organizationId),
       id: asAppointmentId(action.target),
     })
 
@@ -40,11 +50,21 @@ async function executeUpdateAppointmentNotes(
 
     const timestamp = new Date().toISOString().split('T')[0]
     const existingNotes = appointment.notes ?? ''
+    if (existingNotes.includes(`[Reminder ${timestamp}]`)) {
+      return {
+        action,
+        success: true,
+        message: `Skipped duplicate reminder for appointment ${action.target}`,
+        durationMs: Date.now() - start,
+      }
+    }
     const updatedNotes = existingNotes
       ? `${existingNotes}\n[Reminder ${timestamp}] ${notes}`
       : `[Reminder ${timestamp}] ${notes}`
 
     await convex.mutation(api.appointments.update, {
+      userId: asAppUserId(context.userId),
+      organizationId: asOrganizationId(context.organizationId),
       id: asAppointmentId(action.target),
       notes: updatedNotes,
     })
@@ -68,19 +88,59 @@ async function executeUpdateLeadNotes(
 ): Promise<ActionResult> {
   const start = Date.now()
   try {
-    const notes = String(action.params.notes ?? '')
+    const notes = String(action.params.notes ?? '').trim()
+    if (!notes) {
+      return {
+        action,
+        success: true,
+        message: `Skipped empty notes for lead ${action.target}`,
+        durationMs: Date.now() - start,
+      }
+    }
+
     const { api } = await getApi()
+
+    const lead = await convex.query(api.leads.get, {
+      userId: asAppUserId(context.userId),
+      id: asLeadId(action.target),
+      organizationId: asOrganizationId(context.organizationId),
+    })
+
+    if (!lead) {
+      return {
+        action,
+        success: false,
+        message: `Lead not found: ${action.target}`,
+        error: `Lead not found: ${action.target}`,
+        durationMs: Date.now() - start,
+      }
+    }
+
+    const timestamp = new Date().toISOString().split('T')[0]
+    const existingNotes = lead.notes ?? ''
+    if (existingNotes.includes(`[Reminder ${timestamp}]`)) {
+      return {
+        action,
+        success: true,
+        message: `Skipped duplicate reminder for lead ${action.target}`,
+        durationMs: Date.now() - start,
+      }
+    }
+    const updatedNotes = existingNotes
+      ? `${existingNotes}\n[Reminder ${timestamp}] ${notes}`
+      : `[Reminder ${timestamp}] ${notes}`
+
     await convex.mutation(api.leads.update, {
       userId: asAppUserId(context.userId),
       id: asLeadId(action.target),
       organizationId: asOrganizationId(context.organizationId),
-      notes,
+      notes: updatedNotes,
       lastContact: Date.now(),
     })
     return {
       action,
       success: true,
-      message: `Updated notes for lead ${action.target}`,
+      message: `Appended reminder note to lead ${action.target}`,
       durationMs: Date.now() - start,
     }
   } catch (error) {
@@ -98,9 +158,11 @@ async function executeLogReminderRecommendation(
   const recommendation = String(action.params.recommendation ?? '')
   const priority = String(action.params.priority ?? 'medium')
 
-  console.info(
-    `[Agent:Reminder] Recommendation for ${action.target} [${priority}]: ${recommendation}`
-  )
+  console.info('[Agent:Reminder] Recommendation logged', {
+    target: action.target,
+    priority,
+    hasRecommendation: recommendation.length > 0,
+  })
 
   return {
     action,

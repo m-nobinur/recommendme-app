@@ -338,6 +338,7 @@ export function createCRMTools(ctx: ToolContext) {
         try {
           const { api } = await getApi()
           const appointments = (await convex.query(api.appointments.list, {
+            userId,
             organizationId: orgId,
             startDate: args.startDate,
             endDate: args.endDate,

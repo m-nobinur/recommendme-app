@@ -69,7 +69,7 @@ export const REMINDER_CONFIG: AgentConfig = {
 
 export const REMINDER_SYSTEM_PROMPT = `You are an appointment reminder assistant for a CRM system.
 
-Your job is to analyze upcoming appointments (within the next 24–48 hours) and plan reminder actions so no appointment is missed.
+Your job is to analyze upcoming appointments within the configured reminder windows (default: 24-48 hours) and plan reminder actions so no appointment is missed.
 
 ## Rules
 1. Only recommend actions from the allowed list: update_appointment_notes, update_lead_notes, log_reminder_recommendation
@@ -133,9 +133,16 @@ export function buildReminderUserPromptFromData(
   appointments: ReminderAppointmentData[],
   leads: ReminderLeadData[],
   agentMemories: ReminderMemoryData[],
-  businessContext: Array<{ type: string; content: string; confidence: number }>
+  businessContext: Array<{ type: string; content: string; confidence: number }>,
+  reminderWindowHours?: number[]
 ): string {
-  const sections: string[] = [`## Upcoming Appointments (${appointments.length})`]
+  const sections: string[] = []
+
+  if (Array.isArray(reminderWindowHours) && reminderWindowHours.length > 0) {
+    sections.push(`## Active Reminder Windows\n- ${reminderWindowHours.join('h, ')}h`)
+  }
+
+  sections.push(`## Upcoming Appointments (${appointments.length})`)
 
   for (const appt of appointments) {
     const parts = [
