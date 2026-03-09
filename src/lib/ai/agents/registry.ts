@@ -1,14 +1,13 @@
 import type { AgentHandler } from './core/handler'
 import type { AgentType } from './core/types'
 import { FollowupHandler } from './followup/handler'
+import { ReminderHandler } from './reminder/handler'
 
 type HandlerFactory = () => AgentHandler
 
 const AGENT_REGISTRY: Record<AgentType, HandlerFactory> = {
   followup: () => new FollowupHandler(),
-  reminder: () => {
-    throw new Error('Reminder agent not yet implemented')
-  },
+  reminder: () => new ReminderHandler(),
   invoice: () => {
     throw new Error('Invoice agent not yet implemented')
   },

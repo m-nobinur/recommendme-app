@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Reminder Agent (Phase 7b)
+- Reminder agent at `src/lib/ai/agents/reminder/` — scans upcoming appointments (24h/48h windows), plans reminder actions via LLM, learns from outcomes
+- Convex-side agent logic at `src/convex/agentLogic/reminder.ts` with settings, config, system prompt, prompt builder, and plan validator
+- Three reminder actions: `update_appointment_notes`, `update_lead_notes`, `log_reminder_recommendation`
+- Idempotent execution via `[Reminder YYYY-MM-DD]` marker in appointment notes
+- Extended `agentRunner.ts` with `runReminderAgent` internalAction, `getUpcomingAppointmentsForReminder` query, `getLeadsByIds` query, and `updateAppointmentNotes` mutation
+- `runAgentForOrg` now accepts both `'followup'` and `'reminder'` agent types
+- Daily reminder agent cron job at 09:00 UTC in `src/convex/crons.ts`
+- Agent registry updated — `reminder` mapped to `ReminderHandler` (no longer throws)
+- Shared type helper `asAppointmentId()` added to `src/lib/ai/shared/convex.ts`
+- Validation test script `scripts/test-reminder-agent.sh` (60 checks across 12 sections)
+- Barrel exports from `src/lib/ai/agents/index.ts` and `src/convex/agentLogic/index.ts`
+
 #### Agent Framework Foundation (Phase 7a)
 - Core agent framework at `src/lib/ai/agents/core/` with AgentHandler interface, pipeline runner, risk engine, memory helpers, and guardrail enforcement
 - Followup Agent at `src/lib/ai/agents/followup/` — identifies stale leads, plans actions via LLM, learns from outcomes

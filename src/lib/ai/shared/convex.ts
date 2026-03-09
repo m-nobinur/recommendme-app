@@ -24,3 +24,7 @@ export function asLeadId(id: string): Id<'leads'> {
 export function asBusinessMemoryId(id: string): Id<'businessMemories'> {
   return id as Id<'businessMemories'>
 }
+
+export function asAppointmentId(id: string): Id<'appointments'> {
+  return id as Id<'appointments'>
+}

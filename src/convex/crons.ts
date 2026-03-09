@@ -72,4 +72,11 @@ crons.daily(
   {}
 )
 
+crons.daily(
+  'reminder agent',
+  { hourUTC: 9, minuteUTC: 0 },
+  internal.agentRunner.runReminderAgent,
+  {}
+)
+
 export default crons
