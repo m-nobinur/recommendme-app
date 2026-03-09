@@ -13,13 +13,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reminder agent at `src/lib/ai/agents/reminder/` — scans upcoming appointments (24h/48h windows), plans reminder actions via LLM, learns from outcomes
 - Convex-side agent logic at `src/convex/agentLogic/reminder.ts` with settings, config, system prompt, prompt builder, and plan validator
 - Three reminder actions: `update_appointment_notes`, `update_lead_notes`, `log_reminder_recommendation`
-- Idempotent execution via `[Reminder YYYY-MM-DD]` marker in appointment notes
+- Idempotent execution via `[Reminder YYYY-MM-DD]` marker in appointment and lead notes
+- Reminder runner now skips past appointments, sorts by nearest upcoming time, and deduplicates repeated action targets in a single plan
+- Reminder windows and batch size now honor per-organization `agentDefinitions.settings` (with safe defaults/sanitization)
+- Appointment Convex APIs (`list`, `get`, `update`, `getUpcoming`, `listByLead`) now enforce org membership and tenant ownership checks
 - Extended `agentRunner.ts` with `runReminderAgent` internalAction, `getUpcomingAppointmentsForReminder` query, `getLeadsByIds` query, and `updateAppointmentNotes` mutation
 - `runAgentForOrg` now accepts both `'followup'` and `'reminder'` agent types
 - Daily reminder agent cron job at 09:00 UTC in `src/convex/crons.ts`
 - Agent registry updated — `reminder` mapped to `ReminderHandler` (no longer throws)
 - Shared type helper `asAppointmentId()` added to `src/lib/ai/shared/convex.ts`
-- Validation test script `scripts/test-reminder-agent.sh` (60 checks across 12 sections)
+- Validation test script `scripts/test-reminder-agent.sh` (79 checks across 16 sections)
+- Added reminder-focused unit tests: `src/convex/agentRunner.reminder.test.ts` and `src/convex/agentLogic/reminder.test.ts`
 - Barrel exports from `src/lib/ai/agents/index.ts` and `src/convex/agentLogic/index.ts`
 
 #### Agent Framework Foundation (Phase 7a)
