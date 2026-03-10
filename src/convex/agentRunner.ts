@@ -25,6 +25,14 @@ import {
   validateReminderPlan,
 } from './agentLogic/reminder'
 import { assessAction } from './agentLogic/risk'
+import {
+  buildSalesUserPromptFromData,
+  DEFAULT_SALES_SETTINGS,
+  SALES_CONFIG,
+  SALES_SYSTEM_PROMPT,
+  type SalesAgentSettings,
+  validateSalesPlan,
+} from './agentLogic/sales'
 import { isCronDisabled } from './lib/cronGuard'
 import {
   appointmentToEpoch,
@@ -45,6 +53,12 @@ const MIN_INVOICE_OVERDUE_THRESHOLD_DAYS = 1
 const MAX_INVOICE_OVERDUE_THRESHOLD_DAYS = 90
 const MIN_INVOICE_BATCH_SIZE = 1
 const MAX_INVOICE_BATCH_SIZE = 100
+const MIN_SALES_STALE_THRESHOLD_DAYS = 1
+const MAX_SALES_STALE_THRESHOLD_DAYS = 90
+const MIN_SALES_BATCH_SIZE = 1
+const MAX_SALES_BATCH_SIZE = 200
+const MIN_SALES_HIGH_VALUE = 0
+const MAX_SALES_HIGH_VALUE = 1_000_000
 
 type PlannedAction = {
   type: string
@@ -168,6 +182,40 @@ export function sanitizeInvoiceSettings(raw: unknown): InvoiceAgentSettings {
   }
 }
 
+export function sanitizeSalesSettings(raw: unknown): SalesAgentSettings {
+  const fallback = DEFAULT_SALES_SETTINGS
+
+  if (!raw || typeof raw !== 'object') {
+    return fallback
+  }
+
+  const settings = raw as Record<string, unknown>
+  const staleThresholdDays = Number(settings.staleThresholdDays)
+  const maxLeadsPerBatch = Number(settings.maxLeadsPerBatch)
+  const highValueThreshold = Number(settings.highValueThreshold)
+
+  return {
+    staleThresholdDays:
+      Number.isFinite(staleThresholdDays) &&
+      staleThresholdDays >= MIN_SALES_STALE_THRESHOLD_DAYS &&
+      staleThresholdDays <= MAX_SALES_STALE_THRESHOLD_DAYS
+        ? Math.floor(staleThresholdDays)
+        : fallback.staleThresholdDays,
+    maxLeadsPerBatch:
+      Number.isFinite(maxLeadsPerBatch) &&
+      maxLeadsPerBatch >= MIN_SALES_BATCH_SIZE &&
+      maxLeadsPerBatch <= MAX_SALES_BATCH_SIZE
+        ? Math.floor(maxLeadsPerBatch)
+        : fallback.maxLeadsPerBatch,
+    highValueThreshold:
+      Number.isFinite(highValueThreshold) &&
+      highValueThreshold >= MIN_SALES_HIGH_VALUE &&
+      highValueThreshold <= MAX_SALES_HIGH_VALUE
+        ? highValueThreshold
+        : fallback.highValueThreshold,
+  }
+}
+
 export function reviewPlannedActions(
   actions: PlannedAction[],
   guardrails: {
@@ -176,7 +224,7 @@ export function reviewPlannedActions(
     riskOverrides: Record<string, 'low' | 'medium' | 'high'>
     requireApprovalAbove: 'low' | 'medium' | 'high'
   },
-  agentType: 'followup' | 'reminder' | 'invoice'
+  agentType: 'followup' | 'reminder' | 'invoice' | 'sales'
 ): ReviewedActions {
   const approved: ApprovedAction[] = []
   const rejectedByPolicy: RejectedAction[] = []
@@ -238,7 +286,7 @@ type AgentBatchCounters = {
 
 async function runAgentBatch(
   ctx: { runQuery: any; runAction: any },
-  agentType: 'followup' | 'reminder' | 'invoice'
+  agentType: 'followup' | 'reminder' | 'invoice' | 'sales'
 ): Promise<AgentBatchCounters> {
   if (isCronDisabled()) {
     return { processed: 0, skipped: 0, failed: 0, awaitingApproval: 0 }
@@ -278,6 +326,7 @@ async function runAgentBatch(
             agentType === 'reminder' ? sanitizeReminderSettings(def.settings) : undefined,
           invoiceSettings:
             agentType === 'invoice' ? sanitizeInvoiceSettings(def.settings) : undefined,
+          salesSettings: agentType === 'sales' ? sanitizeSalesSettings(def.settings) : undefined,
         })
       )
     )
@@ -317,6 +366,48 @@ export const runReminderAgent = internalAction({
 export const runInvoiceAgent = internalAction({
   args: {},
   handler: async (ctx) => runAgentBatch(ctx, 'invoice'),
+})
+
+export const runSalesAgent = internalAction({
+  args: {},
+  handler: async (ctx) => runAgentBatch(ctx, 'sales'),
+})
+
+/**
+ * Event-driven entry point: triggered when a lead status changes.
+ * Runs the sales agent for the specific organization to re-score and evaluate pipeline.
+ */
+export const runSalesAgentForLead = internalAction({
+  args: {
+    organizationId: v.id('organizations'),
+    leadId: v.id('leads'),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    if (isCronDisabled()) return
+
+    const def: Doc<'agentDefinitions'> | null = await ctx.runQuery(
+      internal.agentDefinitions.getEnabledByOrgAndType,
+      {
+        organizationId: args.organizationId,
+        agentType: 'sales',
+      }
+    )
+
+    if (!def) return
+
+    const tz: string | null = await ctx.runQuery(internal.agentRunner.getOrgTimezone, {
+      organizationId: args.organizationId,
+    })
+
+    await ctx.runAction(internal.agentRunner.runAgentForOrg, {
+      organizationId: args.organizationId,
+      agentType: 'sales' as const,
+      triggerType: 'event',
+      triggerId: String(args.leadId),
+      timezone: resolveTimezone(tz),
+      salesSettings: sanitizeSalesSettings(def.settings),
+    })
+  },
 })
 
 /**
@@ -365,7 +456,12 @@ export const runInvoiceAgentForAppointment = internalAction({
 export const runAgentForOrg = internalAction({
   args: {
     organizationId: v.id('organizations'),
-    agentType: v.union(v.literal('followup'), v.literal('reminder'), v.literal('invoice')),
+    agentType: v.union(
+      v.literal('followup'),
+      v.literal('reminder'),
+      v.literal('invoice'),
+      v.literal('sales')
+    ),
     triggerType: v.string(),
     triggerId: v.optional(v.string()),
     timezone: v.optional(v.string()),
@@ -380,6 +476,13 @@ export const runAgentForOrg = internalAction({
         defaultPaymentTermsDays: v.number(),
         overdueThresholdDays: v.number(),
         maxInvoicesPerBatch: v.number(),
+      })
+    ),
+    salesSettings: v.optional(
+      v.object({
+        staleThresholdDays: v.number(),
+        maxLeadsPerBatch: v.number(),
+        highValueThreshold: v.number(),
       })
     ),
   },
@@ -605,6 +708,125 @@ export const runAgentForOrg = internalAction({
         const rawPlan = await callLLM(provider, INVOICE_SYSTEM_PROMPT, userPrompt, 0.1, 2500)
         plan = validateInvoicePlan(rawPlan)
         agentConfig = INVOICE_CONFIG
+      } else if (args.agentType === 'sales') {
+        const salesSettings = sanitizeSalesSettings(args.salesSettings)
+        const now = Date.now()
+
+        const allLeads = await ctx.runQuery(internal.agentRunner.getLeadsForSalesPipeline, {
+          organizationId: args.organizationId,
+          maxLeads: salesSettings.maxLeadsPerBatch,
+          now,
+        })
+
+        if (allLeads.length === 0) {
+          await ctx.runMutation(internal.agentExecutions.complete, {
+            id: executionId,
+            status: 'skipped',
+            actionsPlanned: 0,
+            actionsExecuted: 0,
+            actionsSkipped: 0,
+          })
+          return { status: 'skipped', reason: 'No leads in pipeline' }
+        }
+
+        const leadIds = allLeads.map((l: { id: string }) => l.id)
+        const [appointments, invoices, agentMemories, businessMemories] = await Promise.all([
+          ctx.runQuery(internal.agentRunner.getAppointmentsForLeads, {
+            organizationId: args.organizationId,
+            leadIds,
+            limit: salesSettings.maxLeadsPerBatch * 3,
+          }),
+          ctx.runQuery(internal.agentRunner.getInvoicesForLeads, {
+            organizationId: args.organizationId,
+            leadIds,
+            limit: salesSettings.maxLeadsPerBatch * 3,
+          }),
+          ctx.runQuery(internal.agentRunner.getAgentMemories, {
+            organizationId: args.organizationId,
+            agentType: 'sales',
+            limit: 15,
+          }),
+          ctx.runQuery(internal.agentRunner.getBusinessContext, {
+            organizationId: args.organizationId,
+            limit: 20,
+          }),
+        ])
+
+        await ctx.runMutation(internal.agentExecutions.updateStatus, {
+          id: executionId,
+          status: 'planning',
+          memoryContext: JSON.stringify({
+            leadsCount: allLeads.length,
+            appointmentsCount: appointments.length,
+            invoicesCount: invoices.length,
+            memoriesCount: agentMemories.length + businessMemories.length,
+            salesSettings,
+          }),
+        })
+
+        const apptByLead = new Map<string, { total: number; completed: number }>()
+        for (const a of appointments) {
+          const cur = apptByLead.get(a.leadId) ?? { total: 0, completed: 0 }
+          cur.total++
+          if (a.status === 'completed') cur.completed++
+          apptByLead.set(a.leadId, cur)
+        }
+        const invByLead = new Map<string, { total: number; paid: number; amount: number }>()
+        for (const i of invoices) {
+          const cur = invByLead.get(i.leadId) ?? { total: 0, paid: 0, amount: 0 }
+          cur.total++
+          cur.amount += i.amount
+          if (i.status === 'paid') cur.paid++
+          invByLead.set(i.leadId, cur)
+        }
+
+        const salesLeadData = allLeads.map((l) => {
+          const appt = apptByLead.get(l.id) ?? { total: 0, completed: 0 }
+          const inv = invByLead.get(l.id) ?? { total: 0, paid: 0, amount: 0 }
+          return {
+            id: l.id,
+            name: l.name,
+            status: l.status,
+            phone: l.phone,
+            email: l.email,
+            value: l.value,
+            tags: l.tags ?? [],
+            notes: l.notes,
+            daysSinceUpdate: l.daysSinceContact,
+            appointmentCount: appt.total,
+            completedAppointmentCount: appt.completed,
+            invoiceCount: inv.total,
+            paidInvoiceCount: inv.paid,
+            totalInvoiceAmount: inv.amount,
+          }
+        })
+
+        const byStatus: Record<string, number> = {}
+        let totalValue = 0
+        let staleCount = 0
+        for (const l of salesLeadData) {
+          byStatus[l.status] = (byStatus[l.status] ?? 0) + 1
+          totalValue += l.value ?? 0
+          if (l.daysSinceUpdate > salesSettings.staleThresholdDays) staleCount++
+        }
+
+        const userPrompt = buildSalesUserPromptFromData(
+          salesLeadData,
+          {
+            total: salesLeadData.length,
+            byStatus,
+            totalValue,
+            staleCount,
+          },
+          agentMemories,
+          businessMemories,
+          salesSettings
+        )
+
+        const provider = resolveLLMProvider()
+        const rawPlan = await callLLM(provider, SALES_SYSTEM_PROMPT, userPrompt, 0.1, 3000)
+        plan = validateSalesPlan(rawPlan)
+        agentConfig = SALES_CONFIG
       } else {
         const leads = await ctx.runQuery(internal.agentRunner.getStaleLeads, {
           organizationId: args.organizationId,
@@ -832,10 +1054,110 @@ export const runAgentForOrg = internalAction({
               success: true,
               message: `Flagged overdue invoice ${action.target}`,
             })
+          } else if (action.type === 'score_lead') {
+            const score = Number(action.params?.score ?? 0)
+            const reasoning = String(action.params?.reasoning ?? '').trim()
+            if (score < 1 || score > 10 || !reasoning) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: invalid score params',
+              })
+              skippedInExecution++
+              continue
+            }
+            await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
+              organizationId: args.organizationId,
+              leadId: action.target as Id<'leads'>,
+              notes: `[Sales Score] ${score}/10 — ${reasoning}`,
+              agentType: 'sales',
+              touchLastContact: false,
+            })
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: `Lead scored ${score}/10`,
+            })
+          } else if (action.type === 'recommend_stage_change') {
+            const recommendedStage = String(
+              action.params?.recommendedStage ?? action.params?.toStage ?? ''
+            ).trim()
+            const reasoning = String(action.params?.reasoning ?? '').trim()
+            if (!recommendedStage || !reasoning) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: missing stage/reasoning',
+              })
+              skippedInExecution++
+              continue
+            }
+            await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
+              organizationId: args.organizationId,
+              leadId: action.target as Id<'leads'>,
+              notes: `[Stage Recommendation] Move to ${recommendedStage} — ${reasoning}`,
+              agentType: 'sales',
+              touchLastContact: false,
+            })
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: `Recommended stage change to ${recommendedStage}`,
+            })
+          } else if (action.type === 'flag_stale_lead') {
+            const daysSinceUpdate = Number(
+              action.params?.daysSinceUpdate ?? action.params?.daysSinceContact ?? 0
+            )
+            const staleNotes = String(
+              action.params?.notes ?? action.params?.suggestion ?? ''
+            ).trim()
+            await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
+              organizationId: args.organizationId,
+              leadId: action.target as Id<'leads'>,
+              notes: `[Stale Alert] ${daysSinceUpdate}d since contact${staleNotes ? ` — ${staleNotes}` : ''}`,
+              agentType: 'sales',
+              touchLastContact: false,
+            })
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: `Flagged stale (${daysSinceUpdate}d)`,
+            })
+          } else if (action.type === 'log_pipeline_insight') {
+            const insight = String(action.params?.insight ?? '').trim()
+            if (!insight) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: empty insight',
+              })
+              skippedInExecution++
+              continue
+            }
+            await ctx.runMutation(internal.agentRunner.recordAgentLearning, {
+              organizationId: args.organizationId,
+              agentType: 'sales',
+              category: 'pattern',
+              content: insight,
+              confidence: 0.7,
+            })
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: `Pipeline insight logged`,
+            })
           } else if (
             action.type === 'log_recommendation' ||
             action.type === 'log_reminder_recommendation' ||
-            action.type === 'log_invoice_recommendation'
+            action.type === 'log_invoice_recommendation' ||
+            action.type === 'log_sales_recommendation'
           ) {
             results.push({
               type: action.type,
@@ -1067,6 +1389,7 @@ export const updateLeadNotes = internalMutation({
     leadId: v.id('leads'),
     notes: v.string(),
     agentType: v.optional(v.string()),
+    touchLastContact: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const lead = await ctx.db.get(args.leadId)
@@ -1080,18 +1403,24 @@ export const updateLeadNotes = internalMutation({
 
     const existingNotes = lead.notes ?? ''
     const timestamp = new Date().toISOString().split('T')[0]
-    const label = args.agentType === 'reminder' ? 'Reminder' : 'Agent'
+    const labelMap: Record<string, string> = {
+      reminder: 'Reminder',
+      sales: 'Sales',
+    }
+    const label = labelMap[args.agentType ?? ''] ?? 'Agent'
     if (label === 'Reminder' && existingNotes.includes(`[Reminder ${timestamp}]`)) {
       return
     }
-    const updatedNotes = existingNotes
-      ? `${existingNotes}\n[${label} ${timestamp}] ${noteText}`
-      : `[${label} ${timestamp}] ${noteText}`
+    const noteEntry = `[${label} ${timestamp}] ${noteText}`
+    if (existingNotes.includes(noteEntry)) return
+    const updatedNotes = existingNotes ? `${existingNotes}\n${noteEntry}` : noteEntry
+    const touchLastContact = args.touchLastContact ?? true
 
+    const now = Date.now()
     await ctx.db.patch(args.leadId, {
       notes: updatedNotes,
-      lastContact: Date.now(),
-      updatedAt: Date.now(),
+      updatedAt: now,
+      ...(touchLastContact ? { lastContact: now } : {}),
     })
   },
 })
@@ -1301,6 +1630,134 @@ export const updateAppointmentNotes = internalMutation({
       notes: updatedNotes,
       updatedAt: Date.now(),
     })
+  },
+})
+
+// ── Sales-specific helpers ────────────────────────────────────────────
+
+export const getLeadsForSalesPipeline = internalQuery({
+  args: {
+    organizationId: v.id('organizations'),
+    maxLeads: v.number(),
+    now: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const activeStatuses = ['New', 'Contacted', 'Qualified', 'Proposal', 'Booked'] as const
+
+    const perStatusCap = Math.ceil(args.maxLeads * 2)
+    const leadsByStatus = await Promise.all(
+      activeStatuses.map((status) =>
+        ctx.db
+          .query('leads')
+          .withIndex('by_org_status', (q) =>
+            q.eq('organizationId', args.organizationId).eq('status', status)
+          )
+          .take(perStatusCap)
+      )
+    )
+
+    const now = args.now
+    return leadsByStatus
+      .flat()
+      .sort((a, b) => (a.lastContact ?? a.createdAt) - (b.lastContact ?? b.createdAt))
+      .slice(0, args.maxLeads)
+      .map((lead) => ({
+        id: String(lead._id),
+        name: lead.name,
+        status: lead.status,
+        phone: lead.phone,
+        email: lead.email,
+        value: lead.value,
+        tags: lead.tags,
+        notes: lead.notes,
+        lastContact: lead.lastContact ?? lead.createdAt,
+        daysSinceContact: Math.floor((now - (lead.lastContact ?? lead.createdAt)) / MS_PER_DAY),
+        createdAt: lead.createdAt,
+      }))
+  },
+})
+
+export const getAppointmentsForLeads = internalQuery({
+  args: {
+    organizationId: v.id('organizations'),
+    leadIds: v.array(v.string()),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const effectiveLimit = Math.min(Math.max(args.limit, 1), 500)
+    const uniqueLeadIds = [...new Set(args.leadIds)]
+    if (uniqueLeadIds.length === 0) return []
+
+    const perLeadTake = Math.min(
+      Math.max(Math.ceil(effectiveLimit / uniqueLeadIds.length) * 2, 5),
+      100
+    )
+    const appointmentsByLead = await Promise.all(
+      uniqueLeadIds.map((leadId) =>
+        ctx.db
+          .query('appointments')
+          .withIndex('by_lead', (q) => q.eq('leadId', leadId as Id<'leads'>))
+          .order('desc')
+          .take(perLeadTake)
+      )
+    )
+
+    return appointmentsByLead
+      .flat()
+      .filter((a) => a.organizationId === args.organizationId)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, effectiveLimit)
+      .map((a) => ({
+        id: String(a._id),
+        leadId: String(a.leadId),
+        leadName: a.leadName,
+        date: a.date,
+        time: a.time,
+        title: a.title,
+        status: a.status,
+      }))
+  },
+})
+
+export const getInvoicesForLeads = internalQuery({
+  args: {
+    organizationId: v.id('organizations'),
+    leadIds: v.array(v.string()),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const effectiveLimit = Math.min(Math.max(args.limit, 1), 500)
+    const uniqueLeadIds = [...new Set(args.leadIds)]
+    if (uniqueLeadIds.length === 0) return []
+
+    const perLeadTake = Math.min(
+      Math.max(Math.ceil(effectiveLimit / uniqueLeadIds.length) * 2, 5),
+      100
+    )
+    const invoicesByLead = await Promise.all(
+      uniqueLeadIds.map((leadId) =>
+        ctx.db
+          .query('invoices')
+          .withIndex('by_lead', (q) => q.eq('leadId', leadId as Id<'leads'>))
+          .order('desc')
+          .take(perLeadTake)
+      )
+    )
+
+    return invoicesByLead
+      .flat()
+      .filter((i) => i.organizationId === args.organizationId)
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, effectiveLimit)
+      .map((i) => ({
+        id: String(i._id),
+        leadId: String(i.leadId),
+        leadName: i.leadName,
+        amount: i.amount,
+        status: i.status,
+        dueDate: i.dueDate,
+        createdAt: i.createdAt,
+      }))
   },
 })
 

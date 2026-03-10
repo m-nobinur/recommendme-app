@@ -23,6 +23,8 @@ import { internal } from './_generated/api'
  *   - Stuck recovery:      every 30 min (reset stuck events)
  *   - Followup agent:      daily 14:00 UTC
  *   - Reminder agent:      daily 09:00 UTC
+ *   - Invoice agent:       daily 10:00 UTC
+ *   - Sales funnel agent:  daily 11:00 UTC
  */
 
 const crons = cronJobs()
@@ -93,6 +95,13 @@ crons.daily(
   'invoice agent',
   { hourUTC: 10, minuteUTC: 0 },
   internal.agentRunner.runInvoiceAgent,
+  {}
+)
+
+crons.daily(
+  'sales funnel agent',
+  { hourUTC: 11, minuteUTC: 0 },
+  internal.agentRunner.runSalesAgent,
   {}
 )
 

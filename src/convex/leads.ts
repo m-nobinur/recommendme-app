@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
@@ -84,6 +85,13 @@ export const update = mutation({
       })
     }
 
+    if (args.status && args.status !== existing.status) {
+      await ctx.scheduler.runAfter(0, internal.agentRunner.runSalesAgentForLead, {
+        organizationId,
+        leadId: id,
+      })
+    }
+
     return { success: true }
   },
 })
@@ -146,6 +154,7 @@ export const updateByName = mutation({
       return { success: false, error: 'Lead not found' }
     }
 
+    const statusChanged = args.status !== undefined && args.status !== lead.status
     const updates: Record<string, string | number | string[]> = { updatedAt: Date.now() }
     if (args.status) updates.status = args.status
     if (args.phone) updates.phone = args.phone
@@ -159,6 +168,13 @@ export const updateByName = mutation({
     }
 
     await ctx.db.patch(lead._id, updates)
+
+    if (statusChanged) {
+      await ctx.scheduler.runAfter(0, internal.agentRunner.runSalesAgentForLead, {
+        organizationId: args.organizationId,
+        leadId: lead._id,
+      })
+    }
 
     return {
       success: true,
@@ -225,18 +241,23 @@ export const list = query({
     await assertUserInOrganization(ctx, args.userId, args.organizationId)
 
     const effectiveLimit = Math.min(args.limit ?? 200, 500)
+    const status = args.status
 
-    const q = ctx.db
+    if (status !== undefined) {
+      return await ctx.db
+        .query('leads')
+        .withIndex('by_org_status', (q) =>
+          q.eq('organizationId', args.organizationId).eq('status', status)
+        )
+        .order('desc')
+        .take(effectiveLimit)
+    }
+
+    return await ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
       .order('desc')
-
-    if (!args.status) {
-      return await q.take(effectiveLimit)
-    }
-
-    const leads = await q.take(effectiveLimit * 3)
-    return leads.filter((l) => l.status === args.status).slice(0, effectiveLimit)
+      .take(effectiveLimit)
   },
 })
 
