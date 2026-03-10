@@ -57,6 +57,12 @@ else
   err "Invoice agent logic tests failed"
 fi
 
+if bun test "${ROOT_DIR}/src/convex/invoices.test.ts" >/dev/null 2>&1; then
+  ok "Convex invoice function tests pass"
+else
+  err "Convex invoice function tests failed"
+fi
+
 if bun test "${ROOT_DIR}/src/convex/agentRunner.reminder.test.ts" >/dev/null 2>&1; then
   ok "Agent runner regression tests pass"
 else
@@ -77,6 +83,7 @@ assert_file_contains "${ROOT_DIR}/src/convex/agentRunner.ts" "runInvoiceAgentFor
 assert_file_contains "${ROOT_DIR}/src/lib/ai/agents/registry.ts" "InvoiceHandler" "Invoice handler registered"
 assert_file_contains "${ROOT_DIR}/src/convex/invoices.ts" "assertUserInOrganization" "Invoice auth checks present"
 assert_file_contains "${ROOT_DIR}/src/convex/invoices.ts" "updateStatusInternal" "Internal status update mutation exists"
+assert_file_contains "${ROOT_DIR}/src/convex/invoices.ts" "flagOverdueInvoiceById" "Invoice overdue flag mutation exists"
 assert_file_contains "${ROOT_DIR}/src/lib/ai/prompts/system.ts" "## Invoicing" "System prompt includes invoicing guidance"
 assert_file_contains "${ROOT_DIR}/src/convex/appointments.ts" "runInvoiceAgentForAppointment" "Appointment completion schedules invoice agent"
 

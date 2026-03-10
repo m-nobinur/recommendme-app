@@ -1,8 +1,75 @@
 import { v } from 'convex/values'
+import { isValid, parseISO } from 'date-fns'
+import type { Id } from './_generated/dataModel'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
 
 const invoiceStatusValues = v.union(v.literal('draft'), v.literal('sent'), v.literal('paid'))
+const PROPOSAL_TRANSITION_STATUSES = new Set(['New', 'Contacted', 'Qualified'])
+
+function assertPositiveInvoiceAmount(amount: number) {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error('Invoice amount must be a positive number')
+  }
+}
+
+function buildInvoiceItemsFromNames(items: string[] | undefined, amount: number) {
+  if (!items) return undefined
+  const cleanItems = items.map((item) => item.trim()).filter((item) => item.length > 0)
+  if (cleanItems.length === 0) return undefined
+  const perItemPrice = amount / cleanItems.length
+  return cleanItems.map((item) => ({
+    name: item,
+    quantity: 1,
+    price: perItemPrice,
+  }))
+}
+
+function parseIsoDateToMs(value: string | undefined): number | null {
+  if (!value) return null
+  const parsed = parseISO(value)
+  return isValid(parsed) ? parsed.getTime() : null
+}
+
+async function appendOverdueInvoiceNoteToLead(
+  ctx: { db: { get: MutationGet; patch: MutationPatch } },
+  args: {
+    organizationId: Id<'organizations'>
+    invoiceId: Id<'invoices'>
+    notes: string
+  }
+) {
+  const invoice = await ctx.db.get(args.invoiceId)
+  if (!invoice || invoice.organizationId !== args.organizationId) {
+    throw new Error('Invoice not found or does not belong to this organization')
+  }
+
+  const lead = await ctx.db.get(invoice.leadId)
+  if (!lead || lead.organizationId !== args.organizationId) {
+    throw new Error('Lead not found or access denied')
+  }
+
+  const noteText = args.notes.trim()
+  if (!noteText) return { applied: false, reason: 'empty' as const }
+
+  const timestamp = new Date().toISOString().split('T')[0]
+  const marker = `[Invoice ${timestamp}]`
+  const existing = lead.notes ?? ''
+  if (existing.includes(marker)) return { applied: false, reason: 'duplicate' as const }
+
+  const updatedNotes = existing ? `${existing}\n${marker} ${noteText}` : `${marker} ${noteText}`
+
+  await ctx.db.patch(lead._id, {
+    notes: updatedNotes,
+    lastContact: Date.now(),
+    updatedAt: Date.now(),
+  })
+
+  return { applied: true as const }
+}
+
+type MutationGet = (id: Id<any>) => Promise<any>
+type MutationPatch = (id: Id<any>, value: Record<string, unknown>) => Promise<void>
 
 /**
  * Create a new invoice
@@ -28,6 +95,7 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    assertPositiveInvoiceAmount(args.amount)
 
     const lead = await ctx.db.get(args.leadId)
     if (!lead || lead.organizationId !== args.organizationId) {
@@ -68,6 +136,7 @@ export const createByLeadName = mutation({
   },
   handler: async (ctx, args) => {
     await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    assertPositiveInvoiceAmount(args.amount)
 
     const leads = await ctx.db
       .query('leads')
@@ -86,12 +155,7 @@ export const createByLeadName = mutation({
 
     const now = Date.now()
 
-    // Convert string items to proper format
-    const formattedItems = args.items?.map((item) => ({
-      name: item,
-      quantity: 1,
-      price: args.amount / (args.items?.length || 1),
-    }))
+    const formattedItems = buildInvoiceItemsFromNames(args.items, args.amount)
 
     const invoiceId = await ctx.db.insert('invoices', {
       organizationId: args.organizationId,
@@ -107,11 +171,12 @@ export const createByLeadName = mutation({
       dueDate: args.dueDate,
     })
 
-    // Update lead status to Proposal
-    await ctx.db.patch(lead._id, {
-      status: 'Proposal',
-      updatedAt: now,
-    })
+    if (PROPOSAL_TRANSITION_STATUSES.has(lead.status)) {
+      await ctx.db.patch(lead._id, {
+        status: 'Proposal',
+        updatedAt: now,
+      })
+    }
 
     return {
       success: true,
@@ -138,6 +203,9 @@ export const update = mutation({
   },
   handler: async (ctx, args) => {
     await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    if (args.amount !== undefined) {
+      assertPositiveInvoiceAmount(args.amount)
+    }
 
     const invoice = await ctx.db.get(args.id)
     if (!invoice || invoice.organizationId !== args.organizationId) {
@@ -251,7 +319,7 @@ export const listByLead = query({
       .withIndex('by_lead', (q) => q.eq('leadId', args.leadId))
       .order('desc')
       .take(200)
-    return invoices.filter((invoice) => invoice.organizationId === args.organizationId)
+    return invoices
   },
 })
 
@@ -372,10 +440,25 @@ export const getCompletedAppointmentsWithoutInvoice = internalQuery({
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
       .take(500)
 
-    const invoicedLeadIds = new Set(invoices.map((i) => String(i.leadId)))
+    const remainingInvoiceCountByLead = new Map<string, number>()
+    for (const invoice of invoices) {
+      const leadId = String(invoice.leadId)
+      remainingInvoiceCountByLead.set(leadId, (remainingInvoiceCountByLead.get(leadId) ?? 0) + 1)
+    }
+
+    const unbilledAppointmentIds = new Set<string>()
+    for (const appointment of [...completedAppointments].reverse()) {
+      const leadId = String(appointment.leadId)
+      const remainingInvoices = remainingInvoiceCountByLead.get(leadId) ?? 0
+      if (remainingInvoices > 0) {
+        remainingInvoiceCountByLead.set(leadId, remainingInvoices - 1)
+        continue
+      }
+      unbilledAppointmentIds.add(String(appointment._id))
+    }
 
     return completedAppointments
-      .filter((a) => !invoicedLeadIds.has(String(a.leadId)))
+      .filter((a) => unbilledAppointmentIds.has(String(a._id)))
       .slice(0, effectiveMax)
       .map((a) => ({
         id: String(a._id),
@@ -415,13 +498,12 @@ export const getOverdueInvoices = internalQuery({
     return sentInvoices
       .filter((i) => {
         if (i.status !== 'sent') return false
-        if (!i.dueDate) return false
-        const dueMs = Date.parse(i.dueDate)
-        return !Number.isNaN(dueMs) && dueMs < args.now - thresholdMs
+        const dueMs = parseIsoDateToMs(i.dueDate)
+        return dueMs !== null && dueMs < args.now - thresholdMs
       })
       .slice(0, effectiveMax)
       .map((i) => {
-        const dueMs = i.dueDate ? Date.parse(i.dueDate) : args.now
+        const dueMs = parseIsoDateToMs(i.dueDate) ?? args.now
         return {
           id: String(i._id),
           leadId: String(i.leadId),
@@ -436,6 +518,26 @@ export const getOverdueInvoices = internalQuery({
   },
 })
 
+export const flagOverdueInvoiceById = mutation({
+  args: {
+    organizationId: v.id('organizations'),
+    userId: v.id('appUsers'),
+    invoiceId: v.id('invoices'),
+    notes: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    const result = await appendOverdueInvoiceNoteToLead(ctx, args)
+    if (!result.applied && result.reason === 'empty') {
+      return { success: true, message: 'Skipped empty overdue note' }
+    }
+    if (!result.applied && result.reason === 'duplicate') {
+      return { success: true, message: 'Skipped duplicate overdue note' }
+    }
+    return { success: true, message: 'Overdue note added to lead' }
+  },
+})
+
 export const createDraftForLeadInternal = internalMutation({
   args: {
     organizationId: v.id('organizations'),
@@ -445,6 +547,8 @@ export const createDraftForLeadInternal = internalMutation({
     dueDate: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    assertPositiveInvoiceAmount(args.amount)
+
     const lead = await ctx.db.get(args.leadId)
     if (!lead || lead.organizationId !== args.organizationId) {
       throw new Error('Lead not found or access denied')
@@ -504,31 +608,6 @@ export const flagOverdueInvoiceInternal = internalMutation({
     notes: v.string(),
   },
   handler: async (ctx, args) => {
-    const invoice = await ctx.db.get(args.invoiceId)
-    if (!invoice || invoice.organizationId !== args.organizationId) {
-      throw new Error('Invoice not found or does not belong to this organization')
-    }
-
-    const lead = await ctx.db.get(invoice.leadId)
-    if (!lead || lead.organizationId !== args.organizationId) {
-      throw new Error('Lead not found or access denied')
-    }
-
-    const noteText = args.notes.trim()
-    if (!noteText) return
-
-    const timestamp = new Date().toISOString().split('T')[0]
-    const existing = lead.notes ?? ''
-    if (existing.includes(`[Invoice ${timestamp}]`)) return
-
-    const updatedNotes = existing
-      ? `${existing}\n[Invoice ${timestamp}] ${noteText}`
-      : `[Invoice ${timestamp}] ${noteText}`
-
-    await ctx.db.patch(lead._id, {
-      notes: updatedNotes,
-      lastContact: Date.now(),
-      updatedAt: Date.now(),
-    })
+    await appendOverdueInvoiceNoteToLead(ctx, args)
   },
 })

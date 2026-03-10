@@ -1,5 +1,5 @@
 import type { ConvexHttpClient } from 'convex/browser'
-import { asAppUserId, asInvoiceId, asLeadId, asOrganizationId, getApi } from '../../shared/convex'
+import { asAppUserId, asInvoiceId, asOrganizationId, getApi } from '../../shared/convex'
 import type { ActionResult, AgentAction, AgentContext } from '../core/types'
 
 export const INVOICE_ACTIONS = [
@@ -81,50 +81,29 @@ async function executeFlagOverdueInvoice(
       }
     }
 
-    const { api } = await getApi()
-
-    const lead = await convex.query(api.leads.get, {
-      userId: asAppUserId(context.userId),
-      id: asLeadId(action.target),
-      organizationId: asOrganizationId(context.organizationId),
-    })
-
-    if (!lead) {
+    const invoiceId = String(action.params.invoiceId ?? action.target).trim()
+    if (!invoiceId) {
       return {
         action,
         success: false,
-        message: `Lead not found: ${action.target}`,
-        error: `Lead not found: ${action.target}`,
+        message: 'Missing invoice id for overdue flag action',
+        error: 'Missing invoice id',
         durationMs: Date.now() - start,
       }
     }
 
-    const timestamp = new Date().toISOString().split('T')[0]
-    const existingNotes = (lead as { notes?: string }).notes ?? ''
-    if (existingNotes.includes(`[Invoice ${timestamp}]`)) {
-      return {
-        action,
-        success: true,
-        message: `Skipped duplicate overdue flag for lead ${action.target}`,
-        durationMs: Date.now() - start,
-      }
-    }
-    const updatedNotes = existingNotes
-      ? `${existingNotes}\n[Invoice ${timestamp}] ${notes}`
-      : `[Invoice ${timestamp}] ${notes}`
-
-    await convex.mutation(api.leads.update, {
+    const { api } = await getApi()
+    const result = await convex.mutation(api.invoices.flagOverdueInvoiceById, {
       userId: asAppUserId(context.userId),
-      id: asLeadId(action.target),
       organizationId: asOrganizationId(context.organizationId),
-      notes: updatedNotes,
-      lastContact: Date.now(),
+      invoiceId: asInvoiceId(invoiceId),
+      notes,
     })
 
     return {
       action,
       success: true,
-      message: `Flagged overdue invoice on lead ${action.target}`,
+      message: String(result.message ?? `Flagged overdue invoice ${invoiceId}`),
       durationMs: Date.now() - start,
     }
   } catch (error) {

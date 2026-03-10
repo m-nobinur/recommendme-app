@@ -1,5 +1,6 @@
 import { validateInvoicePlan } from '@convex/agentLogic/invoice'
 import type { ConvexHttpClient } from 'convex/browser'
+import { isValid, parseISO } from 'date-fns'
 import { asAppUserId, asOrganizationId, getApi } from '../../shared/convex'
 import type { AgentConfig } from '../core/config'
 import type { AgentHandler } from '../core/handler'
@@ -20,6 +21,12 @@ import { buildInvoiceUserPrompt, INVOICE_SYSTEM_PROMPT } from './prompt'
 import { executeInvoiceAction } from './tools'
 
 const MS_PER_DAY = 86_400_000
+
+function parseIsoDateToMs(value: string | undefined): number | null {
+  if (!value) return null
+  const parsed = parseISO(value)
+  return isValid(parsed) ? parsed.getTime() : null
+}
 
 /**
  * Next.js-side handler for the Invoice Agent.
@@ -56,13 +63,28 @@ export class InvoiceHandler implements AgentHandler {
       convex.query(api.leads.list, { userId: uid, organizationId: orgId }),
     ])
 
-    const existingInvoiceLeadIds = new Set(
-      (allInvoices as Array<{ leadId: string }>).map((i) => String(i.leadId))
+    const completedPool = (allAppointments as Array<Record<string, unknown>>).filter(
+      (a) => String(a.status) === 'completed'
     )
+    const remainingInvoiceCountByLead = new Map<string, number>()
+    for (const invoice of allInvoices as Array<{ leadId: string }>) {
+      const leadId = String(invoice.leadId)
+      remainingInvoiceCountByLead.set(leadId, (remainingInvoiceCountByLead.get(leadId) ?? 0) + 1)
+    }
 
-    const completedAppointments = (allAppointments as Array<Record<string, unknown>>)
-      .filter((a) => String(a.status) === 'completed')
-      .filter((a) => !existingInvoiceLeadIds.has(String(a.leadId)))
+    const unbilledAppointmentIds = new Set<string>()
+    for (const appointment of [...completedPool].reverse()) {
+      const leadId = String(appointment.leadId)
+      const remaining = remainingInvoiceCountByLead.get(leadId) ?? 0
+      if (remaining > 0) {
+        remainingInvoiceCountByLead.set(leadId, remaining - 1)
+        continue
+      }
+      unbilledAppointmentIds.add(String(appointment._id))
+    }
+
+    const completedAppointments = completedPool
+      .filter((a) => unbilledAppointmentIds.has(String(a._id)))
       .slice(0, this.settings.maxInvoicesPerBatch)
       .map((a) => ({
         id: String(a._id),
@@ -79,14 +101,13 @@ export class InvoiceHandler implements AgentHandler {
       .filter((i) => {
         if (String(i.status) !== 'sent') return false
         const dueDate = i.dueDate ? String(i.dueDate) : undefined
-        if (!dueDate) return false
-        const dueMs = Date.parse(dueDate)
-        return !Number.isNaN(dueMs) && dueMs < now - this.settings.overdueThresholdDays * MS_PER_DAY
+        const dueMs = parseIsoDateToMs(dueDate)
+        return dueMs !== null && dueMs < now - this.settings.overdueThresholdDays * MS_PER_DAY
       })
       .slice(0, this.settings.maxInvoicesPerBatch)
       .map((i) => {
         const dueDate = i.dueDate ? String(i.dueDate) : undefined
-        const dueMs = dueDate ? Date.parse(dueDate) : now
+        const dueMs = parseIsoDateToMs(dueDate) ?? now
         return {
           id: String(i._id),
           leadName: String(i.leadName),
