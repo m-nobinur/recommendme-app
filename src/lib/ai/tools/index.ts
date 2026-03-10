@@ -15,6 +15,7 @@ export interface ToolContext {
   convexUrl: string
   convexClient?: ConvexHttpClient
   memoryAuthToken?: string
+  timezone?: string
 }
 
 /**
@@ -374,3 +375,4 @@ export function createCRMTools(ctx: ToolContext) {
 export type CRMTools = ReturnType<typeof createCRMTools>
 
 export { createMemoryTools, type MemoryTools } from './memory'
+export { createReminderTools, type ReminderTools } from './reminder'

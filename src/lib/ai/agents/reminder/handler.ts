@@ -1,6 +1,7 @@
 import { validateReminderPlan } from '@convex/agentLogic/reminder'
 import type { ConvexHttpClient } from 'convex/browser'
 import { asAppUserId, asOrganizationId, getApi } from '../../shared/convex'
+import { appointmentToEpoch, resolveTimezone, todayInTimezone } from '../../shared/timezone'
 import type { AgentConfig } from '../core/config'
 import type { AgentHandler } from '../core/handler'
 import { recordLearning } from '../core/memory'
@@ -48,15 +49,18 @@ export class ReminderHandler implements AgentHandler {
     const maxWindowHours = Math.max(...this.settings.reminderWindowHours)
     const windowEnd = now + maxWindowHours * MS_PER_HOUR
 
-    const allAppointments = await convex.query(api.appointments.list, {
-      userId: asAppUserId(userId),
-      organizationId: asOrganizationId(organizationId),
-    })
+    const orgId = asOrganizationId(organizationId)
+    const [allAppointments, org] = await Promise.all([
+      convex.query(api.appointments.list, {
+        userId: asAppUserId(userId),
+        organizationId: orgId,
+      }),
+      convex.query(api.organizations.getOrganization, { id: orgId }).catch(() => null),
+    ])
 
-    const today = new Date(now)
-    const todayStr = today.toISOString().split('T')[0]
-    const windowEndDate = new Date(windowEnd)
-    const windowEndStr = windowEndDate.toISOString().split('T')[0]
+    const tz = resolveTimezone(org?.settings?.timezone)
+    const todayStr = todayInTimezone(tz, now)
+    const windowEndStr = todayInTimezone(tz, windowEnd)
 
     const upcomingAppointments = allAppointments
       .filter((a: Record<string, unknown>) => {
@@ -64,12 +68,12 @@ export class ReminderHandler implements AgentHandler {
         const date = String(a.date)
         const notes = a.notes ? String(a.notes) : ''
         const time = String(a.time)
-        const appointmentTime = Date.parse(`${date}T${time}:00Z`)
+        const apptEpoch = appointmentToEpoch(date, time, tz)
         return (
           status === 'scheduled' &&
           date >= todayStr &&
           date <= windowEndStr &&
-          appointmentTime > now &&
+          apptEpoch > now &&
           !notes.includes('[Reminder')
         )
       })
@@ -77,7 +81,7 @@ export class ReminderHandler implements AgentHandler {
       .map((a: Record<string, unknown>) => {
         const dateStr = String(a.date)
         const timeStr = String(a.time)
-        const apptTime = Date.parse(`${dateStr}T${timeStr}:00Z`)
+        const apptTime = appointmentToEpoch(dateStr, timeStr, tz)
         const rawHours = Math.round((apptTime - now) / MS_PER_HOUR)
         const hoursUntil = Number.isNaN(rawHours) ? 0 : Math.max(0, rawHours)
 

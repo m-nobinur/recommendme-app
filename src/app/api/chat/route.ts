@@ -20,7 +20,7 @@ import { retrieveMemoryContext } from '@/lib/ai/memory/retrieval'
 import { getSystemPrompt } from '@/lib/ai/prompts/system'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers'
 import { createAIProvider, isValidProvider, isValidTier } from '@/lib/ai/providers'
-import { createCRMTools, createMemoryTools } from '@/lib/ai/tools'
+import { createCRMTools, createMemoryTools, createReminderTools } from '@/lib/ai/tools'
 import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
@@ -200,23 +200,30 @@ export async function POST(req: Request) {
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? ''
     const convexForMemory = getConvexClient()
 
-    const nicheLookupPromise: Promise<string | undefined> =
-      featureFlags.enableMemory && organizationId && convexForMemory
+    const orgLookupPromise: Promise<{ nicheId?: string; timezone?: string }> =
+      organizationId && convexForMemory
         ? convexForMemory
             .query(api.organizations.getOrganization, {
               id: organizationId as Id<'organizations'>,
             })
-            .then((org) => org?.settings?.nicheId ?? undefined)
-            .catch(() => undefined)
-        : Promise.resolve(undefined)
+            .then((org) => ({
+              nicheId: org?.settings?.nicheId ?? undefined,
+              timezone: org?.settings?.timezone ?? undefined,
+            }))
+            .catch(() => ({}))
+        : Promise.resolve({})
+
+    const orgSettingsPromise = Promise.race([
+      orgLookupPromise,
+      new Promise<{ nicheId?: string; timezone?: string }>((resolve) =>
+        setTimeout(() => resolve({}), 75)
+      ),
+    ])
 
     const memoryPromise =
       featureFlags.enableMemory && organizationId
         ? (async () => {
-            const nicheId = await Promise.race<string | undefined>([
-              nicheLookupPromise,
-              new Promise((resolve) => setTimeout(() => resolve(undefined), 75)),
-            ])
+            const { nicheId } = await orgSettingsPromise
             return retrieveMemoryContext({
               query: lastUserMessageText,
               organizationId,
@@ -228,6 +235,8 @@ export async function POST(req: Request) {
             })
           })()
         : Promise.resolve(null)
+
+    const orgSettings = await orgSettingsPromise
     const toolCtx =
       userId && organizationId
         ? {
@@ -236,13 +245,18 @@ export async function POST(req: Request) {
             convexUrl,
             convexClient: convexForMemory ?? undefined,
             memoryAuthToken,
+            timezone: orgSettings.timezone,
           }
         : null
 
     const crmTools = toolCtx ? createCRMTools(toolCtx) : undefined
+    const reminderTools = toolCtx ? createReminderTools(toolCtx) : undefined
     const memoryTools =
       featureFlags.enableMemory && toolCtx ? createMemoryTools(toolCtx) : undefined
-    const tools = crmTools || memoryTools ? { ...crmTools, ...memoryTools } : undefined
+    const tools =
+      crmTools || reminderTools || memoryTools
+        ? { ...crmTools, ...reminderTools, ...memoryTools }
+        : undefined
 
     const model = createAIProvider(aiProvider, modelTier)
 
