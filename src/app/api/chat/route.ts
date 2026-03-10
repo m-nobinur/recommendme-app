@@ -25,6 +25,7 @@ import {
   createInvoiceTools,
   createMemoryTools,
   createReminderTools,
+  createSalesFunnelTools,
 } from '@/lib/ai/tools'
 import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
@@ -257,11 +258,12 @@ export async function POST(req: Request) {
     const crmTools = toolCtx ? createCRMTools(toolCtx) : undefined
     const reminderTools = toolCtx ? createReminderTools(toolCtx) : undefined
     const invoiceTools = toolCtx ? createInvoiceTools(toolCtx) : undefined
+    const salesFunnelTools = toolCtx ? createSalesFunnelTools(toolCtx) : undefined
     const memoryTools =
       featureFlags.enableMemory && toolCtx ? createMemoryTools(toolCtx) : undefined
     const tools =
-      crmTools || reminderTools || invoiceTools || memoryTools
-        ? { ...crmTools, ...reminderTools, ...invoiceTools, ...memoryTools }
+      crmTools || reminderTools || invoiceTools || salesFunnelTools || memoryTools
+        ? { ...crmTools, ...reminderTools, ...invoiceTools, ...salesFunnelTools, ...memoryTools }
         : undefined
 
     const model = createAIProvider(aiProvider, modelTier)

@@ -334,3 +334,4 @@ export type CRMTools = ReturnType<typeof createCRMTools>
 export { createInvoiceTools, type InvoiceTools } from './invoice'
 export { createMemoryTools, type MemoryTools } from './memory'
 export { createReminderTools, type ReminderTools } from './reminder'
+export { createSalesFunnelTools, type SalesFunnelTools } from './salesFunnel'
