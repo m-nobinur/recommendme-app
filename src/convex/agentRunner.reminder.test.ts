@@ -132,6 +132,72 @@ describe('updateLeadNotes', () => {
 
     assert.equal(patchCalled, false)
   })
+
+  it('does not update lastContact for analytical sales notes', async () => {
+    const lead = {
+      _id: 'lead_2',
+      organizationId: 'org_1',
+      notes: 'Existing notes',
+    }
+
+    let patched: { notes: string; lastContact?: number; updatedAt?: number } | null = null
+    const ctx = {
+      db: {
+        get: async () => lead,
+        patch: async (
+          _id: string,
+          updates: { notes: string; lastContact?: number; updatedAt: number }
+        ) => {
+          patched = updates
+        },
+      },
+    }
+
+    await (updateLeadNotes as any)._handler(ctx, {
+      organizationId: 'org_1',
+      leadId: 'lead_2',
+      notes: '[Sales Score] 7/10 — Good response rate',
+      agentType: 'sales',
+      touchLastContact: false,
+    })
+
+    assert.ok(patched !== null)
+    const patchedResult = patched as { notes: string; lastContact?: number; updatedAt?: number }
+    assert.equal(patchedResult.lastContact, undefined)
+    assert.match(String(patchedResult.notes), /\[Sales \d{4}-\d{2}-\d{2}\] \[Sales Score\] 7\/10/)
+  })
+
+  it('updates lastContact by default for contact-style notes', async () => {
+    const lead = {
+      _id: 'lead_3',
+      organizationId: 'org_1',
+      notes: '',
+    }
+
+    let patched: { notes: string; lastContact?: number; updatedAt?: number } | null = null
+    const ctx = {
+      db: {
+        get: async () => lead,
+        patch: async (
+          _id: string,
+          updates: { notes: string; lastContact?: number; updatedAt: number }
+        ) => {
+          patched = updates
+        },
+      },
+    }
+
+    await (updateLeadNotes as any)._handler(ctx, {
+      organizationId: 'org_1',
+      leadId: 'lead_3',
+      notes: 'Followed up by phone',
+      agentType: 'followup',
+    })
+
+    assert.ok(patched !== null)
+    const patchedResult = patched as { notes: string; lastContact?: number; updatedAt?: number }
+    assert.equal(typeof patchedResult.lastContact, 'number')
+  })
 })
 
 describe('reviewPlannedActions', () => {

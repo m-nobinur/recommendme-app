@@ -87,6 +87,8 @@ header "Cron Wiring"
 
 assert_file_contains "src/convex/crons.ts" "runFollowupAgent" \
   "Followup agent cron triggers runFollowupAgent"
+assert_file_contains "src/convex/crons.ts" "runSalesAgent" \
+  "Sales funnel cron triggers runSalesAgent"
 
 CRON_REF=$(grep -c "agentRunner" src/convex/crons.ts 2>/dev/null || echo 0)
 if [[ "$CRON_REF" -ge 1 ]]; then
@@ -106,6 +108,8 @@ assert_file_contains "src/lib/ai/agents/registry.ts" "getRegisteredAgentTypes" \
   "getRegisteredAgentTypes exported from registry"
 assert_file_contains "src/lib/ai/agents/registry.ts" "isAgentImplemented" \
   "isAgentImplemented exported from registry"
+assert_file_contains "src/lib/ai/agents/registry.ts" "SalesHandler" \
+  "SalesHandler wired in registry"
 
 # Core interfaces
 assert_file_contains "src/lib/ai/agents/core/handler.ts" "AgentHandler" \
@@ -268,6 +272,8 @@ assert_file_contains "src/convex/agentRunner.ts" "Lead does not belong to this o
 
 assert_file_contains "src/lib/ai/agents/followup/tools.ts" "asOrganizationId(context.organizationId)" \
   "followup tools pass organizationId to secured lead mutations"
+assert_file_contains "src/convex/leads.ts" "runSalesAgentForLead" \
+  "lead status changes can trigger sales agent execution"
 
 assert_file_contains "src/convex/agentDefinitions.ts" "Only organization owners/admins can manage agents" \
   "agentDefinitions mutations enforce owner/admin role for agent management"
@@ -275,3 +281,4 @@ assert_file_contains "src/convex/agentDefinitions.ts" "Only organization owners/
 # ── Results ───────────────────────────────────────────────────
 
 print_results
+exit $fail

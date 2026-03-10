@@ -26,8 +26,8 @@ describe('isAgentImplemented', () => {
     assert.equal(isAgentImplemented('invoice'), true)
   })
 
-  it('returns false for sales (not yet implemented)', () => {
-    assert.equal(isAgentImplemented('sales'), false)
+  it('returns true for sales (implemented)', () => {
+    assert.equal(isAgentImplemented('sales'), true)
   })
 })
 
@@ -62,8 +62,18 @@ describe('getAgentHandler', () => {
     assert.equal(typeof handler.learn, 'function')
   })
 
-  it('throws for unimplemented agent types', () => {
-    assert.throws(() => getAgentHandler('sales'), /not yet implemented/)
+  it('returns a handler for sales agent', () => {
+    const handler = getAgentHandler('sales')
+    assert.equal(handler.agentType, 'sales')
+    assert.equal(typeof handler.loadContext, 'function')
+    assert.equal(typeof handler.buildPlanPrompt, 'function')
+    assert.equal(typeof handler.validatePlan, 'function')
+    assert.equal(typeof handler.executeAction, 'function')
+    assert.equal(typeof handler.learn, 'function')
+  })
+
+  it('throws for unknown agent types', () => {
+    assert.throws(() => getAgentHandler('unknown' as never), /Unknown agent type/)
   })
 
   it('followup handler has the correct config shape', () => {
