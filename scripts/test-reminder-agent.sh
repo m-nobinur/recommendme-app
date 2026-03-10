@@ -455,6 +455,95 @@ assert_file_contains "src/lib/ai/agents/reminder/handler.ts" \
   "PRODUCTION NOTE" \
   "Handler path has production usage documentation"
 
+# ── 17. Chat Tool Integration ──────────────────────────────────
+
+header "Chat Tool Integration"
+
+assert_file_exists "src/lib/ai/tools/reminder.ts" \
+  "Reminder chat tool module exists"
+
+assert_file_contains "src/lib/ai/tools/reminder.ts" \
+  "createReminderTools" \
+  "createReminderTools function defined"
+
+assert_file_contains "src/lib/ai/tools/reminder.ts" \
+  "setReminder" \
+  "setReminder tool defined"
+
+assert_file_contains "src/lib/ai/tools/reminder.ts" \
+  "listReminders" \
+  "listReminders tool defined"
+
+assert_file_contains "src/lib/ai/tools/index.ts" \
+  "createReminderTools" \
+  "Reminder tools exported from barrel"
+
+assert_file_contains "src/app/api/chat/route.ts" \
+  "createReminderTools" \
+  "Chat route imports createReminderTools"
+
+assert_file_contains "src/app/api/chat/route.ts" \
+  "reminderTools" \
+  "Chat route creates reminderTools"
+
+# ── 18. Convex Public API ──────────────────────────────────────
+
+header "Convex Public Reminder API"
+
+assert_file_contains "src/convex/appointments.ts" \
+  "setReminderNote" \
+  "appointments.setReminderNote mutation exists"
+
+assert_file_contains "src/convex/appointments.ts" \
+  "setReminderByLeadName" \
+  "appointments.setReminderByLeadName mutation exists"
+
+assert_file_contains "src/convex/appointments.ts" \
+  "getAppointmentsWithReminders" \
+  "appointments.getAppointmentsWithReminders query exists"
+
+assert_file_contains "src/convex/appointments.ts" \
+  "assertUserInOrganization" \
+  "Convex mutations enforce org auth"
+
+# ── 19. System Prompt ──────────────────────────────────────────
+
+header "System Prompt Integration"
+
+assert_file_contains "src/lib/ai/prompts/system.ts" \
+  "setReminder" \
+  "System prompt documents setReminder tool"
+
+assert_file_contains "src/lib/ai/prompts/system.ts" \
+  "listReminders" \
+  "System prompt documents listReminders tool"
+
+assert_file_contains "src/lib/ai/prompts/system.ts" \
+  "Reminders" \
+  "System prompt has Reminders capability section"
+
+# ── 20. Chat Tool Unit Tests ──────────────────────────────────
+
+header "Chat Tool Unit Tests"
+
+assert_file_exists "src/lib/ai/tools/reminder.test.ts" \
+  "Reminder tool test file exists"
+
+info "Running reminder tool unit tests..."
+TEST_OUTPUT=$(bun test src/lib/ai/tools/reminder.test.ts 2>&1)
+TEST_EXIT=$?
+
+if [[ $TEST_EXIT -eq 0 ]]; then
+  ok "All reminder chat tool unit tests passed"
+  TEST_COUNT=$(echo "$TEST_OUTPUT" | grep -oE '[0-9]+ pass' | head -1)
+  if [[ -n "$TEST_COUNT" ]]; then
+    info "$TEST_COUNT"
+  fi
+else
+  err "Reminder chat tool unit tests failed"
+  echo "$TEST_OUTPUT" | tail -20
+fi
+
 # ── Results ────────────────────────────────────────────────────
 
 print_results

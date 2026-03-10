@@ -22,9 +22,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Daily reminder agent cron job at 09:00 UTC in `src/convex/crons.ts`
 - Agent registry updated — `reminder` mapped to `ReminderHandler` (no longer throws)
 - Shared type helper `asAppointmentId()` added to `src/lib/ai/shared/convex.ts`
-- Validation test script `scripts/test-reminder-agent.sh` (79 checks across 16 sections)
+- Validation test script `scripts/test-reminder-agent.sh` (95 checks across 20 sections)
 - Added reminder-focused unit tests: `src/convex/agentRunner.reminder.test.ts` and `src/convex/agentLogic/reminder.test.ts`
 - Barrel exports from `src/lib/ai/agents/index.ts` and `src/convex/agentLogic/index.ts`
+
+#### Reminder Agent Chat Integration (Phase 7b+)
+- Chat tools: `setReminder` and `listReminders` in `src/lib/ai/tools/reminder.ts` — users can set reminders via conversation ("remind me about my appointment with Sarah")
+- Convex public API: `appointments.setReminderByLeadName` (fuzzy name + date match), `appointments.setReminderNote` (by ID), `appointments.getAppointmentsWithReminders` (query)
+- System prompt v2 updated with Reminders capability section and tool documentation
+- Chat route wired: `createReminderTools` creates tools alongside CRM and memory tools
+- Uses same `[Reminder YYYY-MM-DD]` marker as cron agent for idempotency
+- All mutations enforce `assertUserInOrganization` for security
+- 9 unit tests in `src/lib/ai/tools/reminder.test.ts`
+- Blueprint documented in DEVELOPMENT_PLAN.md for wiring future agents (7c/7d) with chat
 
 #### Agent Framework Foundation (Phase 7a)
 - Core agent framework at `src/lib/ai/agents/core/` with AgentHandler interface, pipeline runner, risk engine, memory helpers, and guardrail enforcement
