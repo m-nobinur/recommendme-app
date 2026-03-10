@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Invoice Agent (Phase 7c)
+- Invoice agent at `src/lib/ai/agents/invoice/` — creates draft invoices for completed appointments, flags overdue invoices, learns from outcomes
+- Convex-side agent logic at `src/convex/agentLogic/invoice.ts` with settings, config, system prompt, prompt builder, and plan validator
+- Four invoice actions: `create_invoice`, `update_invoice_status`, `flag_overdue_invoice`, `log_invoice_recommendation`
+- Event-driven trigger: appointment `update` to `completed` status schedules invoice agent run via `ctx.scheduler.runAfter()`
+- Daily invoice agent cron job at 10:00 UTC for overdue detection in `src/convex/crons.ts`
+- Chat tools: `createInvoice`, `listInvoices`, `getInvoiceStats`, `markInvoicePaid` in `src/lib/ai/tools/invoice.ts`
+- New Convex mutation `invoices.markAsPaidByLeadName` — fuzzy-matches lead name and marks most recent unpaid invoice as paid
+- Internal queries: `invoices.getCompletedAppointmentsWithoutInvoice`, `invoices.getOverdueInvoices`
+- Internal mutations: `invoices.createDraftForLeadInternal`, `invoices.updateStatusInternal`, `invoices.flagOverdueInvoiceInternal`
+- Extended `AgentContext` with optional `invoices: InvoiceSummary[]` field for overdue invoice data
+- System prompt v2 updated with dedicated Invoicing section and tool documentation
+- Agent registry updated — `invoice` mapped to `InvoiceHandler` (no longer throws)
+- Added invoice-focused tests in `src/lib/ai/tools/invoice.test.ts` and `src/convex/agentLogic/invoice.test.ts`
+- E2E validation script `scripts/test-invoice-agent.sh`
+
+### Security
+- Added `assertUserInOrganization` to `invoices.create`, `invoices.createByLeadName`, `invoices.update`, `invoices.remove`, `invoices.markAsPaidByLeadName`
+- Invoice `update` mutation now requires `organizationId` and `userId` args with org ownership checks
+- Invoice `remove` mutation now requires `organizationId` and `userId` args with org ownership checks
+- Invoice read queries (`get`, `list`, `listByLead`, `getStats`) now enforce org membership and tenant ownership checks
+- Moved `createInvoice` from CRM tools to dedicated invoice module for better separation of concerns
+
 #### Reminder Agent (Phase 7b)
 - Reminder agent at `src/lib/ai/agents/reminder/` — scans upcoming appointments (24h/48h windows), plans reminder actions via LLM, learns from outcomes
 - Convex-side agent logic at `src/convex/agentLogic/reminder.ts` with settings, config, system prompt, prompt builder, and plan validator

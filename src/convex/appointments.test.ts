@@ -160,7 +160,7 @@ describe('appointments.listByLead', () => {
         query: () => ({
           withIndex: () => ({
             order: () => ({
-              collect: async () => [
+              take: async () => [
                 { _id: 'appt_1', organizationId: 'org_1', leadId: 'lead_1' },
                 { _id: 'appt_2', organizationId: 'org_2', leadId: 'lead_1' },
               ],

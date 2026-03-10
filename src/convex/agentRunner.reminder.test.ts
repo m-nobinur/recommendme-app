@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { DEFAULT_INVOICE_SETTINGS } from './agentLogic/invoice'
 import { DEFAULT_REMINDER_SETTINGS } from './agentLogic/reminder'
 import {
   determineExecutionOutcome,
   getUpcomingAppointmentsForReminder,
   reviewPlannedActions,
+  sanitizeInvoiceSettings,
   sanitizeReminderSettings,
   selectReminderCandidates,
   updateAppointmentNotes,
@@ -25,6 +27,25 @@ describe('sanitizeReminderSettings', () => {
 
     assert.deepEqual(settings.reminderWindowHours, [8, 24, 48])
     assert.equal(settings.maxAppointmentsPerBatch, 12)
+  })
+})
+
+describe('sanitizeInvoiceSettings', () => {
+  it('falls back to defaults for invalid input', () => {
+    assert.deepEqual(sanitizeInvoiceSettings(null), DEFAULT_INVOICE_SETTINGS)
+    assert.deepEqual(sanitizeInvoiceSettings('bad'), DEFAULT_INVOICE_SETTINGS)
+  })
+
+  it('normalizes invoice settings into safe bounds', () => {
+    const settings = sanitizeInvoiceSettings({
+      defaultPaymentTermsDays: 14.9,
+      overdueThresholdDays: 5.2,
+      maxInvoicesPerBatch: 33.7,
+    })
+
+    assert.equal(settings.defaultPaymentTermsDays, 14)
+    assert.equal(settings.overdueThresholdDays, 5)
+    assert.equal(settings.maxInvoicesPerBatch, 33)
   })
 })
 

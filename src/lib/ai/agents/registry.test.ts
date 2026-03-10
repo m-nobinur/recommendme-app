@@ -22,8 +22,8 @@ describe('isAgentImplemented', () => {
     assert.equal(isAgentImplemented('reminder'), true)
   })
 
-  it('returns false for invoice (not yet implemented)', () => {
-    assert.equal(isAgentImplemented('invoice'), false)
+  it('returns true for invoice (implemented)', () => {
+    assert.equal(isAgentImplemented('invoice'), true)
   })
 
   it('returns false for sales (not yet implemented)', () => {
@@ -52,8 +52,17 @@ describe('getAgentHandler', () => {
     assert.equal(typeof handler.learn, 'function')
   })
 
+  it('returns a handler for invoice agent', () => {
+    const handler = getAgentHandler('invoice')
+    assert.equal(handler.agentType, 'invoice')
+    assert.equal(typeof handler.loadContext, 'function')
+    assert.equal(typeof handler.buildPlanPrompt, 'function')
+    assert.equal(typeof handler.validatePlan, 'function')
+    assert.equal(typeof handler.executeAction, 'function')
+    assert.equal(typeof handler.learn, 'function')
+  })
+
   it('throws for unimplemented agent types', () => {
-    assert.throws(() => getAgentHandler('invoice'), /not yet implemented/)
     assert.throws(() => getAgentHandler('sales'), /not yet implemented/)
   })
 
