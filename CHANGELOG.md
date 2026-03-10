@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Sales Funnel Agent (Phase 7d)
+- Sales funnel agent at `src/lib/ai/agents/sales/` — scores leads, detects stale pipelines, recommends stage transitions, and surfaces pipeline insights
+- Convex-side agent logic at `src/convex/agentLogic/sales.ts` with settings, config, system prompt, prompt builder, and plan validator
+- Four sales actions: `score_lead`, `recommend_stage_change`, `flag_stale_lead`, `log_pipeline_insight`
+- Event-driven trigger: lead status changes in both `leads.update` and `leads.updateByName` schedule sales agent runs via `ctx.scheduler.runAfter()`
+- Daily sales funnel cron job at 11:00 UTC in `src/convex/crons.ts` (runs per-org with bounded `maxLeadsPerBatch` settings)
+- Chat tools: `getLeadScore`, `getPipelineOverview`, `getLeadRecommendation` in `src/lib/ai/tools/salesFunnel.ts`
+- Internal queries: `agentRunner.getLeadsForSalesPipeline`, `agentRunner.getAppointmentsForLeads`, `agentRunner.getInvoicesForLeads`
+- Sanitized sales settings: `sanitizeSalesSettings` for stale threshold, batch size, and high-value threshold
+- Extended `runAgentForOrg` with `'sales'` agent type — aggregates appointment/invoice data per lead for pipeline context
+- System prompt v2 updated with dedicated Sales Pipeline section and tool documentation
+- Agent registry updated — `sales` mapped to `SalesHandler` (no longer throws)
+- E2E validation script `scripts/test-sales-agent.sh` with unit test gates and optional live integration section
+- Sales action contract hardening: normalized stage/stale param handling between prompt schema and runner execution
+- Sales context query hardening: appointments and invoices are now fetched via lead-scoped indexes to avoid lossy org-wide sampling
+- Sales note integrity hardening: sales-scoring and recommendation notes no longer mutate `lastContact` (prevents stale/recency metric drift)
+- Sales chat analytics hardening: lead scoring now uses lead-id scoped appointment/invoice queries; pipeline overview computes stage buckets with explicit sampling flags when status buckets hit scan caps
+- Unit tests: 22 tests in `src/convex/agentLogic/sales.test.ts` (prompt builder, plan validator, settings sanitizer), 17 tests in `src/lib/ai/tools/salesFunnel.test.ts` (engagement scoring, chat tool wiring, error handling)
+
+### Fixed
+- Fixed idempotency marker mismatch in `agentRunner.updateLeadNotes` — sales dedup check now matches `[Sales ${timestamp}]` format (was incorrectly checking `[Sales Score ${timestamp}]`, causing duplicate daily scoring)
+- Replaced hardcoded stale threshold (`> 7`) in `prompt.ts` and `salesFunnel.ts` with shared `DEFAULT_SALES_SETTINGS.staleThresholdDays` for consistency between cron and chat paths
+- Added persistence to `executeRecommendStageChange` in Next.js-side sales handler — now writes `[Stage Recommendation]` notes to leads via `leads.updateByName` (was console-only)
+
 #### Invoice Agent (Phase 7c)
 - Invoice agent at `src/lib/ai/agents/invoice/` — creates draft invoices for completed appointments, flags overdue invoices, learns from outcomes
 - Convex-side agent logic at `src/convex/agentLogic/invoice.ts` with settings, config, system prompt, prompt builder, and plan validator
