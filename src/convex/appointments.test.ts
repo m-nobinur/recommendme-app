@@ -118,7 +118,7 @@ describe('appointments.create', () => {
   })
 
   it('uses canonical lead name from the lead record', async () => {
-    let insertedDoc: Record<string, unknown> | null = null
+    let insertedDoc: Record<string, unknown> = {}
     const ctx = {
       db: {
         get: async (id: string) => {
@@ -143,8 +143,8 @@ describe('appointments.create', () => {
     })
 
     assert.equal(result, 'appt_new')
-    assert.equal(insertedDoc?.leadName, 'Real Name')
-    assert.equal(insertedDoc?.title, 'Appointment with Real Name')
+    assert.equal(insertedDoc.leadName, 'Real Name')
+    assert.equal(insertedDoc.title, 'Appointment with Real Name')
   })
 })
 
@@ -190,6 +190,7 @@ describe('appointments.list performance', () => {
     date: string
     time: string
     status: 'scheduled' | 'completed' | 'cancelled'
+    [key: string]: unknown
   }
 
   function createListCtx(appointments: ListTestAppointment[]) {

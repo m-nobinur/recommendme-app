@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
+import { resolveTimezone, todayInTimezone } from './lib/timezone'
 
 const appointmentStatusValues = v.union(
   v.literal('scheduled'),
@@ -69,7 +70,7 @@ export const createByLeadName = mutation({
     const leads = await ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+      .take(500)
 
     const searchTerm = args.leadName.toLowerCase()
     const lead = leads.find((l) => l.name.toLowerCase().includes(searchTerm))
@@ -210,17 +211,16 @@ export const list = query({
     const hasDateRange = args.startDate !== undefined || args.endDate !== undefined
     const status = args.status
     const hasStatus = status !== undefined
-    const limit = args.limit !== undefined ? Math.max(1, args.limit) : undefined
+    const effectiveLimit = args.limit !== undefined ? Math.max(1, args.limit) : 500
 
     if (hasStatus && !hasDateRange) {
-      const queryByStatus = ctx.db
+      return await ctx.db
         .query('appointments')
         .withIndex('by_org_status', (q) =>
           q.eq('organizationId', args.organizationId).eq('status', status)
         )
         .order('desc')
-
-      return limit ? await queryByStatus.take(limit) : await queryByStatus.collect()
+        .take(effectiveLimit)
     }
 
     const queryByDate = () =>
@@ -244,14 +244,13 @@ export const list = query({
         .order('desc')
 
     if (!hasStatus && hasDateRange) {
-      const scopedByDate = queryByDate()
-      return limit ? await scopedByDate.take(limit) : await scopedByDate.collect()
+      return await queryByDate().take(effectiveLimit)
     }
 
     if (hasStatus && hasDateRange) {
       const scopedByDate = queryByDate()
-      const targetLimit = limit ?? Number.POSITIVE_INFINITY
-      const pageSize = limit ? Math.max(limit * 3, 50) : 200
+      const targetLimit = effectiveLimit
+      const pageSize = Math.max(effectiveLimit * 3, 50)
       const matches: Doc<'appointments'>[] = []
       let cursor: string | null = null
       let done = false
@@ -271,11 +270,11 @@ export const list = query({
       return matches
     }
 
-    const queryByOrg = ctx.db
+    return await ctx.db
       .query('appointments')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
       .order('desc')
-    return limit ? await queryByOrg.take(limit) : await queryByOrg.collect()
+      .take(effectiveLimit)
   },
 })
 
@@ -300,9 +299,171 @@ export const listByLead = query({
       .query('appointments')
       .withIndex('by_lead', (q) => q.eq('leadId', args.leadId))
       .order('desc')
-      .collect()
+      .take(200)
 
-    return appointments.filter((appointment) => appointment.organizationId === args.organizationId)
+    return appointments.filter((a) => a.organizationId === args.organizationId)
+  },
+})
+
+/**
+ * Add a reminder note to an appointment. Uses the same `[Reminder ...]` marker
+ * as the cron-based Reminder Agent so both paths are idempotent.
+ */
+export const setReminderNote = mutation({
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    appointmentId: v.id('appointments'),
+    reminderMessage: v.string(),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const appointment = await ctx.db.get(args.appointmentId)
+    if (!appointment || appointment.organizationId !== args.organizationId) {
+      return { success: false, error: 'Appointment not found or access denied' }
+    }
+
+    if (appointment.status !== 'scheduled') {
+      return {
+        success: false,
+        error: `Cannot set reminder for ${appointment.status} appointment`,
+      }
+    }
+
+    const tz = resolveTimezone(args.timezone)
+    const timestamp = todayInTimezone(tz)
+    const existing = appointment.notes ?? ''
+    const marker = `[Reminder ${timestamp}] ${args.reminderMessage}`
+
+    const updatedNotes = existing ? `${existing}\n${marker}` : marker
+
+    await ctx.db.patch(args.appointmentId, {
+      notes: updatedNotes,
+      updatedAt: Date.now(),
+    })
+
+    return {
+      success: true,
+      appointmentId: args.appointmentId,
+      leadName: appointment.leadName,
+      date: appointment.date,
+      time: appointment.time,
+      message: `Reminder set for appointment with ${appointment.leadName} on ${appointment.date} at ${appointment.time}`,
+    }
+  },
+})
+
+/**
+ * Find an appointment by lead name and set a reminder note on it.
+ * Used by the chat tool when the user doesn't provide an appointment ID.
+ */
+export const setReminderByLeadName = mutation({
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    leadName: v.string(),
+    date: v.optional(v.string()),
+    reminderMessage: v.string(),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const tz = resolveTimezone(args.timezone)
+    const searchTerm = args.leadName.toLowerCase()
+    const todayStr = todayInTimezone(tz)
+
+    const appointments = await ctx.db
+      .query('appointments')
+      .withIndex('by_org_date', (q) =>
+        q.eq('organizationId', args.organizationId).gte('date', todayStr)
+      )
+      .take(200)
+
+    const scheduled = appointments
+      .filter((a) => {
+        if (a.status !== 'scheduled') return false
+        if (!a.leadName.toLowerCase().includes(searchTerm)) return false
+        if (args.date && a.date !== args.date) return false
+        return true
+      })
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date)
+        return a.time.localeCompare(b.time)
+      })
+
+    if (scheduled.length === 0) {
+      return {
+        success: false,
+        error: args.date
+          ? `No scheduled appointment found with ${args.leadName} on ${args.date}`
+          : `No upcoming scheduled appointment found with ${args.leadName}`,
+      }
+    }
+
+    const appointment = scheduled[0]
+    const timestamp = todayInTimezone(tz)
+    const existing = appointment.notes ?? ''
+    const marker = `[Reminder ${timestamp}] ${args.reminderMessage}`
+    const updatedNotes = existing ? `${existing}\n${marker}` : marker
+
+    await ctx.db.patch(appointment._id, {
+      notes: updatedNotes,
+      updatedAt: Date.now(),
+    })
+
+    return {
+      success: true,
+      appointmentId: appointment._id,
+      leadName: appointment.leadName,
+      date: appointment.date,
+      time: appointment.time,
+      title: appointment.title,
+      message: `Reminder set for appointment with ${appointment.leadName} on ${appointment.date} at ${appointment.time}`,
+    }
+  },
+})
+
+/**
+ * Get appointments that have reminder notes, scoped to upcoming scheduled ones.
+ */
+export const getAppointmentsWithReminders = query({
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    now: v.number(),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const tz = resolveTimezone(args.timezone)
+    const todayStr = todayInTimezone(tz, args.now)
+
+    const appointments = await ctx.db
+      .query('appointments')
+      .withIndex('by_org_date', (q) =>
+        q.eq('organizationId', args.organizationId).gte('date', todayStr)
+      )
+      .take(200)
+
+    return appointments
+      .filter((a) => a.status === 'scheduled' && a.notes?.includes('[Reminder'))
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date)
+        return a.time.localeCompare(b.time)
+      })
+      .map((a) => ({
+        id: a._id,
+        leadName: a.leadName,
+        date: a.date,
+        time: a.time,
+        title: a.title,
+        notes: a.notes,
+        status: a.status,
+      }))
   },
 })
 
@@ -316,21 +477,22 @@ export const getUpcoming = query({
     userId: v.id('appUsers'),
     organizationId: v.id('organizations'),
     now: v.number(),
+    timezone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await assertUserInOrganization(ctx, args.userId, args.organizationId)
 
-    const today = new Date(args.now)
-    const todayStr = today.toISOString().split('T')[0]
-    const nextWeek = new Date(args.now + 7 * 24 * 60 * 60 * 1000)
-    const nextWeekStr = nextWeek.toISOString().split('T')[0]
+    const tz = resolveTimezone(args.timezone)
+    const todayStr = todayInTimezone(tz, args.now)
+    const nextWeekMs = args.now + 7 * 24 * 60 * 60 * 1000
+    const nextWeekStr = todayInTimezone(tz, nextWeekMs)
 
     const appointments = await ctx.db
       .query('appointments')
       .withIndex('by_org_date', (q) =>
         q.eq('organizationId', args.organizationId).gte('date', todayStr)
       )
-      .collect()
+      .take(200)
 
     return appointments
       .filter((a) => a.date <= nextWeekStr && a.status === 'scheduled')

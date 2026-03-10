@@ -67,6 +67,7 @@ export const updateOrganizationSettings = mutation({
       defaultAiProvider: v.optional(v.string()),
       modelTier: v.optional(v.string()),
       nicheId: v.optional(v.string()),
+      timezone: v.optional(v.string()),
     }),
   },
   handler: async (ctx, args) => {
