@@ -98,7 +98,7 @@ describe('invoices.createByLeadName behavior', () => {
           }),
         }),
         insert: async (_table: string, doc: Record<string, unknown>) => {
-          insertedItems = doc['items']
+          insertedItems = doc.items
           return 'inv_1'
         },
         patch: async (id: string, values: Record<string, unknown>) => {
