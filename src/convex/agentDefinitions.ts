@@ -89,7 +89,7 @@ export const list = query({
     const all = await ctx.db
       .query('agentDefinitions')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+      .take(100)
 
     if (args.enabledOnly) {
       return all.filter((d: Doc<'agentDefinitions'>) => d.enabled)
@@ -157,7 +157,7 @@ export const listEnabledByType = internalQuery({
     return await ctx.db
       .query('agentDefinitions')
       .withIndex('by_agent_enabled', (q) => q.eq('agentType', args.agentType).eq('enabled', true))
-      .collect()
+      .take(100)
   },
 })
 

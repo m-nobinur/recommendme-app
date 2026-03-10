@@ -131,12 +131,12 @@ export const updateByName = mutation({
       // Not a valid ID, search by name
     }
 
-    // If not found by ID, search by name
+    // If not found by ID, search by name (bounded scan)
     if (!lead) {
       const leads = await ctx.db
         .query('leads')
         .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-        .collect()
+        .take(500)
 
       const searchTerm = args.nameOrId.toLowerCase()
       lead = leads.find((l) => l.name.toLowerCase().includes(searchTerm)) ?? null
@@ -224,24 +224,19 @@ export const list = query({
   handler: async (ctx, args) => {
     await assertUserInOrganization(ctx, args.userId, args.organizationId)
 
-    const query = ctx.db
+    const effectiveLimit = Math.min(args.limit ?? 200, 500)
+
+    const q = ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
+      .order('desc')
 
-    const leads = await query.order('desc').collect()
-
-    // Filter by status if provided
-    let filteredLeads = leads
-    if (args.status) {
-      filteredLeads = leads.filter((l) => l.status === args.status)
+    if (!args.status) {
+      return await q.take(effectiveLimit)
     }
 
-    // Apply limit
-    if (args.limit) {
-      filteredLeads = filteredLeads.slice(0, args.limit)
-    }
-
-    return filteredLeads
+    const leads = await q.take(effectiveLimit * 3)
+    return leads.filter((l) => l.status === args.status).slice(0, effectiveLimit)
   },
 })
 
@@ -282,7 +277,7 @@ export const getStats = query({
     const leads = await ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+      .take(1000)
 
     const stats = {
       total: leads.length,

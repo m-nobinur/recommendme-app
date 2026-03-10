@@ -59,11 +59,10 @@ export const createByLeadName = mutation({
     dueDate: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // Find lead by name
     const leads = await ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+      .take(500)
 
     const searchTerm = args.leadName.toLowerCase()
     const lead = leads.find((l) => l.name.toLowerCase().includes(searchTerm))
@@ -174,23 +173,19 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const invoices = await ctx.db
+    const effectiveLimit = Math.min(args.limit ?? 200, 500)
+
+    const q = ctx.db
       .query('invoices')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
       .order('desc')
-      .collect()
 
-    let filtered = invoices
-
-    if (args.status) {
-      filtered = filtered.filter((i) => i.status === args.status)
+    if (!args.status) {
+      return await q.take(effectiveLimit)
     }
 
-    if (args.limit) {
-      filtered = filtered.slice(0, args.limit)
-    }
-
-    return filtered
+    const invoices = await q.take(effectiveLimit * 3)
+    return invoices.filter((i) => i.status === args.status).slice(0, effectiveLimit)
   },
 })
 
@@ -204,7 +199,7 @@ export const listByLead = query({
       .query('invoices')
       .withIndex('by_lead', (q) => q.eq('leadId', args.leadId))
       .order('desc')
-      .collect()
+      .take(200)
   },
 })
 
@@ -217,7 +212,7 @@ export const getStats = query({
     const invoices = await ctx.db
       .query('invoices')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+      .take(1000)
 
     const stats = {
       total: invoices.length,

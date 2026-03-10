@@ -17,6 +17,13 @@ import {
   validateReminderPlan,
 } from './agentLogic/reminder'
 import { assessAction } from './agentLogic/risk'
+import { isCronDisabled } from './lib/cronGuard'
+import {
+  appointmentToEpoch,
+  epochToDateInTimezone,
+  resolveTimezone,
+  todayInTimezone,
+} from './lib/timezone'
 import { callLLM, resolveLLMProvider } from './llmProvider'
 
 const ORG_EXECUTION_BATCH_SIZE = 10
@@ -185,6 +192,10 @@ async function runAgentBatch(
   ctx: { runQuery: any; runAction: any },
   agentType: 'followup' | 'reminder'
 ): Promise<AgentBatchCounters> {
+  if (isCronDisabled()) {
+    return { processed: 0, skipped: 0, failed: 0, awaitingApproval: 0 }
+  }
+
   const enabledDefs: Doc<'agentDefinitions'>[] = await ctx.runQuery(
     internal.agentDefinitions.listEnabledByType,
     { agentType }
@@ -197,6 +208,15 @@ async function runAgentBatch(
 
   const counters: AgentBatchCounters = { processed: 0, skipped: 0, failed: 0, awaitingApproval: 0 }
 
+  const orgIds = [...new Set(enabledDefs.map((d) => d.organizationId))]
+  const orgs = await Promise.all(
+    orgIds.map((id) => ctx.runQuery(internal.agentRunner.getOrgTimezone, { organizationId: id }))
+  )
+  const orgTimezoneMap = new Map<string, string>()
+  for (let i = 0; i < orgIds.length; i++) {
+    orgTimezoneMap.set(String(orgIds[i]), resolveTimezone(orgs[i]))
+  }
+
   for (let i = 0; i < enabledDefs.length; i += ORG_EXECUTION_BATCH_SIZE) {
     const batch = enabledDefs.slice(i, i + ORG_EXECUTION_BATCH_SIZE)
     const results = await Promise.allSettled(
@@ -205,6 +225,7 @@ async function runAgentBatch(
           organizationId: def.organizationId,
           agentType,
           triggerType: 'cron',
+          timezone: orgTimezoneMap.get(String(def.organizationId)) ?? 'UTC',
           reminderSettings:
             agentType === 'reminder' ? sanitizeReminderSettings(def.settings) : undefined,
         })
@@ -253,6 +274,7 @@ export const runAgentForOrg = internalAction({
     agentType: v.union(v.literal('followup'), v.literal('reminder')),
     triggerType: v.string(),
     triggerId: v.optional(v.string()),
+    timezone: v.optional(v.string()),
     reminderSettings: v.optional(
       v.object({
         reminderWindowHours: v.array(v.number()),
@@ -314,6 +336,7 @@ export const runAgentForOrg = internalAction({
       let agentConfig: typeof FOLLOWUP_CONFIG
 
       if (args.agentType === 'reminder') {
+        const tz = resolveTimezone(args.timezone)
         const reminderSettings = sanitizeReminderSettings(args.reminderSettings)
         const maxWindowHours = Math.max(...reminderSettings.reminderWindowHours)
         const upcomingAppointments = await ctx.runQuery(
@@ -323,6 +346,7 @@ export const runAgentForOrg = internalAction({
             windowHours: maxWindowHours,
             maxAppointments: reminderSettings.maxAppointmentsPerBatch,
             now: Date.now(),
+            timezone: tz,
           }
         )
 
@@ -513,6 +537,7 @@ export const runAgentForOrg = internalAction({
               organizationId: args.organizationId,
               appointmentId: action.target as Id<'appointments'>,
               notes: apptNotes,
+              timezone: args.timezone,
             })
             results.push({
               type: action.type,
@@ -614,6 +639,14 @@ export const runAgentForOrg = internalAction({
 })
 
 // ── Internal helpers (queries/mutations callable only within Convex) ──
+
+export const getOrgTimezone = internalQuery({
+  args: { organizationId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId)
+    return org?.settings?.timezone ?? null
+  },
+})
 
 const MS_PER_DAY = 86_400_000
 
@@ -833,28 +866,25 @@ interface ReminderAppointmentCandidate {
   appointmentTime: number
 }
 
-function toAppointmentTimestampUtc(date: string, time: string): number {
-  return Date.parse(`${date}T${time}:00Z`)
-}
-
 export function selectReminderCandidates(
   appointments: ReminderAppointmentDoc[],
   now: number,
-  windowEnd: number
+  windowEnd: number,
+  tz = 'UTC'
 ): ReminderAppointmentCandidate[] {
   return appointments
     .filter((appointment) => {
       if (appointment.status !== 'scheduled') return false
       if (appointment.notes?.includes('[Reminder')) return false
 
-      const appointmentTime = toAppointmentTimestampUtc(appointment.date, appointment.time)
-      if (Number.isNaN(appointmentTime)) return false
-      if (appointmentTime <= now || appointmentTime > windowEnd) return false
+      const apptTime = appointmentToEpoch(appointment.date, appointment.time, tz)
+      if (Number.isNaN(apptTime)) return false
+      if (apptTime <= now || apptTime > windowEnd) return false
       return true
     })
     .map((appointment) => {
-      const appointmentTime = toAppointmentTimestampUtc(appointment.date, appointment.time)
-      const rawHours = Math.round((appointmentTime - now) / MS_PER_HOUR)
+      const apptTime = appointmentToEpoch(appointment.date, appointment.time, tz)
+      const rawHours = Math.round((apptTime - now) / MS_PER_HOUR)
       return {
         id: String(appointment._id),
         leadId: String(appointment.leadId),
@@ -865,7 +895,7 @@ export function selectReminderCandidates(
         notes: appointment.notes,
         status: appointment.status,
         hoursUntil: Number.isNaN(rawHours) ? 0 : Math.max(0, rawHours),
-        appointmentTime,
+        appointmentTime: apptTime,
       }
     })
 }
@@ -876,13 +906,15 @@ export const getUpcomingAppointmentsForReminder = internalQuery({
     windowHours: v.number(),
     maxAppointments: v.number(),
     now: v.number(),
+    timezone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = args.now
+    const tz = resolveTimezone(args.timezone)
     const windowEnd = now + args.windowHours * MS_PER_HOUR
 
-    const today = new Date(now).toISOString().split('T')[0]
-    const windowEndDate = new Date(windowEnd).toISOString().split('T')[0]
+    const today = todayInTimezone(tz, now)
+    const windowEndDate = epochToDateInTimezone(windowEnd, tz)
 
     const pageSize = Math.max(args.maxAppointments * 3, 50)
     const maxBuffer = Math.max(args.maxAppointments * 10, 200)
@@ -957,6 +989,7 @@ export const updateAppointmentNotes = internalMutation({
     organizationId: v.id('organizations'),
     appointmentId: v.id('appointments'),
     notes: v.string(),
+    timezone: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const appointment = await ctx.db.get(args.appointmentId)
@@ -965,7 +998,8 @@ export const updateAppointmentNotes = internalMutation({
       throw new Error('Appointment does not belong to this organization')
     }
 
-    const timestamp = new Date().toISOString().split('T')[0]
+    const tz = resolveTimezone(args.timezone)
+    const timestamp = todayInTimezone(tz)
     const reminderText = args.notes.trim()
     if (!reminderText) return
 

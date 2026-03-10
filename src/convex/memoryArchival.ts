@@ -3,6 +3,7 @@ import { v } from 'convex/values'
 import { components, internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { isCronDisabled } from './lib/cronGuard'
 import { type ResolvedLLMProvider, resolveLLMProvider } from './llmProvider'
 
 /**
@@ -396,6 +397,7 @@ export const insertConsolidatedMemory = internalMutation({
 export const archiveDecayedMemories = internalAction({
   args: {},
   handler: async (ctx): Promise<{ archived: number }> => {
+    if (isCronDisabled()) return { archived: 0 }
     const orgIds = await listAllOrganizationIds(ctx)
 
     let archived = 0
@@ -525,6 +527,7 @@ export const compressMemoryGroup = internalAction({
 export const compressArchivedMemories = internalAction({
   args: {},
   handler: async (ctx): Promise<{ groupsCompressed: number }> => {
+    if (isCronDisabled()) return { groupsCompressed: 0 }
     const provider = resolveLLMProvider({ throwOnMissing: false })
     if (!provider) {
       console.warn('[Archival] Skipping compression — no LLM provider configured')
@@ -598,6 +601,7 @@ export const purgeExpiredMemories = internalAction({
   handler: async (
     ctx
   ): Promise<{ softDeleted: number; hardDeleted: number; orphansRemoved: number }> => {
+    if (isCronDisabled()) return { softDeleted: 0, hardDeleted: 0, orphansRemoved: 0 }
     const orgIds = await listAllOrganizationIds(ctx)
 
     let softDeleted = 0
@@ -668,6 +672,15 @@ export const lifecycleHealthCheck = internalAction({
     orphanedRelations: number
     checkedAt: number
   }> => {
+    if (isCronDisabled()) {
+      return {
+        archiveCandidates: 0,
+        purgeCandidates: 0,
+        hardDeleteCandidates: 0,
+        orphanedRelations: 0,
+        checkedAt: Date.now(),
+      }
+    }
     const orgIds = await listAllOrganizationIds(ctx)
 
     let archiveCandidatesTotal = 0

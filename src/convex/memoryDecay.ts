@@ -3,6 +3,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { isCronDisabled } from './lib/cronGuard'
 
 /**
  * Memory Decay Workers
@@ -206,6 +207,10 @@ export const updateAgentDecayBatch = internalMutation({
 export const runDecayUpdate = internalAction({
   args: {},
   handler: async (ctx): Promise<{ totalUpdated: number; totalTransitioned: number }> => {
+    if (isCronDisabled()) {
+      return { totalUpdated: 0, totalTransitioned: 0 }
+    }
+
     let totalUpdated = 0
     let totalTransitioned = 0
 

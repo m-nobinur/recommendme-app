@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
 import { isEmbeddingConfigured } from './embedding'
+import { isCronDisabled } from './lib/cronGuard'
 import { type ResolvedLLMProvider, resolveLLMProvider } from './llmProvider'
 
 /**
@@ -1293,6 +1294,10 @@ export const processExtractionBatch = internalAction({
     relationsCreated: number
     errors: number
   }> => {
+    if (isCronDisabled()) {
+      return { processed: 0, memoriesCreated: 0, relationsCreated: 0, errors: 0 }
+    }
+
     const batchSize = Math.min(args.batchSize ?? EXTRACTION_BATCH_SIZE, 20)
 
     let events: Doc<'memoryEvents'>[]

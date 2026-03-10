@@ -1,5 +1,6 @@
 import { v } from 'convex/values'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
+import { isCronDisabled } from './lib/cronGuard'
 import { assertMemoryApiToken } from './security'
 
 /**
@@ -462,6 +463,8 @@ export const recoverStuckProcessingEvents = internalMutation({
     staleThresholdMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    if (isCronDisabled()) return { recovered: 0 }
+
     const threshold = args.staleThresholdMs ?? 10 * 60 * 1000
     const cutoff = Date.now() - threshold
 
