@@ -161,6 +161,22 @@ export const listEnabledByType = internalQuery({
   },
 })
 
+export const getEnabledByOrgAndType = internalQuery({
+  args: {
+    organizationId: v.id('organizations'),
+    agentType: agentTypeValues,
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('agentDefinitions')
+      .withIndex('by_org_agent', (q) =>
+        q.eq('organizationId', args.organizationId).eq('agentType', args.agentType)
+      )
+      .filter((q) => q.eq(q.field('enabled'), true))
+      .first()
+  },
+})
+
 export const ensureExists = internalMutation({
   args: {
     organizationId: v.id('organizations'),

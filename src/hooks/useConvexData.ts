@@ -187,6 +187,7 @@ export function useAppointments({
 
 interface UseInvoicesOptions {
   organizationId: Id<'organizations'>
+  userId: Id<'appUsers'>
   status?: 'draft' | 'sent' | 'paid'
   limit?: number
 }
@@ -201,10 +202,12 @@ interface UseInvoicesReturn {
  */
 export function useInvoices({
   organizationId,
+  userId,
   status,
   limit,
 }: UseInvoicesOptions): UseInvoicesReturn {
   const invoicesData = useQuery(api.invoices.list, {
+    userId,
     organizationId,
     status,
     limit,

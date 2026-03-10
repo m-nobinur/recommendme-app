@@ -85,6 +85,16 @@ export interface AgentMemorySummary {
   useCount: number
 }
 
+export interface InvoiceSummary {
+  id: string
+  leadName: string
+  amount: number
+  status: 'draft' | 'sent' | 'paid'
+  dueDate?: string
+  daysSinceDue?: number
+  createdAt: number
+}
+
 export interface AgentContext {
   organizationId: string
   userId: string
@@ -92,6 +102,7 @@ export interface AgentContext {
   executionId?: string
   leads: LeadSummary[]
   appointments: AppointmentSummary[]
+  invoices?: InvoiceSummary[]
   agentMemories: AgentMemorySummary[]
   businessContext: string[]
   timestamp: number

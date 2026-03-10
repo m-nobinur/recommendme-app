@@ -28,3 +28,7 @@ export function asBusinessMemoryId(id: string): Id<'businessMemories'> {
 export function asAppointmentId(id: string): Id<'appointments'> {
   return id as Id<'appointments'>
 }
+
+export function asInvoiceId(id: string): Id<'invoices'> {
+  return id as Id<'invoices'>
+}

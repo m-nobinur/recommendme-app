@@ -10,6 +10,7 @@ export type {
   AppointmentSummary,
   ExecutionStatus,
   ExecutionSummary,
+  InvoiceSummary,
   LeadSummary,
   MemoryLayer,
   PlanPrompt,

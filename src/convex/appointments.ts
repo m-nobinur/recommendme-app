@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
@@ -135,6 +136,7 @@ export const update = mutation({
       throw new Error('Appointment not found or access denied')
     }
 
+    const previousStatus = appointment.status
     const { id, userId: _userId, organizationId: _organizationId, ...updates } = args
     const filteredUpdates = Object.fromEntries(
       Object.entries(updates).filter(([_, val]) => val !== undefined)
@@ -144,6 +146,13 @@ export const update = mutation({
       await ctx.db.patch(id, {
         ...filteredUpdates,
         updatedAt: Date.now(),
+      })
+    }
+
+    if (args.status === 'completed' && previousStatus !== 'completed') {
+      await ctx.scheduler.runAfter(0, internal.agentRunner.runInvoiceAgentForAppointment, {
+        organizationId: args.organizationId,
+        appointmentId: args.id,
       })
     }
 

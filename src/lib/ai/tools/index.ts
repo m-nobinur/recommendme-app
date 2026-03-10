@@ -215,49 +215,6 @@ export function createCRMTools(ctx: ToolContext) {
     }),
 
     /**
-     * Create an invoice
-     */
-    createInvoice: tool({
-      description: 'Create a new invoice for a customer. The customer must be a lead in the CRM.',
-      inputSchema: z.object({
-        leadName: z.string().describe('Name of the customer (will fuzzy match)'),
-        amount: z.number().describe('Total invoice amount in dollars'),
-        description: z.string().optional().describe('Description of the service'),
-        items: z.array(z.string()).optional().describe('Line items (if multiple services)'),
-        dueDate: z.string().optional().describe('Due date (YYYY-MM-DD format)'),
-      }),
-      execute: async (args): Promise<ToolResult<{ invoiceId: string }>> => {
-        try {
-          const { api } = await getApi()
-          const result = await convex.mutation(api.invoices.createByLeadName, {
-            organizationId: orgId,
-            userId: userId,
-            leadName: args.leadName,
-            amount: args.amount,
-            description: args.description,
-            items: args.items,
-            dueDate: args.dueDate,
-          })
-
-          if ('error' in result && result.error) {
-            return { success: false, error: result.error }
-          }
-
-          return {
-            success: true,
-            data: { invoiceId: result.invoiceId as string },
-            message: result.message,
-          }
-        } catch (error) {
-          return {
-            success: false,
-            error: `Failed to create invoice: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }
-        }
-      },
-    }),
-
-    /**
      * List leads
      */
     listLeads: tool({
@@ -374,5 +331,6 @@ export function createCRMTools(ctx: ToolContext) {
  */
 export type CRMTools = ReturnType<typeof createCRMTools>
 
+export { createInvoiceTools, type InvoiceTools } from './invoice'
 export { createMemoryTools, type MemoryTools } from './memory'
 export { createReminderTools, type ReminderTools } from './reminder'

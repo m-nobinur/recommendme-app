@@ -20,7 +20,12 @@ import { retrieveMemoryContext } from '@/lib/ai/memory/retrieval'
 import { getSystemPrompt } from '@/lib/ai/prompts/system'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers'
 import { createAIProvider, isValidProvider, isValidTier } from '@/lib/ai/providers'
-import { createCRMTools, createMemoryTools, createReminderTools } from '@/lib/ai/tools'
+import {
+  createCRMTools,
+  createInvoiceTools,
+  createMemoryTools,
+  createReminderTools,
+} from '@/lib/ai/tools'
 import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
@@ -251,11 +256,12 @@ export async function POST(req: Request) {
 
     const crmTools = toolCtx ? createCRMTools(toolCtx) : undefined
     const reminderTools = toolCtx ? createReminderTools(toolCtx) : undefined
+    const invoiceTools = toolCtx ? createInvoiceTools(toolCtx) : undefined
     const memoryTools =
       featureFlags.enableMemory && toolCtx ? createMemoryTools(toolCtx) : undefined
     const tools =
-      crmTools || reminderTools || memoryTools
-        ? { ...crmTools, ...reminderTools, ...memoryTools }
+      crmTools || reminderTools || invoiceTools || memoryTools
+        ? { ...crmTools, ...reminderTools, ...invoiceTools, ...memoryTools }
         : undefined
 
     const model = createAIProvider(aiProvider, modelTier)

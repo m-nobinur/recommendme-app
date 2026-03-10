@@ -1,6 +1,7 @@
 export * from './config'
 export * from './followup'
 export * from './guardrails'
+export * from './invoice'
 export * from './reminder'
 export * from './risk'
 export * from './types'

@@ -89,4 +89,11 @@ crons.daily(
   {}
 )
 
+crons.daily(
+  'invoice agent',
+  { hourUTC: 10, minuteUTC: 0 },
+  internal.agentRunner.runInvoiceAgent,
+  {}
+)
+
 export default crons

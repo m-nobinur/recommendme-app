@@ -9,6 +9,14 @@ import {
   validateFollowupPlan,
 } from './agentLogic/followup'
 import {
+  buildInvoiceUserPromptFromData,
+  DEFAULT_INVOICE_SETTINGS,
+  INVOICE_CONFIG,
+  INVOICE_SYSTEM_PROMPT,
+  type InvoiceAgentSettings,
+  validateInvoicePlan,
+} from './agentLogic/invoice'
+import {
   buildReminderUserPromptFromData,
   DEFAULT_REMINDER_SETTINGS,
   REMINDER_CONFIG,
@@ -31,6 +39,12 @@ const MIN_REMINDER_WINDOW_HOURS = 1
 const MAX_REMINDER_WINDOW_HOURS = 168
 const MIN_REMINDER_BATCH_SIZE = 1
 const MAX_REMINDER_BATCH_SIZE = 100
+const MIN_INVOICE_PAYMENT_TERMS_DAYS = 1
+const MAX_INVOICE_PAYMENT_TERMS_DAYS = 120
+const MIN_INVOICE_OVERDUE_THRESHOLD_DAYS = 1
+const MAX_INVOICE_OVERDUE_THRESHOLD_DAYS = 90
+const MIN_INVOICE_BATCH_SIZE = 1
+const MAX_INVOICE_BATCH_SIZE = 100
 
 type PlannedAction = {
   type: string
@@ -120,6 +134,40 @@ export function sanitizeReminderSettings(raw: unknown): ReminderAgentSettings {
   }
 }
 
+export function sanitizeInvoiceSettings(raw: unknown): InvoiceAgentSettings {
+  const fallback = DEFAULT_INVOICE_SETTINGS
+
+  if (!raw || typeof raw !== 'object') {
+    return fallback
+  }
+
+  const settings = raw as Record<string, unknown>
+  const defaultPaymentTermsDays = Number(settings.defaultPaymentTermsDays)
+  const overdueThresholdDays = Number(settings.overdueThresholdDays)
+  const maxInvoicesPerBatch = Number(settings.maxInvoicesPerBatch)
+
+  return {
+    defaultPaymentTermsDays:
+      Number.isFinite(defaultPaymentTermsDays) &&
+      defaultPaymentTermsDays >= MIN_INVOICE_PAYMENT_TERMS_DAYS &&
+      defaultPaymentTermsDays <= MAX_INVOICE_PAYMENT_TERMS_DAYS
+        ? Math.floor(defaultPaymentTermsDays)
+        : fallback.defaultPaymentTermsDays,
+    overdueThresholdDays:
+      Number.isFinite(overdueThresholdDays) &&
+      overdueThresholdDays >= MIN_INVOICE_OVERDUE_THRESHOLD_DAYS &&
+      overdueThresholdDays <= MAX_INVOICE_OVERDUE_THRESHOLD_DAYS
+        ? Math.floor(overdueThresholdDays)
+        : fallback.overdueThresholdDays,
+    maxInvoicesPerBatch:
+      Number.isFinite(maxInvoicesPerBatch) &&
+      maxInvoicesPerBatch >= MIN_INVOICE_BATCH_SIZE &&
+      maxInvoicesPerBatch <= MAX_INVOICE_BATCH_SIZE
+        ? Math.floor(maxInvoicesPerBatch)
+        : fallback.maxInvoicesPerBatch,
+  }
+}
+
 export function reviewPlannedActions(
   actions: PlannedAction[],
   guardrails: {
@@ -128,7 +176,7 @@ export function reviewPlannedActions(
     riskOverrides: Record<string, 'low' | 'medium' | 'high'>
     requireApprovalAbove: 'low' | 'medium' | 'high'
   },
-  agentType: 'followup' | 'reminder'
+  agentType: 'followup' | 'reminder' | 'invoice'
 ): ReviewedActions {
   const approved: ApprovedAction[] = []
   const rejectedByPolicy: RejectedAction[] = []
@@ -190,7 +238,7 @@ type AgentBatchCounters = {
 
 async function runAgentBatch(
   ctx: { runQuery: any; runAction: any },
-  agentType: 'followup' | 'reminder'
+  agentType: 'followup' | 'reminder' | 'invoice'
 ): Promise<AgentBatchCounters> {
   if (isCronDisabled()) {
     return { processed: 0, skipped: 0, failed: 0, awaitingApproval: 0 }
@@ -228,6 +276,8 @@ async function runAgentBatch(
           timezone: orgTimezoneMap.get(String(def.organizationId)) ?? 'UTC',
           reminderSettings:
             agentType === 'reminder' ? sanitizeReminderSettings(def.settings) : undefined,
+          invoiceSettings:
+            agentType === 'invoice' ? sanitizeInvoiceSettings(def.settings) : undefined,
         })
       )
     )
@@ -264,6 +314,50 @@ export const runReminderAgent = internalAction({
   handler: async (ctx) => runAgentBatch(ctx, 'reminder'),
 })
 
+export const runInvoiceAgent = internalAction({
+  args: {},
+  handler: async (ctx) => runAgentBatch(ctx, 'invoice'),
+})
+
+/**
+ * Event-driven entry point: triggered when an appointment is marked as completed.
+ * Runs the invoice agent for the specific organization to create a draft invoice.
+ */
+export const runInvoiceAgentForAppointment = internalAction({
+  args: {
+    organizationId: v.id('organizations'),
+    appointmentId: v.id('appointments'),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    if (isCronDisabled()) return
+
+    const def: Doc<'agentDefinitions'> | null = await ctx.runQuery(
+      internal.agentDefinitions.getEnabledByOrgAndType,
+      {
+        organizationId: args.organizationId,
+        agentType: 'invoice',
+      }
+    )
+
+    if (!def) {
+      return
+    }
+
+    const tz: string | null = await ctx.runQuery(internal.agentRunner.getOrgTimezone, {
+      organizationId: args.organizationId,
+    })
+
+    await ctx.runAction(internal.agentRunner.runAgentForOrg, {
+      organizationId: args.organizationId,
+      agentType: 'invoice' as const,
+      triggerType: 'event',
+      triggerId: String(args.appointmentId),
+      timezone: resolveTimezone(tz),
+      invoiceSettings: sanitizeInvoiceSettings(def.settings),
+    })
+  },
+})
+
 /**
  * Run a specific agent for a specific organization.
  * This is the main execution entry point.
@@ -271,7 +365,7 @@ export const runReminderAgent = internalAction({
 export const runAgentForOrg = internalAction({
   args: {
     organizationId: v.id('organizations'),
-    agentType: v.union(v.literal('followup'), v.literal('reminder')),
+    agentType: v.union(v.literal('followup'), v.literal('reminder'), v.literal('invoice')),
     triggerType: v.string(),
     triggerId: v.optional(v.string()),
     timezone: v.optional(v.string()),
@@ -279,6 +373,13 @@ export const runAgentForOrg = internalAction({
       v.object({
         reminderWindowHours: v.array(v.number()),
         maxAppointmentsPerBatch: v.number(),
+      })
+    ),
+    invoiceSettings: v.optional(
+      v.object({
+        defaultPaymentTermsDays: v.number(),
+        overdueThresholdDays: v.number(),
+        maxInvoicesPerBatch: v.number(),
       })
     ),
   },
@@ -361,7 +462,7 @@ export const runAgentForOrg = internalAction({
           return { status: 'skipped', reason: 'No upcoming appointments needing reminders' }
         }
 
-        const leadIds = [...new Set(upcomingAppointments.map((a) => a.leadId))]
+        const leadIds = [...new Set(upcomingAppointments.map((a: { leadId: string }) => a.leadId))]
         const [leads, agentMemories, businessMemories] = await Promise.all([
           ctx.runQuery(internal.agentRunner.getLeadsByIds, {
             organizationId: args.organizationId,
@@ -401,6 +502,109 @@ export const runAgentForOrg = internalAction({
         const rawPlan = await callLLM(provider, REMINDER_SYSTEM_PROMPT, userPrompt, 0.1, 2500)
         plan = validateReminderPlan(rawPlan)
         agentConfig = REMINDER_CONFIG
+      } else if (args.agentType === 'invoice') {
+        const now = Date.now()
+        const invoiceSettings = sanitizeInvoiceSettings(args.invoiceSettings)
+
+        const [completedAppointments, overdueInvoices] = await Promise.all([
+          ctx.runQuery(internal.invoices.getCompletedAppointmentsWithoutInvoice, {
+            organizationId: args.organizationId,
+            maxResults: invoiceSettings.maxInvoicesPerBatch,
+          }),
+          ctx.runQuery(internal.invoices.getOverdueInvoices, {
+            organizationId: args.organizationId,
+            now,
+            overdueThresholdDays: invoiceSettings.overdueThresholdDays,
+            maxResults: invoiceSettings.maxInvoicesPerBatch,
+          }),
+        ])
+
+        if (completedAppointments.length === 0 && overdueInvoices.length === 0) {
+          await ctx.runMutation(internal.agentExecutions.complete, {
+            id: executionId,
+            status: 'skipped',
+            actionsPlanned: 0,
+            actionsExecuted: 0,
+            actionsSkipped: 0,
+          })
+          return {
+            status: 'skipped',
+            reason: 'No appointments needing invoices and no overdue invoices',
+          }
+        }
+
+        const leadIds = [
+          ...new Set([
+            ...completedAppointments.map((a: { leadId: string }) => a.leadId),
+            ...overdueInvoices.map((i: { leadId: string }) => i.leadId),
+          ]),
+        ]
+        const [leads, agentMemories, businessMemories] = await Promise.all([
+          ctx.runQuery(internal.agentRunner.getLeadsByIds, {
+            organizationId: args.organizationId,
+            leadIds,
+          }),
+          ctx.runQuery(internal.agentRunner.getAgentMemories, {
+            organizationId: args.organizationId,
+            agentType: 'invoice',
+            limit: 15,
+          }),
+          ctx.runQuery(internal.agentRunner.getBusinessContext, {
+            organizationId: args.organizationId,
+            limit: 20,
+          }),
+        ])
+
+        await ctx.runMutation(internal.agentExecutions.updateStatus, {
+          id: executionId,
+          status: 'planning',
+          memoryContext: JSON.stringify({
+            completedAppointmentsCount: completedAppointments.length,
+            overdueInvoicesCount: overdueInvoices.length,
+            leadsCount: leads.length,
+            memoriesCount: agentMemories.length + businessMemories.length,
+          }),
+        })
+
+        const userPrompt = buildInvoiceUserPromptFromData(
+          completedAppointments,
+          overdueInvoices.map(
+            (i: {
+              id: string
+              leadName: string
+              amount: number
+              status: string
+              dueDate?: string
+              daysSinceDue?: number
+              createdAt: number
+            }) => ({
+              id: i.id,
+              leadName: i.leadName,
+              amount: i.amount,
+              status: i.status as 'draft' | 'sent' | 'paid',
+              dueDate: i.dueDate,
+              daysSinceDue: i.daysSinceDue,
+              createdAt: i.createdAt,
+            })
+          ),
+          leads.map(
+            (l: { id: string; name: string; phone?: string; email?: string; notes?: string }) => ({
+              id: l.id,
+              name: l.name,
+              phone: l.phone,
+              email: l.email,
+              notes: l.notes,
+            })
+          ),
+          agentMemories,
+          businessMemories,
+          invoiceSettings
+        )
+
+        const provider = resolveLLMProvider()
+        const rawPlan = await callLLM(provider, INVOICE_SYSTEM_PROMPT, userPrompt, 0.1, 2500)
+        plan = validateInvoicePlan(rawPlan)
+        agentConfig = INVOICE_CONFIG
       } else {
         const leads = await ctx.runQuery(internal.agentRunner.getStaleLeads, {
           organizationId: args.organizationId,
@@ -545,15 +749,99 @@ export const runAgentForOrg = internalAction({
               success: true,
               message: 'Reminder note added to appointment',
             })
+          } else if (action.type === 'create_invoice') {
+            const leadName = String(action.params?.leadName ?? '').trim()
+            const amount = Number(action.params?.amount ?? 0)
+            const description = String(action.params?.description ?? 'Service').trim()
+            const configuredTerms = sanitizeInvoiceSettings(
+              args.invoiceSettings
+            ).defaultPaymentTermsDays
+            const defaultDueDate = new Date(Date.now() + configuredTerms * 86_400_000)
+              .toISOString()
+              .split('T')[0]
+            const dueDate = action.params?.dueDate ? String(action.params.dueDate) : defaultDueDate
+
+            if (amount <= 0 || !description) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: invalid invoice params',
+              })
+              skippedInExecution++
+              continue
+            }
+
+            await ctx.runMutation(internal.invoices.createDraftForLeadInternal, {
+              organizationId: args.organizationId,
+              leadId: action.target as Id<'leads'>,
+              amount,
+              description,
+              dueDate,
+            })
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: `Draft invoice created for ${leadName || action.target} — $${amount.toFixed(2)}`,
+            })
+          } else if (action.type === 'update_invoice_status') {
+            const status = String(action.params?.status ?? '').trim()
+            if (!['draft', 'sent', 'paid'].includes(status)) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: invalid invoice status',
+              })
+              skippedInExecution++
+              continue
+            }
+
+            await ctx.runMutation(internal.invoices.updateStatusInternal, {
+              organizationId: args.organizationId,
+              invoiceId: action.target as Id<'invoices'>,
+              status: status as 'draft' | 'sent' | 'paid',
+            })
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: `Invoice status updated to ${status}`,
+            })
+          } else if (action.type === 'flag_overdue_invoice') {
+            const notes = String(action.params?.notes ?? '').trim()
+            if (!notes) {
+              results.push({
+                type: action.type,
+                target: action.target,
+                success: true,
+                message: 'Skipped: empty overdue flag',
+              })
+              skippedInExecution++
+              continue
+            }
+            await ctx.runMutation(internal.invoices.flagOverdueInvoiceInternal, {
+              organizationId: args.organizationId,
+              invoiceId: action.target as Id<'invoices'>,
+              notes,
+            })
+            results.push({
+              type: action.type,
+              target: action.target,
+              success: true,
+              message: `Flagged overdue invoice ${action.target}`,
+            })
           } else if (
             action.type === 'log_recommendation' ||
-            action.type === 'log_reminder_recommendation'
+            action.type === 'log_reminder_recommendation' ||
+            action.type === 'log_invoice_recommendation'
           ) {
             results.push({
               type: action.type,
               target: action.target,
               success: true,
-              message: String(action.params?.recommendation ?? ''),
+              message: String(action.params?.recommendation ?? action.params?.status ?? ''),
             })
           } else {
             results.push({
@@ -576,24 +864,22 @@ export const runAgentForOrg = internalAction({
       const failures = results.filter((r) => !r.success)
 
       if (successes.length > 0) {
-        const label = args.agentType === 'reminder' ? 'reminder' : 'followup'
         await ctx.runMutation(internal.agentRunner.recordAgentLearning, {
           organizationId: args.organizationId,
           agentType: args.agentType,
           category: 'success',
-          content: `Executed ${successes.length} ${label} actions.`,
+          content: `Executed ${successes.length} ${args.agentType} actions.`,
           confidence: 0.8,
         })
       }
 
       if (failures.length > 0) {
-        const label = args.agentType === 'reminder' ? 'reminder' : 'followup'
         const errorSummary = failures.map((f) => `${f.type}: ${f.message}`).join('; ')
         await ctx.runMutation(internal.agentRunner.recordAgentLearning, {
           organizationId: args.organizationId,
           agentType: args.agentType,
           category: 'failure',
-          content: `Failed ${failures.length} ${label} actions: ${errorSummary}`,
+          content: `Failed ${failures.length} ${args.agentType} actions: ${errorSummary}`,
           confidence: 0.6,
         })
       }

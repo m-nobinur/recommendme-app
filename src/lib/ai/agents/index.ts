@@ -44,6 +44,8 @@ export {
 } from './core'
 export type { FollowupAgentSettings } from './followup'
 export { FOLLOWUP_CONFIG, FollowupHandler } from './followup'
+export type { InvoiceAgentSettings } from './invoice'
+export { DEFAULT_INVOICE_SETTINGS, INVOICE_CONFIG, InvoiceHandler } from './invoice'
 export { getAgentHandler, getRegisteredAgentTypes, isAgentImplemented } from './registry'
 export type { ReminderAgentSettings } from './reminder'
 export { REMINDER_CONFIG, ReminderHandler } from './reminder'
