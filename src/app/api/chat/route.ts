@@ -42,6 +42,8 @@ import {
 } from '@/lib/cost/manager'
 import { estimateCost } from '@/lib/cost/pricing'
 import { sanitizeForLogging, validateMessagesInput } from '@/lib/security/inputValidation'
+import { checkSecurityRateLimitDistributed } from '@/lib/security/rateLimiting'
+import { classifyTenantIsolationError } from '@/lib/security/tenantIsolation'
 import { TraceContext } from '@/lib/tracing'
 import { type LangfuseGenerationUsage, syncTraceToLangfuse } from '@/lib/tracing/langfuse'
 import { withSpan } from '@/lib/tracing/spans'
@@ -155,6 +157,50 @@ function setCachedBudgetStatus(cacheKey: string, snapshot: BudgetStatusSnapshot)
     snapshot,
     expiresAt: now + BUDGET_CACHE_TTL_MS,
   })
+}
+
+function getClientIp(req: Request): string | undefined {
+  const raw =
+    req.headers.get('cf-connecting-ip') ??
+    req.headers.get('x-real-ip') ??
+    req.headers.get('x-forwarded-for')
+  if (!raw) return undefined
+  const first = raw.split(',')[0]?.trim()
+  return first || undefined
+}
+
+async function recordSecurityEvent(input: {
+  organizationId?: string
+  userId?: string
+  action: string
+  details: Record<string, unknown>
+  riskLevel: 'low' | 'medium' | 'high' | 'critical'
+  traceId?: string
+  ipAddress?: string
+}): Promise<void> {
+  if (!input.organizationId) return
+
+  const convex = getConvexClient()
+  if (!convex) return
+
+  try {
+    await convex.mutation(api.auditLogs.recordSecurityEvent, {
+      authToken: process.env.MEMORY_API_TOKEN,
+      organizationId: input.organizationId as Id<'organizations'>,
+      userId: input.userId ? (input.userId as Id<'appUsers'>) : undefined,
+      action: input.action,
+      details: input.details,
+      riskLevel: input.riskLevel,
+      traceId: input.traceId,
+      ipAddress: input.ipAddress,
+    })
+  } catch (error) {
+    console.error('[Reme:Security] Failed to record security event:', {
+      action: input.action,
+      organizationId: input.organizationId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    })
+  }
 }
 
 export const runtime = 'nodejs'
@@ -292,6 +338,55 @@ export async function POST(req: Request) {
         traceOrganizationId = organizationId
         traceUserId = userId
       }
+    }
+
+    const requestIp = getClientIp(req)
+    const chatRateLimit = await checkSecurityRateLimitDistributed(
+      'chat_request',
+      {
+        userId,
+        organizationId,
+        ipAddress: requestIp,
+      },
+      {
+        convexClient: getConvexClient(),
+        authToken: memoryAuthToken,
+      }
+    )
+    if (!chatRateLimit.allowed) {
+      void recordSecurityEvent({
+        organizationId,
+        userId,
+        action: 'chat.rate_limited',
+        riskLevel: 'medium',
+        traceId: requestId,
+        ipAddress: requestIp,
+        details: {
+          scope: chatRateLimit.scope,
+          key: chatRateLimit.key,
+          limit: chatRateLimit.limit,
+          resetAt: chatRateLimit.resetAt,
+        },
+      })
+      return new Response(
+        JSON.stringify({
+          error: 'Too many chat requests. Please retry shortly.',
+          requestId,
+          rateLimit: {
+            scope: chatRateLimit.scope,
+            limit: chatRateLimit.limit,
+            remaining: chatRateLimit.remaining,
+            resetAt: chatRateLimit.resetAt,
+          },
+        }),
+        {
+          status: HTTP_STATUS.TOO_MANY_REQUESTS,
+          headers: {
+            ...JSON_HEADERS,
+            'Retry-After': String(chatRateLimit.retryAfterSeconds),
+          },
+        }
+      )
     }
 
     let lastUserMessage: UIMessage | undefined
@@ -971,6 +1066,21 @@ export async function POST(req: Request) {
         JSON.stringify({ error: 'Request timeout', requestId, timeout: timeoutMs }),
         { status: HTTP_STATUS.GATEWAY_TIMEOUT, headers: JSON_HEADERS }
       )
+    }
+
+    const tenantErrorCode = classifyTenantIsolationError(error)
+    if (tenantErrorCode) {
+      void recordSecurityEvent({
+        organizationId: traceOrganizationId,
+        userId: traceUserId,
+        action: 'chat.tenant_isolation_violation',
+        riskLevel: 'high',
+        traceId: requestId,
+        details: {
+          code: tenantErrorCode,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      })
     }
 
     console.error('[Reme:Chat] API error:', {
