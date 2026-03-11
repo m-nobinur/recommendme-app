@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
-import { validateBusinessMemoryInput } from './memoryValidation'
+import { applyMemoryLayerPiiPolicy, validateBusinessMemoryInput } from './memoryValidation'
 
 /**
  * Business Memory CRUD (Organization-Specific)
@@ -104,8 +104,9 @@ export const create = mutation({
     expiresAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const contentPolicy = applyMemoryLayerPiiPolicy(args.content, 'business')
     validateBusinessMemoryInput({
-      content: args.content,
+      content: contentPolicy.content,
       confidence: args.confidence,
       importance: args.importance,
     })
@@ -116,7 +117,7 @@ export const create = mutation({
       organizationId: args.organizationId,
       userId: args.userId,
       type: args.type,
-      content: args.content,
+      content: contentPolicy.content,
       subjectType: args.subjectType,
       subjectId: args.subjectId,
       importance: args.importance,
@@ -137,7 +138,7 @@ export const create = mutation({
     await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
       tableName: 'businessMemories' as const,
       documentId: id,
-      content: args.content,
+      content: contentPolicy.content,
       organizationId: args.organizationId,
     })
 
@@ -280,12 +281,22 @@ export const update = mutation({
       throw new Error('Business memory not found or access denied')
     }
 
+    const normalizedContent =
+      updates.content !== undefined
+        ? applyMemoryLayerPiiPolicy(updates.content, 'business').content
+        : undefined
+    const normalizedUpdates = {
+      ...updates,
+      content: normalizedContent,
+    }
+
     const filteredUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([_, val]) => val !== undefined)
+      Object.entries(normalizedUpdates).filter(([_, val]) => val !== undefined)
     )
 
-    const newVersion = updates.content !== undefined ? existing.version + 1 : existing.version
-    const contentChanged = updates.content !== undefined
+    const newVersion =
+      normalizedUpdates.content !== undefined ? existing.version + 1 : existing.version
+    const contentChanged = normalizedUpdates.content !== undefined
 
     if (Object.keys(filteredUpdates).length > 0) {
       await ctx.db.patch(id, {
@@ -296,11 +307,11 @@ export const update = mutation({
       })
     }
 
-    if (contentChanged && updates.content) {
+    if (contentChanged && normalizedUpdates.content) {
       await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
         tableName: 'businessMemories' as const,
         documentId: id,
-        content: updates.content,
+        content: normalizedUpdates.content,
         organizationId,
       })
     }

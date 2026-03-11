@@ -42,6 +42,7 @@ import {
 } from './lib/timezone'
 import type { LLMUsageInfo } from './llmProvider'
 import { callLLMWithUsage, resolveLLMProvider } from './llmProvider'
+import { applyMemoryLayerPiiPolicy } from './memoryValidation'
 
 const ORG_EXECUTION_BATCH_SIZE = 10
 const MIN_REMINDER_WINDOW_HOURS = 1
@@ -2337,6 +2338,7 @@ export const recordAgentLearning = internalMutation({
   handler: async (ctx, args) => {
     const now = Date.now()
     const cutoff = now - LEARNING_DEDUP_WINDOW_MS
+    const normalizedContent = applyMemoryLayerPiiPolicy(args.content, 'agent').content
 
     const recentSimilar = await ctx.db
       .query('agentMemories')
@@ -2355,7 +2357,7 @@ export const recordAgentLearning = internalMutation({
 
     if (duplicate) {
       await ctx.db.patch(duplicate._id, {
-        content: args.content,
+        content: normalizedContent,
         confidence: Math.max(duplicate.confidence, args.confidence),
         useCount: duplicate.useCount + 1,
         lastUsedAt: now,
@@ -2368,7 +2370,7 @@ export const recordAgentLearning = internalMutation({
       organizationId: args.organizationId,
       agentType: args.agentType,
       category: args.category,
-      content: args.content,
+      content: normalizedContent,
       confidence: args.confidence,
       useCount: 0,
       successRate: args.category === 'success' ? 1.0 : args.category === 'failure' ? 0.0 : 0.5,

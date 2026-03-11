@@ -84,6 +84,13 @@ crons.interval(
   {}
 )
 
+crons.interval(
+  'purge expired security rate limits',
+  { hours: 1 },
+  internal.security.purgeExpiredRateLimits,
+  {}
+)
+
 // ============================================
 // OBSERVABILITY: Trace & Usage Cleanup
 // ============================================

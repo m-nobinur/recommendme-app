@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { append, appendBatch, list } from './auditLogs'
+import { append, appendBatch, list, recordSecurityEvent } from './auditLogs'
 
 function makeInsertCtx() {
   const inserted: Array<Record<string, unknown>> = []
@@ -99,6 +99,38 @@ describe('auditLogs.appendBatch', () => {
 
     assert.equal(ids.length, 0)
     assert.equal(inserted.length, 0)
+  })
+})
+
+describe('auditLogs.recordSecurityEvent', () => {
+  it('writes a security_event audit log row', async () => {
+    const { ctx, inserted } = makeInsertCtx()
+    const ctxWithTokenCheck = {
+      ...ctx,
+    }
+    const previousBypass = process.env.DISABLE_AUTH_IN_DEV
+    process.env.DISABLE_AUTH_IN_DEV = 'true'
+
+    try {
+      const id = await (recordSecurityEvent as any)._handler(ctxWithTokenCheck, {
+        authToken: undefined,
+        organizationId: 'org_1',
+        userId: 'user_1',
+        action: 'chat.rate_limited',
+        details: { scope: 'chat_request' },
+        riskLevel: 'medium',
+        traceId: 'trace_1',
+        ipAddress: '203.0.113.10',
+      })
+
+      assert.equal(typeof id, 'string')
+      assert.equal(inserted.length, 1)
+      assert.equal(inserted[0].resourceType, 'security_event')
+      assert.equal(inserted[0].action, 'chat.rate_limited')
+      assert.equal(inserted[0].riskLevel, 'medium')
+    } finally {
+      process.env.DISABLE_AUTH_IN_DEV = previousBypass
+    }
   })
 })
 

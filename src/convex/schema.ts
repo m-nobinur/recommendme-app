@@ -640,6 +640,22 @@ export default defineSchema({
     .index('by_org_action_created', ['organizationId', 'action', 'createdAt'])
     .index('by_org_risk_created', ['organizationId', 'riskLevel', 'createdAt']),
 
+  securityRateLimits: defineTable({
+    key: v.string(),
+    scope: v.union(v.literal('chat_request'), v.literal('approval_review')),
+    organizationId: v.optional(v.id('organizations')),
+    userId: v.optional(v.id('appUsers')),
+    ipAddress: v.optional(v.string()),
+    count: v.number(),
+    resetAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_key', ['key'])
+    .index('by_reset', ['resetAt'])
+    .index('by_scope_reset', ['scope', 'resetAt'])
+    .index('by_org_scope_reset', ['organizationId', 'scope', 'resetAt']),
+
   // ============================================
   // OBSERVABILITY: Distributed Traces
   // Span-level data for request lifecycle tracking

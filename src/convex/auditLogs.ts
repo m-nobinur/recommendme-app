@@ -1,8 +1,9 @@
 import { v } from 'convex/values'
 import type { Doc } from './_generated/dataModel'
-import { internalMutation, query } from './_generated/server'
+import { internalMutation, mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
 import { actorTypeValues, boundedPageSize, riskLevelValues } from './lib/validators'
+import { assertMemoryApiToken } from './security'
 
 const DEFAULT_LIMIT = 100
 const MAX_LIMIT = 500
@@ -68,6 +69,35 @@ export const appendBatch = internalMutation({
     }
 
     return ids
+  },
+})
+
+export const recordSecurityEvent = mutation({
+  args: {
+    authToken: v.optional(v.string()),
+    organizationId: v.id('organizations'),
+    userId: v.optional(v.id('appUsers')),
+    action: v.string(),
+    details: v.any(),
+    riskLevel: riskLevelValues,
+    traceId: v.optional(v.string()),
+    ipAddress: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertMemoryApiToken(args.authToken, 'auditLogs.recordSecurityEvent')
+    const now = Date.now()
+    return await ctx.db.insert('auditLogs', {
+      organizationId: args.organizationId,
+      userId: args.userId,
+      actorType: args.userId ? 'user' : 'system',
+      action: args.action,
+      resourceType: 'security_event',
+      details: args.details,
+      riskLevel: args.riskLevel,
+      traceId: args.traceId,
+      ipAddress: args.ipAddress,
+      createdAt: now,
+    })
   },
 })
 

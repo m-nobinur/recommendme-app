@@ -2,7 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
-import { validateAgentMemoryInput } from './memoryValidation'
+import { applyMemoryLayerPiiPolicy, validateAgentMemoryInput } from './memoryValidation'
 
 /**
  * Agent Memory CRUD (Execution-Level)
@@ -75,8 +75,9 @@ export const create = mutation({
     confidence: v.float64(),
   },
   handler: async (ctx, args) => {
+    const contentPolicy = applyMemoryLayerPiiPolicy(args.content, 'agent')
     validateAgentMemoryInput({
-      content: args.content,
+      content: contentPolicy.content,
       confidence: args.confidence,
     })
 
@@ -86,7 +87,7 @@ export const create = mutation({
       organizationId: args.organizationId,
       agentType: args.agentType,
       category: args.category,
-      content: args.content,
+      content: contentPolicy.content,
       confidence: args.confidence,
       useCount: 0,
       successRate: 0.0,
@@ -100,7 +101,7 @@ export const create = mutation({
     await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
       tableName: 'agentMemories' as const,
       documentId: id,
-      content: args.content,
+      content: contentPolicy.content,
       organizationId: args.organizationId,
     })
 
@@ -215,11 +216,20 @@ export const update = mutation({
       throw new Error('Agent memory not found or access denied')
     }
 
+    const normalizedContent =
+      updates.content !== undefined
+        ? applyMemoryLayerPiiPolicy(updates.content, 'agent').content
+        : undefined
+    const normalizedUpdates = {
+      ...updates,
+      content: normalizedContent,
+    }
+
     const filteredUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([_, val]) => val !== undefined)
+      Object.entries(normalizedUpdates).filter(([_, val]) => val !== undefined)
     )
 
-    const contentChanged = updates.content !== undefined
+    const contentChanged = normalizedUpdates.content !== undefined
 
     if (Object.keys(filteredUpdates).length > 0) {
       await ctx.db.patch(id, {
@@ -228,11 +238,11 @@ export const update = mutation({
       })
     }
 
-    if (contentChanged && updates.content) {
+    if (contentChanged && normalizedUpdates.content) {
       await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
         tableName: 'agentMemories' as const,
         documentId: id,
-        content: updates.content,
+        content: normalizedUpdates.content,
         organizationId,
       })
     }

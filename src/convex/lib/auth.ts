@@ -1,6 +1,39 @@
 import type { Doc, Id } from '../_generated/dataModel'
 import { authComponent } from '../auth'
 
+export const ORGANIZATION_ACCESS_DENIED_MESSAGE = 'Access denied for organization'
+export const UNAUTHENTICATED_ORG_ACCESS_MESSAGE =
+  'Unauthenticated organization access is not allowed'
+
+interface OrganizationAccessError extends Error {
+  code: 'ORG_ACCESS_DENIED' | 'ORG_UNAUTHENTICATED'
+  metadata: {
+    organizationId?: string
+  }
+}
+
+function createOrganizationAccessError(
+  code: OrganizationAccessError['code'],
+  message: string,
+  organizationId?: Id<'organizations'>
+): OrganizationAccessError {
+  const error = new Error(message) as OrganizationAccessError
+  error.name = 'OrganizationAccessError'
+  error.code = code
+  error.metadata = {
+    organizationId,
+  }
+  return error
+}
+
+export function isOrganizationAccessDeniedError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  return (
+    message.includes(ORGANIZATION_ACCESS_DENIED_MESSAGE) ||
+    message.includes(UNAUTHENTICATED_ORG_ACCESS_MESSAGE)
+  )
+}
+
 export async function assertUserInOrganization(
   ctx: {
     db: {
@@ -12,7 +45,11 @@ export async function assertUserInOrganization(
 ): Promise<Doc<'appUsers'>> {
   const user = await ctx.db.get(userId)
   if (!user || user.organizationId !== organizationId) {
-    throw new Error('Access denied for organization')
+    throw createOrganizationAccessError(
+      'ORG_ACCESS_DENIED',
+      ORGANIZATION_ACCESS_DENIED_MESSAGE,
+      organizationId
+    )
   }
 
   return user
@@ -44,7 +81,11 @@ export async function assertAuthenticatedUserInOrganization(
     if (isAuthBypassEnabled()) {
       return null
     }
-    throw new Error('Unauthenticated organization access is not allowed')
+    throw createOrganizationAccessError(
+      'ORG_UNAUTHENTICATED',
+      UNAUTHENTICATED_ORG_ACCESS_MESSAGE,
+      organizationId
+    )
   }
 
   const appUser = await ctx.db
@@ -53,7 +94,11 @@ export async function assertAuthenticatedUserInOrganization(
     .first()
 
   if (!appUser || appUser.organizationId !== organizationId) {
-    throw new Error('Access denied for organization')
+    throw createOrganizationAccessError(
+      'ORG_ACCESS_DENIED',
+      ORGANIZATION_ACCESS_DENIED_MESSAGE,
+      organizationId
+    )
   }
 
   return appUser

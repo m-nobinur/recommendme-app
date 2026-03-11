@@ -6,6 +6,7 @@ import { internalAction, internalMutation, internalQuery } from './_generated/se
 import { isEmbeddingConfigured } from './embedding'
 import { isCronDisabled } from './lib/cronGuard'
 import { type ResolvedLLMProvider, resolveLLMProvider } from './llmProvider'
+import { applyMemoryLayerPiiPolicy } from './memoryValidation'
 
 /**
  * Memory Extraction Pipeline
@@ -707,11 +708,12 @@ export const insertAgentMemory = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now()
-    return await ctx.db.insert('agentMemories', {
+    const normalizedContent = applyMemoryLayerPiiPolicy(args.content, 'agent').content
+    const id = await ctx.db.insert('agentMemories', {
       organizationId: args.organizationId,
       agentType: args.agentType,
       category: args.category,
-      content: args.content,
+      content: normalizedContent,
       confidence: args.confidence,
       useCount: 0,
       successRate: 0.0,
@@ -721,6 +723,10 @@ export const insertAgentMemory = internalMutation({
       createdAt: now,
       updatedAt: now,
     })
+    return {
+      id,
+      content: normalizedContent,
+    }
   },
 })
 
@@ -996,7 +1002,7 @@ async function createExtractedMemories(
     if (!isValidAgentMemory(mem)) continue
 
     try {
-      const id = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
+      const inserted = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
         organizationId,
         agentType: mem.agentType,
         category: mem.category as 'pattern' | 'preference' | 'success' | 'failure',
@@ -1006,8 +1012,8 @@ async function createExtractedMemories(
 
       await ctx.runAction(internal.embedding.generateAndStore, {
         tableName: 'agentMemories' as const,
-        documentId: id,
-        content: mem.content,
+        documentId: inserted.id,
+        content: inserted.content,
         organizationId,
       })
 
@@ -1178,7 +1184,7 @@ async function processToolOutcome(
   }
 
   try {
-    const id = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
+    const inserted = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
       organizationId: event.organizationId,
       agentType,
       category: category as 'pattern' | 'preference' | 'success' | 'failure',
@@ -1188,8 +1194,8 @@ async function processToolOutcome(
 
     await ctx.runAction(internal.embedding.generateAndStore, {
       tableName: 'agentMemories' as const,
-      documentId: id,
-      content: summary.slice(0, 500),
+      documentId: inserted.id,
+      content: inserted.content,
       organizationId: event.organizationId,
     })
 
@@ -1373,7 +1379,7 @@ async function processFeedbackOrApprovalEvent(
   }
 
   try {
-    const id = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
+    const inserted = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
       organizationId: event.organizationId,
       agentType: 'chat',
       category: event.eventType === 'approval_rejected' ? 'failure' : 'pattern',
@@ -1383,8 +1389,8 @@ async function processFeedbackOrApprovalEvent(
 
     await ctx.runAction(internal.embedding.generateAndStore, {
       tableName: 'agentMemories' as const,
-      documentId: id,
-      content: normalized,
+      documentId: inserted.id,
+      content: inserted.content,
       organizationId: event.organizationId,
     })
 
