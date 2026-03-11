@@ -169,10 +169,24 @@ export function ChatContainer() {
   const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({})
   const feedbackMapRef = useRef<Record<string, FeedbackRating>>({})
   const feedbackInFlightRef = useRef<Set<string>>(new Set())
+  const [feedbackError, setFeedbackError] = useState<string | null>(null)
+  const feedbackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const updateFeedbackMap = useCallback((next: Record<string, FeedbackRating>) => {
     feedbackMapRef.current = next
     setFeedbackMap(next)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (feedbackErrorTimerRef.current) clearTimeout(feedbackErrorTimerRef.current)
+    }
+  }, [])
+
+  const showFeedbackError = useCallback((msg: string) => {
+    setFeedbackError(msg)
+    if (feedbackErrorTimerRef.current) clearTimeout(feedbackErrorTimerRef.current)
+    feedbackErrorTimerRef.current = setTimeout(() => setFeedbackError(null), 4000)
   }, [])
 
   const handleFeedback = useCallback(
@@ -211,16 +225,18 @@ export function ChatContainer() {
           const rollbackMap = { ...feedbackMapRef.current }
           delete rollbackMap[messageId]
           updateFeedbackMap(rollbackMap)
+          showFeedbackError('Failed to save feedback. Please try again.')
         }
       } catch {
         const rollbackMap = { ...feedbackMapRef.current }
         delete rollbackMap[messageId]
         updateFeedbackMap(rollbackMap)
+        showFeedbackError('Failed to save feedback. Please try again.')
       } finally {
         feedbackInFlightRef.current.delete(messageId)
       }
     },
-    [activeConversationId, updateFeedbackMap]
+    [activeConversationId, updateFeedbackMap, showFeedbackError]
   )
 
   const [historyCursor, setHistoryCursor] = useState<number | null>(null)
@@ -492,6 +508,11 @@ export function ChatContainer() {
               {errorMessage && (
                 <div className="mb-4 rounded-xl border border-status-error/20 bg-status-error/10 p-4 text-status-error text-sm">
                   Error: {errorMessage}
+                </div>
+              )}
+              {feedbackError && (
+                <div className="mb-4 rounded-xl border border-status-error/20 bg-status-error/10 p-4 text-status-error text-sm">
+                  {feedbackError}
                 </div>
               )}
 
