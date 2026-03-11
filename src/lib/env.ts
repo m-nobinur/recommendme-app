@@ -22,6 +22,8 @@ const serverEnvSchema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
   GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
   MEMORY_API_TOKEN: z.string().optional(),
+  AI_SECURITY_CHAT_RATE_LIMIT_PER_MINUTE: z.string().optional(),
+  AI_SECURITY_APPROVAL_RATE_LIMIT_PER_MINUTE: z.string().optional(),
   AI_ENABLE_LANGFUSE: z.string().optional(),
   LANGFUSE_ENABLED: z.string().optional(),
   LANGFUSE_PUBLIC_KEY: z.string().optional(),

@@ -199,6 +199,11 @@ export const RATE_LIMIT = {
   AUTH_WINDOW_SECONDS: 60,
 } as const
 
+export const SECURITY_RATE_LIMIT = {
+  CHAT_REQUESTS_PER_MINUTE: 60,
+  APPROVAL_REVIEWS_PER_MINUTE: 20,
+} as const
+
 // === Session & Auth (seconds) ===
 export const SESSION = {
   EXPIRY_DAYS: 7,
