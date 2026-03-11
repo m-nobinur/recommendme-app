@@ -3,7 +3,7 @@
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { useQuery } from 'convex/react'
-import { Activity } from 'lucide-react'
+import { Activity, Database, Zap } from 'lucide-react'
 import { memo, useMemo } from 'react'
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -42,6 +42,8 @@ export const AgentAnalytics = memo(function AgentAnalytics({
 }: AgentAnalyticsProps) {
   const now = Date.now()
 
+  const snapshot = useQuery(api.analyticsWorker.getLatestSnapshot, { organizationId })
+
   const executions = useQuery(api.agentExecutions.list, {
     userId,
     organizationId,
@@ -54,6 +56,10 @@ export const AgentAnalytics = memo(function AgentAnalytics({
     now,
   })
 
+  const snapshotAgentData = snapshot?.agents as
+    | { totalExecutions: number; byAgent: Record<string, unknown> }
+    | undefined
+
   const {
     agentData,
     statusData,
@@ -61,7 +67,51 @@ export const AgentAnalytics = memo(function AgentAnalytics({
     totalCompleted,
     totalFailed,
     overallSuccessRate,
+    dataSource,
   } = useMemo(() => {
+    if (snapshotAgentData && snapshotAgentData.totalExecutions > 0) {
+      const byAgent = (snapshotAgentData.byAgent ?? {}) as Record<
+        string,
+        { total?: number; completed?: number; failed?: number }
+      >
+      const computedAgentData = Object.entries(byAgent)
+        .map(([agentType, data], i) => ({
+          name: agentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+          key: agentType,
+          total: data?.total ?? 0,
+          completed: data?.completed ?? 0,
+          failed: data?.failed ?? 0,
+          skipped: 0,
+          successRate:
+            (data?.total ?? 0) > 0
+              ? Math.round(((data?.completed ?? 0) / (data?.total ?? 1)) * 100)
+              : 0,
+          avgDurationMs: 0,
+          color: AGENT_COLORS[i % AGENT_COLORS.length],
+        }))
+        .sort((a, b) => b.total - a.total)
+
+      let snapshotCompleted = 0
+      let snapshotFailed = 0
+      for (const d of computedAgentData) {
+        snapshotCompleted += d.completed
+        snapshotFailed += d.failed
+      }
+
+      return {
+        agentData: computedAgentData,
+        statusData: [] as Array<{ name: string; key: string; count: number }>,
+        totalExecutions: snapshotAgentData.totalExecutions,
+        totalCompleted: snapshotCompleted,
+        totalFailed: snapshotFailed,
+        overallSuccessRate:
+          snapshotAgentData.totalExecutions > 0
+            ? Math.round((snapshotCompleted / snapshotAgentData.totalExecutions) * 100)
+            : 0,
+        dataSource: 'snapshot' as const,
+      }
+    }
+
     if (!executions) {
       return {
         agentData: [] as Array<{
@@ -80,6 +130,7 @@ export const AgentAnalytics = memo(function AgentAnalytics({
         totalCompleted: 0,
         totalFailed: 0,
         overallSuccessRate: 0,
+        dataSource: 'live' as const,
       }
     }
 
@@ -165,8 +216,9 @@ export const AgentAnalytics = memo(function AgentAnalytics({
       totalCompleted: completedCount,
       totalFailed: failedCount,
       overallSuccessRate: total > 0 ? Math.round((completedCount / total) * 100) : 0,
+      dataSource: 'live' as const,
     }
-  }, [executions])
+  }, [snapshotAgentData, executions])
 
   if (executions === undefined || approvalStats === undefined) {
     return (
@@ -187,17 +239,34 @@ export const AgentAnalytics = memo(function AgentAnalytics({
       <div className="flex items-center gap-2">
         <Activity className="h-4 w-4 text-brand" />
         <h2 className="text-base font-semibold text-white">Agent Analytics</h2>
+        {dataSource === 'snapshot' ? (
+          <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-500">
+            <Database className="h-3 w-3" /> Pre-computed
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-400">
+            <Zap className="h-3 w-3" /> Live
+          </span>
+        )}
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Total Executions" value={String(totalExecutions)} sub="last 100 runs" />
+        <StatCard
+          label="Total Executions"
+          value={String(totalExecutions)}
+          sub={dataSource === 'snapshot' ? 'daily snapshot' : 'last 100 runs'}
+        />
         <StatCard
           label="Success Rate"
           value={`${overallSuccessRate}%`}
           sub={`${totalCompleted} completed`}
         />
-        <StatCard label="Failed" value={String(totalFailed)} sub="last 100 runs" />
+        <StatCard
+          label="Failed"
+          value={String(totalFailed)}
+          sub={dataSource === 'snapshot' ? 'daily snapshot' : 'last 100 runs'}
+        />
         <StatCard
           label="Pending Approvals"
           value={String(approvalStats.pending)}

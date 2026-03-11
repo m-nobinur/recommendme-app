@@ -1,4 +1,7 @@
+'use node'
+
 import { v } from 'convex/values'
+import { Resend } from 'resend'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery, query } from './_generated/server'
@@ -14,9 +17,12 @@ import { isCronDisabled } from './lib/cronGuard'
  * When no delivery provider is configured, messages are logged and marked
  * as 'skipped' (same graceful-degradation pattern as LLM workers).
  *
+ * Email rendering uses react-email templates (src/lib/email/templates.tsx).
+ * Delivery tracking via Resend webhooks (POST /api/webhooks/resend).
+ *
  * Flow:
  *   1. Fetch pending messages (batch of MAX_BATCH_SIZE)
- *   2. For each: claim → deliver via adapter → mark sent/failed
+ *   2. For each: claim → render template → deliver via adapter → mark sent/failed
  *   3. Retry failed messages up to maxRetries
  *
  * Schedule: every 5 minutes
@@ -24,6 +30,7 @@ import { isCronDisabled } from './lib/cronGuard'
 
 const MAX_BATCH_SIZE = 20
 const MAX_RETRIES_DEFAULT = 3
+const DEFAULT_FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? 'notifications@recommendme.app'
 
 type Channel = 'email' | 'sms' | 'in_app'
 
@@ -54,6 +61,8 @@ export const enqueue = internalMutation({
     sourceExecutionId: v.optional(v.id('agentExecutions')),
     priority: v.optional(v.union(v.literal('low'), v.literal('normal'), v.literal('high'))),
     scheduledAt: v.optional(v.number()),
+    templateName: v.optional(v.string()),
+    templateProps: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const now = Date.now()
@@ -70,6 +79,8 @@ export const enqueue = internalMutation({
       sourceExecutionId: args.sourceExecutionId,
       priority: args.priority ?? 'normal',
       scheduledAt: args.scheduledAt,
+      templateName: args.templateName,
+      templateProps: args.templateProps,
       retryCount: 0,
       maxRetries: MAX_RETRIES_DEFAULT,
       createdAt: now,
@@ -101,10 +112,19 @@ export const claimMessage = internalMutation({
 })
 
 export const markSent = internalMutation({
-  args: { id: v.id('communicationQueue') },
+  args: {
+    id: v.id('communicationQueue'),
+    externalMessageId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     const now = Date.now()
-    await ctx.db.patch(args.id, { status: 'sent', sentAt: now, updatedAt: now })
+    await ctx.db.patch(args.id, {
+      status: 'sent',
+      sentAt: now,
+      updatedAt: now,
+      externalMessageId: args.externalMessageId,
+      deliveryStatus: 'sent',
+    })
   },
 })
 
@@ -136,24 +156,84 @@ export const markSkipped = internalMutation({
   },
 })
 
+export const updateDeliveryStatus = internalMutation({
+  args: {
+    externalMessageId: v.string(),
+    deliveryStatus: v.union(
+      v.literal('sent'),
+      v.literal('delivered'),
+      v.literal('delivery_delayed'),
+      v.literal('bounced'),
+      v.literal('complained')
+    ),
+  },
+  handler: async (ctx, args) => {
+    const msg = await ctx.db
+      .query('communicationQueue')
+      .withIndex('by_external_id', (q) => q.eq('externalMessageId', args.externalMessageId))
+      .first()
+
+    if (!msg) return
+
+    const update: Record<string, unknown> = {
+      deliveryStatus: args.deliveryStatus,
+      deliveryUpdatedAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+
+    if (args.deliveryStatus === 'bounced' || args.deliveryStatus === 'complained') {
+      update.status = 'failed'
+      update.error = `Email ${args.deliveryStatus}`
+    }
+
+    await ctx.db.patch(msg._id, update)
+  },
+})
+
+async function renderTemplate(
+  templateName: string | undefined,
+  templateProps: Record<string, string | undefined> | undefined,
+  fallbackBody: string
+): Promise<string> {
+  if (!templateName || !templateProps) return fallbackBody
+
+  try {
+    const { renderEmailHtml } = await import('../lib/email/templates')
+    return await renderEmailHtml({
+      template: templateName as 'followup' | 'reminder' | 'invoice' | 'generic',
+      props: templateProps,
+    })
+  } catch {
+    return fallbackBody
+  }
+}
+
 async function deliverEmail(
-  _to: string,
-  _subject: string,
-  _body: string
-): Promise<{ success: boolean; error?: string }> {
+  to: string,
+  subject: string,
+  body: string,
+  templateName?: string,
+  templateProps?: Record<string, string | undefined>
+): Promise<{ success: boolean; error?: string; messageId?: string }> {
   if (!isEmailConfigured()) {
     return { success: false, error: 'RESEND_API_KEY not configured' }
   }
 
-  // Resend integration placeholder — uncomment when Resend is added:
-  // const resend = new Resend(process.env.RESEND_API_KEY)
-  // const { error } = await resend.emails.send({
-  //   from: 'noreply@yourdomain.com',
-  //   to, subject, html: body,
-  // })
-  // return error ? { success: false, error: error.message } : { success: true }
+  const html = await renderTemplate(templateName, templateProps, body)
+  const resend = new Resend(process.env.RESEND_API_KEY)
 
-  return { success: false, error: 'Email delivery not yet implemented — awaiting Resend setup' }
+  const { data, error } = await resend.emails.send({
+    from: DEFAULT_FROM_EMAIL,
+    to,
+    subject,
+    html,
+  })
+
+  if (error) {
+    return { success: false, error: error.message }
+  }
+
+  return { success: true, messageId: data?.id }
 }
 
 async function deliverSms(
@@ -165,17 +245,6 @@ async function deliverSms(
   }
 
   return { success: false, error: 'SMS delivery not yet implemented — awaiting Twilio setup' }
-}
-
-async function deliverInApp(
-  _ctx: { runMutation: (...args: any[]) => Promise<any> },
-  _orgId: Id<'organizations'>,
-  _recipientId: string,
-  _body: string
-): Promise<{ success: boolean; error?: string }> {
-  // In-app notifications can use the existing approval/notification infrastructure
-  // For now, log as successful since the queue entry itself is the notification record
-  return { success: true }
 }
 
 export const processQueue = internalAction({
@@ -197,6 +266,8 @@ export const processQueue = internalAction({
       recipientId: string
       subject?: string
       body: string
+      templateName?: string
+      templateProps?: Record<string, string | undefined>
     }>
 
     if (batch.length === 0) return { processed: 0, sent: 0, failed: 0, skipped: 0 }
@@ -212,14 +283,20 @@ export const processQueue = internalAction({
       if (!claimed) continue
 
       try {
-        let result: { success: boolean; error?: string }
+        let result: { success: boolean; error?: string; messageId?: string }
 
         switch (msg.channel) {
           case 'email': {
             if (!msg.recipientAddress) {
               result = { success: false, error: 'No recipient email address' }
             } else {
-              result = await deliverEmail(msg.recipientAddress, msg.subject ?? '', msg.body)
+              result = await deliverEmail(
+                msg.recipientAddress,
+                msg.subject ?? '',
+                msg.body,
+                msg.templateName,
+                msg.templateProps
+              )
             }
             break
           }
@@ -232,18 +309,18 @@ export const processQueue = internalAction({
             break
           }
           case 'in_app': {
-            result = await deliverInApp(ctx, msg.organizationId, msg.recipientId, msg.body)
+            result = { success: true }
             break
           }
         }
 
         if (result.success) {
-          await ctx.runMutation(internal.communicationWorker.markSent, { id: msg._id })
+          await ctx.runMutation(internal.communicationWorker.markSent, {
+            id: msg._id,
+            externalMessageId: result.messageId,
+          })
           sent++
-        } else if (
-          result.error?.includes('not configured') ||
-          result.error?.includes('not yet implemented')
-        ) {
+        } else if (result.error?.includes('not configured')) {
           await ctx.runMutation(internal.communicationWorker.markSkipped, {
             id: msg._id,
             reason: result.error,
@@ -303,11 +380,15 @@ export const getStats = query({
 
     const byStatus: Record<string, number> = {}
     const byChannel: Record<string, number> = {}
+    const byDelivery: Record<string, number> = {}
     for (const msg of recent) {
       byStatus[msg.status] = (byStatus[msg.status] ?? 0) + 1
       byChannel[msg.channel] = (byChannel[msg.channel] ?? 0) + 1
+      if (msg.deliveryStatus) {
+        byDelivery[msg.deliveryStatus] = (byDelivery[msg.deliveryStatus] ?? 0) + 1
+      }
     }
 
-    return { total: recent.length, byStatus, byChannel }
+    return { total: recent.length, byStatus, byChannel, byDelivery }
   },
 })

@@ -31,13 +31,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Weekly cron on Sunday at 07:00 UTC
 
 #### Communication Worker (8.7) — `src/convex/communicationWorker.ts`
-- Outbound communication queue with `communicationQueue` schema table (3 indexes)
-- Pluggable channel adapters: email (Resend — scaffolded), SMS (Twilio — scaffolded), in-app (working)
+- Outbound communication queue with `communicationQueue` schema table (4 indexes)
+- Pluggable channel adapters: email (Resend — **live**), SMS (Twilio — scaffolded), in-app (working)
 - Message lifecycle: pending → sending → sent/failed/skipped with retry logic (default 3 retries)
 - `enqueue` mutation for agents/system to queue messages; `processQueue` action for cron-driven delivery
 - Graceful degradation: marks messages as 'skipped' when delivery provider is not configured
-- Public `listByOrg` and `getStats` queries for dashboard integration
+- Delivery tracking: `externalMessageId`, `deliveryStatus` (sent/delivered/bounced/complained), `deliveryUpdatedAt` fields
+- Template support: `templateName` + `templateProps` fields for react-email rendering
+- Public `listByOrg` and `getStats` queries with delivery status breakdown
 - Cron: every 5 minutes
+
+#### Email Delivery System — `resend` + `@react-email/components`
+- Live Resend integration in `communicationWorker.ts` with `RESEND_API_KEY` env var
+- 4 react-email templates in `src/lib/email/templates.tsx`:
+  - `FollowupEmail` — agent follow-up outreach with lead name, summary, last contact date
+  - `ReminderEmail` — appointment reminders with date, time, summary
+  - `InvoiceEmail` — invoice notifications with number, amount, due date
+  - `GenericEmail` — catch-all for sales/system messages
+- Dark theme templates matching app branding (#111113 bg, amber CTAs)
+- `renderEmailHtml()` dispatcher renders templates to HTML via `@react-email/components`
+
+#### Resend Delivery Webhooks — `src/convex/http.ts`
+- Convex HTTP action at `/webhooks/resend` for Resend callback tracking
+- Maps 5 Resend events: `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`
+- Svix signature header validation (`svix-id`, `svix-timestamp`, `svix-signature`)
+- `updateDeliveryStatus` mutation updates queue record; bounced/complained auto-fail
+
+#### Agent → Communication Queue Wiring — `src/convex/agentRunner.ts`
+- `enqueueAgentCommunications()` fires after each successful agent execution loop
+- Fetches targeted leads via `getLeadsByIds`, enqueues emails for leads with email addresses
+- `getOrgNameForComms` query personalizes emails with organization name
+- `buildSubjectLine()` generates context-aware subjects per agent type
+- Maps agent types to `sourceType` values and template names
+- Non-blocking: comm failures never prevent execution completion
 
 #### Analytics Worker (8.8) — `src/convex/analyticsWorker.ts`
 - Pre-computes daily analytics snapshots per organization for fast dashboard reads
@@ -56,11 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `src/convex/lib/clusterBuilder.test.ts` — 11 tests: empty, single, identical, orthogonal, two-cluster, minClusterSize, transitive clustering, dominantValue edge cases
 
 #### Dashboard Integration
-- `MemoryAnalytics` component now reads from `dailyAnalytics` snapshot with automatic fallback to live `businessMemories.getStats` query
+- `MemoryAnalytics` component reads from `dailyAnalytics` snapshot with automatic fallback to live `businessMemories.getStats` query
+- `AgentAnalytics` component reads from `dailyAnalytics.agents` snapshot with automatic fallback to live `agentExecutions.list` query; shows Pre-computed/Live badge
+- `CostAnalytics` component reads from `dailyAnalytics.aiUsage` snapshot for cost/token totals and by-purpose breakdown; new "Daily Cost Trend" bar chart from 30-day snapshot time-series; falls back to live `llmUsage.getOrgUsage`
+- All three analytics components display data source indicator (Pre-computed / Live)
 
 #### Schema Changes
 - Added `dailyAnalytics` table for pre-computed analytics snapshots
-- Added `communicationQueue` table for outbound message queue
+- Added `communicationQueue` table for outbound message queue with `externalMessageId`, `deliveryStatus`, `deliveryUpdatedAt`, `templateName`, `templateProps` fields and `by_external_id` index
 
 #### Cron Additions (5 new entries in `src/convex/crons.ts`)
 - `memory consolidation` — daily 08:30 UTC
@@ -69,10 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `daily analytics snapshot` — daily 06:00 UTC
 - `communication queue processing` — every 5 minutes
 
+#### Dependencies
+- `resend` 6.9.3 — email delivery via Resend API
+- `@react-email/components` 1.0.9 — react-email template components
+
 #### Documentation
-- `docs/CRON_REFERENCE.md` — comprehensive cron schedule reference with configuration guide
-- `docs/DEVELOPMENT_PLAN.md` updated to v3.0 with full Phase 8 completion
-- `docs/PHASE_8_PLAN_AND_AUDIT.md` updated with implementation completion status
+- `docs/DEVELOPMENT_PLAN.md` updated to v3.1 with email delivery, webhook, and dashboard wiring
 
 ### Changed (Phase 8)
 
@@ -81,6 +112,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `src/convex/nicheAggregation.ts` refactored: inline Union-Find → shared `clusterBuilder`, inline type resolution → `dominantValue`
 - `src/convex/platformAggregation.ts` refactored: inline Union-Find → shared `clusterBuilder`, inline category resolution → `dominantValue`
 - `src/convex/analyticsWorker.ts` refactored: removed inline `listAllOrganizationIds`, removed `as any` casts in `saveDailySnapshot` call
+- `src/convex/communicationWorker.ts` upgraded: stub `deliverEmail` → live Resend adapter with template rendering; added `'use node'` directive; added `updateDeliveryStatus` mutation and delivery tracking fields
+- `src/convex/http.ts` extended: added Resend webhook HTTP action at `/webhooks/resend`
+- `src/convex/agentRunner.ts` extended: added `enqueueAgentCommunications()`, `getOrgNameForComms`, `buildSubjectLine()` for post-execution email wiring
+- `src/convex/schema.ts` extended: `communicationQueue` table gains `externalMessageId`, `deliveryStatus`, `deliveryUpdatedAt`, `templateName`, `templateProps` fields and `by_external_id` index
+- `src/components/analytics/AgentAnalytics.tsx` reads from pre-computed `dailyAnalytics.agents` snapshot with live fallback
+- `src/components/analytics/CostAnalytics.tsx` reads from pre-computed `dailyAnalytics.aiUsage` snapshot with daily cost trend chart and live fallback
 - `src/components/analytics/MemoryAnalytics.tsx` reads from pre-computed `dailyAnalytics` snapshot with live fallback
 
 ### Fixed (Phase 8)
@@ -755,23 +792,29 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-**ALL PHASES COMPLETE (0–12)**
+**ALL PHASES COMPLETE (0–12) + Email Delivery Activated**
 
-All planned development phases are now implemented. Remaining work:
+All planned development phases are implemented. Communication worker is live with Resend email delivery, react-email templates, and webhook tracking. Dashboard analytics components read from pre-computed dailyAnalytics snapshots.
 
-**Deferred items:**
-- Communication worker (Phase 8.7): requires external service accounts (Resend/Twilio), CAN-SPAM compliance, opt-in management
+**Production setup required:**
+- Configure `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_WEBHOOK_SECRET` in Convex environment
+- Verify sending domain in Resend dashboard and configure DNS records
+- Set webhook URL in Resend: `https://<convex-url>/webhooks/resend`
+- Add CAN-SPAM unsubscribe headers and opt-in management before sending to real recipients
+
+**Remaining deferred items:**
+- SMS delivery (Twilio): add `twilio` package, implement `deliverSms()` adapter
 - Email verification: `requireEmailVerification: false` in `src/convex/auth.ts` (TODO for production)
 - GDPR cascade delete (right-to-be-forgotten)
 - Settings persistence: `SettingsForm.tsx` saves to Zustand only, not Convex
 - Next.js middleware for defense-in-depth auth checking
 
 **Planned features for future releases:**
-- Communication worker with email/SMS via Resend/Twilio
+- SMS delivery via Twilio
 - Email verification and 2FA for authentication
 - Calendar integrations (Google Calendar, Outlook)
-- Webhook support for external integrations
-- Dashboard migration to pre-computed analytics (dailyAnalytics table)
+- Webhook support for external integrations (beyond Resend)
+- Svix webhook signature verification for production security
 
 ---
 

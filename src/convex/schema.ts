@@ -882,12 +882,26 @@ export default defineSchema({
     error: v.optional(v.string()),
     retryCount: v.number(),
     maxRetries: v.number(),
+    externalMessageId: v.optional(v.string()),
+    deliveryStatus: v.optional(
+      v.union(
+        v.literal('sent'),
+        v.literal('delivered'),
+        v.literal('delivery_delayed'),
+        v.literal('bounced'),
+        v.literal('complained')
+      )
+    ),
+    deliveryUpdatedAt: v.optional(v.number()),
+    templateName: v.optional(v.string()),
+    templateProps: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index('by_org_status', ['organizationId', 'status'])
     .index('by_org_created', ['organizationId', 'createdAt'])
-    .index('by_status_scheduled', ['status', 'scheduledAt']),
+    .index('by_status_scheduled', ['status', 'scheduledAt'])
+    .index('by_external_id', ['externalMessageId']),
 
   memoryEventDeadLetters: defineTable({
     organizationId: v.id('organizations'),

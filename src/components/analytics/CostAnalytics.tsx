@@ -3,7 +3,7 @@
 import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { useQuery } from 'convex/react'
-import { DollarSign } from 'lucide-react'
+import { Database, DollarSign, Zap } from 'lucide-react'
 import { memo, useEffect, useMemo, useState } from 'react'
 import {
   Bar,
@@ -106,8 +106,13 @@ export const CostAnalytics = memo(function CostAnalytics({
   }, [])
 
   const sinceMs = nowMs - THIRTY_DAYS_MS
-
   const { dailyLimitTokens, monthlyLimitTokens } = BUDGET_TIER_LIMITS[budgetTier]
+
+  const snapshot = useQuery(api.analyticsWorker.getLatestSnapshot, { organizationId })
+  const recentSnapshots = useQuery(api.analyticsWorker.getRecentSnapshots, {
+    organizationId,
+    days: 30,
+  })
 
   const usage = useQuery(api.llmUsage.getOrgUsage, {
     organizationId,
@@ -122,20 +127,61 @@ export const CostAnalytics = memo(function CostAnalytics({
     nowMs,
   })
 
-  const purposeData = useMemo(
-    () =>
-      usage
-        ? Object.entries(usage.byPurpose)
-            .map(([purpose, data]) => ({
-              name: purpose.replace(/_/g, ' '),
-              key: purpose,
-              value: data.costUsd,
-              tokens: data.tokens,
-            }))
-            .sort((a, b) => b.value - a.value)
-        : [],
-    [usage]
-  )
+  const snapshotAiUsage = snapshot?.aiUsage as
+    | {
+        callCount: number
+        totalTokens: number
+        totalCostUsd: number
+        byPurpose: Record<string, { tokens?: number; costUsd?: number }>
+      }
+    | undefined
+
+  const hasSnapshotData =
+    snapshotAiUsage && (snapshotAiUsage.callCount > 0 || snapshotAiUsage.totalTokens > 0)
+
+  const trendData = useMemo(() => {
+    if (!recentSnapshots || recentSnapshots.length === 0) return []
+    return recentSnapshots
+      .map((s) => {
+        const ai = s.aiUsage as { totalCostUsd?: number; totalTokens?: number } | undefined
+        return {
+          date: s.date,
+          cost: ai?.totalCostUsd ?? 0,
+          tokens: ai?.totalTokens ?? 0,
+        }
+      })
+      .reverse()
+  }, [recentSnapshots])
+
+  const totalCostUsd = hasSnapshotData ? snapshotAiUsage.totalCostUsd : (usage?.totalCostUsd ?? 0)
+  const totalTokens = hasSnapshotData ? snapshotAiUsage.totalTokens : (usage?.totalTokens ?? 0)
+  const totalInputTokens = usage?.totalInputTokens ?? 0
+  const totalOutputTokens = usage?.totalOutputTokens ?? 0
+  const dataSource = hasSnapshotData ? 'snapshot' : 'live'
+
+  const purposeData = useMemo(() => {
+    if (hasSnapshotData && snapshotAiUsage.byPurpose) {
+      return Object.entries(snapshotAiUsage.byPurpose)
+        .map(([purpose, data]) => ({
+          name: purpose.replace(/_/g, ' '),
+          key: purpose,
+          value: data?.costUsd ?? 0,
+          tokens: data?.tokens ?? 0,
+        }))
+        .filter((d) => d.value > 0 || d.tokens > 0)
+        .sort((a, b) => b.value - a.value)
+    }
+
+    if (!usage) return []
+    return Object.entries(usage.byPurpose)
+      .map(([purpose, data]) => ({
+        name: purpose.replace(/_/g, ' '),
+        key: purpose,
+        value: data.costUsd,
+        tokens: data.tokens,
+      }))
+      .sort((a, b) => b.value - a.value)
+  }, [hasSnapshotData, snapshotAiUsage, usage])
 
   const modelData = useMemo(
     () =>
@@ -173,14 +219,23 @@ export const CostAnalytics = memo(function CostAnalytics({
       <div className="flex items-center gap-2">
         <DollarSign className="h-4 w-4 text-brand" />
         <h2 className="text-base font-semibold text-white">Cost Analytics (30d)</h2>
+        {dataSource === 'snapshot' ? (
+          <span className="flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-500">
+            <Database className="h-3 w-3" /> Pre-computed
+          </span>
+        ) : (
+          <span className="flex items-center gap-1 rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] text-blue-400">
+            <Zap className="h-3 w-3" /> Live
+          </span>
+        )}
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Total Cost" value={formatCost(usage.totalCostUsd)} sub="last 30 days" />
-        <StatCard label="Total Tokens" value={formatTokens(usage.totalTokens)} />
-        <StatCard label="Input Tokens" value={formatTokens(usage.totalInputTokens)} />
-        <StatCard label="Output Tokens" value={formatTokens(usage.totalOutputTokens)} />
+        <StatCard label="Total Cost" value={formatCost(totalCostUsd)} sub="last 30 days" />
+        <StatCard label="Total Tokens" value={formatTokens(totalTokens)} />
+        <StatCard label="Input Tokens" value={formatTokens(totalInputTokens)} />
+        <StatCard label="Output Tokens" value={formatTokens(totalOutputTokens)} />
       </div>
 
       {/* Budget status */}
@@ -199,6 +254,41 @@ export const CostAnalytics = memo(function CostAnalytics({
               limit={budget.monthly.tokenLimit}
             />
           </div>
+        </div>
+      )}
+
+      {/* Daily cost trend from snapshots */}
+      {trendData.length >= 2 && (
+        <div className="rounded-xl border border-border bg-surface-secondary p-5">
+          <p className="mb-4 text-sm font-medium text-text-secondary">Daily Cost Trend</p>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={trendData} margin={{ top: 0, right: 4, bottom: 0, left: 0 }}>
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 9, fill: 'var(--color-text-muted)' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v: string) => v.slice(5)}
+              />
+              <YAxis
+                tick={{ fontSize: 9, fill: 'var(--color-text-muted)' }}
+                axisLine={false}
+                tickLine={false}
+                tickFormatter={(v) => formatCost(v)}
+              />
+              <Tooltip
+                formatter={(val) => (typeof val === 'number' ? formatCost(val) : '')}
+                labelFormatter={(label) => `Date: ${String(label)}`}
+                contentStyle={{
+                  backgroundColor: 'var(--color-surface-elevated)',
+                  border: '1px solid var(--color-border)',
+                  borderRadius: '8px',
+                  fontSize: '12px',
+                }}
+              />
+              <Bar dataKey="cost" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
       )}
 

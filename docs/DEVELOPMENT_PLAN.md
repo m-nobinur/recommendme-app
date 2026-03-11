@@ -1,9 +1,9 @@
 # RecommendMe Memory & Agent System - Development Plan
 
 > **Comprehensive phased implementation plan for the Unified Memory Architecture**
-> Document Version: 3.0 | Created: February 8, 2026 | Updated: March 12, 2026
+> Document Version: 3.1 | Created: February 8, 2026 | Updated: March 12, 2026
 > Branch: `feat/feedback-collection-11a`
-> **Current Status: Phase 8 COMPLETE — Worker Architecture & Background Jobs implemented. All phases complete.**
+> **Current Status: Phase 8 FULLY COMPLETE — Email delivery live (Resend + react-email), webhook tracking, agent→comms wiring, dashboard→dailyAnalytics wiring. All phases complete.**
 
 ---
 
@@ -1430,28 +1430,43 @@ Implement the scheduled background workers for memory maintenance, aggregation, 
 - **Dedup**: Checked against both active and pending platform memories (cosine 0.90)
 - **Cron**: Weekly, Sunday at 07:00 UTC
 
-### 8.7 Communication Worker [COMPLETE]
+### 8.7 Communication Worker [COMPLETE — LIVE EMAIL DELIVERY]
 
-**File:** `src/convex/communicationWorker.ts`
-**Schema addition:** `communicationQueue` table with `by_org_status`, `by_org_created`, and `by_status_scheduled` indexes
+**File:** `src/convex/communicationWorker.ts` (`'use node'` directive)
+**Schema addition:** `communicationQueue` table with `by_org_status`, `by_org_created`, `by_status_scheduled`, and `by_external_id` indexes
 
 **Implementation:**
-- **`enqueue`** (internalMutation): Inserts a message into the queue with channel, recipient, body, source, priority, optional scheduling
-- **`processQueue`** (internalAction): Claims pending messages in batches of 20, dispatches to channel-specific adapters, marks sent/failed/skipped
+- **`enqueue`** (internalMutation): Inserts a message into the queue with channel, recipient, body, source, priority, optional scheduling, template name + props
+- **`processQueue`** (internalAction): Claims pending messages in batches of 20, renders react-email templates, dispatches to channel-specific adapters, marks sent/failed/skipped
 - **`claimMessage`** / **`markSent`** / **`markFailed`** / **`markSkipped`** (internalMutations): State machine transitions with retry support
-- **Channel adapters**: Pluggable `deliverEmail()` (Resend — scaffolded), `deliverSms()` (Twilio — scaffolded), `deliverInApp()` (immediate)
+- **`updateDeliveryStatus`** (internalMutation): Webhook-driven delivery status updates; auto-fails bounced/complained messages
+- **Channel adapters**: Pluggable `deliverEmail()` (Resend — **LIVE**), `deliverSms()` (Twilio — scaffolded), in-app (immediate)
+- **Email templates**: 4 react-email templates (followup, reminder, invoice, generic) in `src/lib/email/templates.tsx` with dark theme branding
+- **Delivery tracking**: `externalMessageId` (Resend message ID), `deliveryStatus` (sent/delivered/bounced/complained), `deliveryUpdatedAt`
 - **Graceful degradation**: When no provider is configured, messages are marked 'skipped' with reason (same pattern as LLM workers)
 - **Retry**: Failed messages return to 'pending' up to `maxRetries` (default 3), then permanently 'failed'
-- **Public queries**: `listByOrg` and `getStats` for dashboard integration
+- **Public queries**: `listByOrg` and `getStats` (with delivery status breakdown) for dashboard integration
 - **Cron**: Every 5 minutes
 
-**Remaining for production email/SMS:**
-- Add Resend (`resend`) and/or Twilio (`twilio`) packages
-- Configure `RESEND_API_KEY` and `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN` env vars
-- Uncomment delivery adapter code in `communicationWorker.ts`
-- Add CAN-SPAM unsubscribe headers and opt-in management
+**Agent wiring** (`src/convex/agentRunner.ts`):
+- `enqueueAgentCommunications()` runs after successful agent executions, fetches lead emails, enqueues templated emails
+- `getOrgNameForComms` query personalizes emails with org name
+- `buildSubjectLine()` generates context-aware subjects per agent type
+- Non-blocking: communication failures never prevent execution completion
 
-### 8.8 Analytics Worker [COMPLETE]
+**Webhook tracking** (`src/convex/http.ts`):
+- Convex HTTP action at `/webhooks/resend` for Resend event callbacks
+- Maps 5 events: `email.sent`, `email.delivered`, `email.delivery_delayed`, `email.bounced`, `email.complained`
+- Svix signature header validation
+
+**Remaining for production:**
+- Configure `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_WEBHOOK_SECRET` in Convex env
+- Verify sending domain DNS in Resend dashboard
+- Add CAN-SPAM unsubscribe headers and opt-in management
+- Implement Svix webhook signature verification (currently validates header presence only)
+- Activate SMS: add `twilio` package, implement `deliverSms()` adapter, set credentials
+
+### 8.8 Analytics Worker [COMPLETE — DASHBOARD WIRED]
 
 **File:** `src/convex/analyticsWorker.ts`
 **Schema addition:** `dailyAnalytics` table with `by_org_date` and `by_org_created` indexes
@@ -1460,7 +1475,11 @@ Implement the scheduled background workers for memory maintenance, aggregation, 
 - **Per-org stats computed**: leads (by status, total value), appointments (by status), invoices (by status, revenue), memory (active/archived counts, avg decay), AI usage (tokens, cost, call count), agent executions (by type, success rate)
 - **`saveDailySnapshot`** (internalMutation): Idempotent upsert — updates existing snapshot if same org+date already computed
 - **`runDailyAnalytics`** (internalAction): Iterates all orgs, computes 6 stat categories in parallel via `Promise.all`, saves snapshot
-- **Dashboard integration**: Pre-computed snapshots can replace live aggregation in `MemoryAnalytics`, `CostAnalytics`, `AgentAnalytics` (Phase 12 components read from `dailyAnalytics`)
+- **Dashboard integration** (LIVE):
+  - `MemoryAnalytics` reads from `dailyAnalytics` snapshot with fallback to live `businessMemories.getStats`
+  - `AgentAnalytics` reads from `dailyAnalytics.agents` snapshot with fallback to live `agentExecutions.list`; shows Pre-computed/Live badge
+  - `CostAnalytics` reads from `dailyAnalytics.aiUsage` snapshot for cost/token totals + by-purpose; adds "Daily Cost Trend" chart from 30-day snapshot series; falls back to live `llmUsage.getOrgUsage`
+  - All three components display data source indicator badge
 - **Cron**: Daily at 06:00 UTC (before quality monitor at 07:00)
 
 ### Files Created
@@ -1471,32 +1490,42 @@ Implement the scheduled background workers for memory maintenance, aggregation, 
 | `src/convex/nicheAggregation.ts` | Business → Niche pattern promotion with LLM anonymization | Convex Internal Action + Query + Mutation |
 | `src/convex/platformAggregation.ts` | Niche → Platform pattern promotion with human validation | Convex Internal Action + Query + Mutation |
 | `src/convex/analyticsWorker.ts` | Daily pre-computed analytics snapshots per org | Convex Internal Action + Query + Mutation |
-| `src/convex/communicationWorker.ts` | Outbound communication queue with pluggable delivery adapters | Convex Internal Action + Query + Mutation |
+| `src/convex/communicationWorker.ts` | Outbound communication queue with live Resend email delivery | Convex Internal Action + Query + Mutation |
 | `src/convex/lib/clusterBuilder.ts` | Generic Union-Find clustering + `dominantValue` helper | Pure TypeScript utility |
 | `src/convex/lib/orgHelpers.ts` | Shared `listAllOrganizationIds` for all background workers | Pure TypeScript utility |
 | `src/convex/lib/vectorMath.test.ts` | Unit tests for `cosineSimilarity` (8 tests) | Test |
 | `src/convex/lib/clusterBuilder.test.ts` | Unit tests for `buildEmbeddingClusters` + `dominantValue` (11 tests) | Test |
+| `src/lib/email/templates.tsx` | 4 react-email templates (followup, reminder, invoice, generic) + `renderEmailHtml()` dispatcher | React/TSX |
 
 ### Files Modified
 
 | File | Change |
 |------|--------|
-| `src/convex/schema.ts` | Added `dailyAnalytics` and `communicationQueue` tables |
+| `src/convex/schema.ts` | Added `dailyAnalytics` and `communicationQueue` tables; added delivery tracking + template fields + `by_external_id` index to `communicationQueue` |
 | `src/convex/crons.ts` | Added 5 new crons (consolidation, niche/platform agg., analytics, communication) |
 | `src/convex/memoryConsolidation.ts` | Refactored to use shared `clusterBuilder`, `orgHelpers`, `dominantValue` |
 | `src/convex/nicheAggregation.ts` | Refactored to use shared `clusterBuilder`, `dominantValue` |
 | `src/convex/platformAggregation.ts` | Refactored to use shared `clusterBuilder`, `dominantValue` |
 | `src/convex/analyticsWorker.ts` | Removed inline `listAllOrganizationIds`, added public queries, removed `as any` casts |
+| `src/convex/communicationWorker.ts` | Upgraded from stub to live Resend adapter with template rendering, delivery tracking, `updateDeliveryStatus` mutation |
+| `src/convex/http.ts` | Added Resend webhook HTTP action at `/webhooks/resend` with Svix header validation |
+| `src/convex/agentRunner.ts` | Added `enqueueAgentCommunications()`, `getOrgNameForComms`, `buildSubjectLine()` for post-execution email wiring |
 | `src/components/analytics/MemoryAnalytics.tsx` | Reads from `dailyAnalytics` snapshot with fallback to live query |
+| `src/components/analytics/AgentAnalytics.tsx` | Reads from `dailyAnalytics.agents` snapshot with live fallback; Pre-computed/Live badge |
+| `src/components/analytics/CostAnalytics.tsx` | Reads from `dailyAnalytics.aiUsage` snapshot with daily cost trend chart and live fallback |
+| `package.json` | Added `resend` 6.9.3 and `@react-email/components` 1.0.9 |
 
 ### Acceptance Criteria
-- [x] All cron jobs configured and running on schedule (22 total crons)
+- [x] All cron jobs configured and running on schedule (23 total crons)
 - [x] Memory extraction processes events within 30 minutes (Phase 4)
 - [x] Decay scores update every 4 hours for all active memories (Phase 5)
 - [x] Memory consolidation merges similar memories daily (cosine > 0.85)
 - [x] Pattern aggregation promotes business patterns to niche layer (≥2 orgs, confidence ≥0.85)
 - [x] Platform aggregation creates review candidates (≥2 niches, confidence ≥0.90, isActive=false)
-- [x] Communication worker queue infrastructure operational; email/SMS delivery scaffolded, in-app works immediately
+- [x] Communication worker live with Resend email delivery; agent executions auto-enqueue emails for leads with email addresses
+- [x] React-email templates render dark-themed HTML for followup, reminder, invoice, and generic messages
+- [x] Resend webhook handler tracks delivery status (sent/delivered/bounced/complained) via `/webhooks/resend`
+- [x] Dashboard components (Memory, Agent, Cost analytics) read from pre-computed dailyAnalytics snapshots with live fallback
 - [x] Workers respect org isolation (no cross-tenant processing)
 - [x] Failed worker runs are logged and retried (per-org error handling in all workers)
 - [x] Daily analytics snapshots computed for all orgs

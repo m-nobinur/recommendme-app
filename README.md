@@ -9,6 +9,10 @@ An AI-powered assistant with a natural language interface for lead management, a
 - **Appointment Scheduling**: Book and manage appointments seamlessly
 - **Invoice Generation**: Create and send invoices via chat commands
 - **Multi-Provider AI**: Choose from 5 AI providers (Gateway, Gemini, OpenAI, OpenRouter, Groq)
+- **4-Layer Memory System**: Adaptive memory with extraction, decay, consolidation, and cross-org pattern promotion
+- **AI Agents**: Followup, Reminder, Invoice, and Sales agents with risk assessment and approval workflows
+- **Email Delivery**: Automated agent-triggered emails via Resend with react-email templates and delivery tracking
+- **Pre-computed Analytics**: Daily snapshots powering Agent, Cost, and Memory analytics dashboards
 - **Real-time Database**: Powered by Convex for instant data sync
 - **Modern Auth**: Secure authentication with better-auth
 - **Dark Mode UI**: Beautiful amber/orange themed dark interface
@@ -21,6 +25,7 @@ An AI-powered assistant with a natural language interface for lead management, a
 - **AI**: [Vercel AI SDK 6.0.68](https://sdk.vercel.ai/) with streaming
 - **Auth**: [better-auth 1.4.18](https://better-auth.com/)
 - **Styling**: [Tailwind CSS 4.0.0](https://tailwindcss.com/)
+- **Email**: [Resend](https://resend.com/) + [@react-email/components](https://react.email/)
 - **Linter/Formatter**: [Biome 2.3.13](https://biomejs.dev/)
 - **Language**: TypeScript 5.7.0
 - **Runtime**: Node.js 20.9.0+
@@ -90,6 +95,11 @@ OPENAI_API_KEY=sk-your-openai-api-key                  # OpenAI GPT models
 OPENROUTER_API_KEY=sk-or-v1-your-openrouter-api-key    # OpenRouter (100+ models)
 GROQ_API_KEY=gsk_your-groq-api-key                     # Groq (ultra-fast)
 AI_GATEWAY_API_KEY=your-gateway-api-key                # Vercel AI Gateway (optional)
+
+# Email Delivery (optional — emails skipped if not configured)
+RESEND_API_KEY=re_your_resend_api_key           # Resend email delivery
+RESEND_FROM_EMAIL=notifications@yourdomain.com  # Sender address (domain must be verified)
+RESEND_WEBHOOK_SECRET=whsec_your_webhook_secret # Resend webhook signing secret
 
 # Application URL (optional)
 NEXT_PUBLIC_APP_URL=http://localhost:3000
@@ -168,6 +178,7 @@ All AI settings are optional with sensible defaults. The application will work o
 | **OpenRouter**        | Sign up at [openrouter.ai](https://openrouter.ai/)              |
 | **Groq**              | Sign up at [console.groq.com](https://console.groq.com/)        |
 | **Vercel AI Gateway** | Configure at [vercel.com](https://vercel.com/) (auto-auth)      |
+| **Resend**            | Sign up at [resend.com](https://resend.com/) (free tier: 3k/month) |
 
 ## Project Structure
 
@@ -203,6 +214,7 @@ recommendme-app/
 │   │   │   ├── utils/          # Monitoring, retry, rate-limit
 │   │   │   ├── tools/          # CRM + memory tool definitions
 │   │   │   └── prompts/        # System & suggestion prompts
+│   │   ├── email/              # React-email templates (followup, reminder, invoice, generic)
 │   │   ├── auth/               # Auth helpers (client/server)
 │   │   └── env.ts              # Environment validation
 │   ├── stores/                 # Zustand state management
@@ -326,6 +338,10 @@ Vercel automatically deploys your application when you push to GitHub:
 - [ ] Enable email verification in better-auth (optional, see SECURITY.md)
 - [ ] Review security headers in `next.config.ts`
 - [ ] Monitor Convex logs via `bun convex:logs`
+- [ ] Configure Resend: set `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_WEBHOOK_SECRET` in Convex env
+- [ ] Verify sending domain DNS in [Resend dashboard](https://resend.com/domains)
+- [ ] Set Resend webhook URL to `https://<convex-url>/webhooks/resend`
+- [ ] Add CAN-SPAM unsubscribe headers before sending to real recipients
 
 ## Code Quality
 

@@ -1149,6 +1149,18 @@ export const runAgentForOrg = internalAction({
         }
       }
 
+      try {
+        await enqueueAgentCommunications(
+          ctx,
+          args.organizationId,
+          args.agentType,
+          executionId,
+          results
+        )
+      } catch {
+        // Non-critical: communication enqueueing must not block execution completion.
+      }
+
       let approvalQueueItemIds: string[] | undefined
       if (reviewedActions.rejectedForApproval.length > 0) {
         const queuedIds = await ctx.runMutation(internal.approvalQueue.enqueueBatch, {
@@ -2487,3 +2499,128 @@ export const recordAgentLearning = internalMutation({
     })
   },
 })
+
+export const getOrgNameForComms = internalQuery({
+  args: { organizationId: v.id('organizations') },
+  handler: async (ctx, args): Promise<string> => {
+    const org = await ctx.db.get(args.organizationId)
+    return org?.name ?? 'Our Team'
+  },
+})
+
+const AGENT_SOURCE_TYPE_MAP: Record<string, string> = {
+  followup: 'agent_followup',
+  reminder: 'agent_reminder',
+  invoice: 'agent_invoice',
+  sales: 'agent_sales',
+}
+
+const AGENT_TEMPLATE_MAP: Record<string, string> = {
+  followup: 'followup',
+  reminder: 'reminder',
+  invoice: 'invoice',
+  sales: 'generic',
+}
+
+const COMMUNICABLE_ACTIONS = new Set([
+  'update_lead_notes',
+  'update_lead_status',
+  'create_invoice',
+  'update_appointment_notes',
+  'log_recommendation',
+  'log_reminder_recommendation',
+])
+
+async function enqueueAgentCommunications(
+  ctx: {
+    runMutation: (...args: any[]) => Promise<any>
+    runQuery: (...args: any[]) => Promise<any>
+  },
+  orgId: Id<'organizations'>,
+  agentType: string,
+  executionId: Id<'agentExecutions'>,
+  results: Array<{ type: string; target?: string; success: boolean; message: string }>
+): Promise<void> {
+  const successful = results.filter(
+    (r) => r.success && r.target && COMMUNICABLE_ACTIONS.has(r.type)
+  )
+  if (successful.length === 0) return
+
+  const targetLeadIds = [...new Set(successful.map((r) => r.target).filter(Boolean))] as string[]
+  if (targetLeadIds.length === 0) return
+
+  try {
+    const leads = (await ctx.runQuery(internal.agentRunner.getLeadsByIds, {
+      organizationId: orgId,
+      leadIds: targetLeadIds,
+    })) as Array<{ id: string; name: string; email?: string }>
+
+    const leadsWithEmail = leads.filter((l) => l.email)
+    if (leadsWithEmail.length === 0) return
+
+    const businessName = (await ctx.runQuery(internal.agentRunner.getOrgNameForComms, {
+      organizationId: orgId,
+    })) as string
+
+    const sourceType = (AGENT_SOURCE_TYPE_MAP[agentType] ?? 'system') as
+      | 'agent_followup'
+      | 'agent_reminder'
+      | 'agent_invoice'
+      | 'agent_sales'
+      | 'system'
+    const templateName = AGENT_TEMPLATE_MAP[agentType] ?? 'generic'
+    const leadMap = new Map(leadsWithEmail.map((l) => [l.id, l]))
+
+    for (const result of successful) {
+      if (!result.target) continue
+      const lead = leadMap.get(result.target)
+      if (!lead?.email) continue
+
+      const subject = buildSubjectLine(agentType, lead.name, result)
+      const bodyText = result.message
+
+      await ctx.runMutation(internal.communicationWorker.enqueue, {
+        organizationId: orgId,
+        channel: 'email' as const,
+        recipientType: 'lead' as const,
+        recipientId: lead.id,
+        recipientAddress: lead.email,
+        subject,
+        body: bodyText,
+        sourceType,
+        sourceExecutionId: executionId,
+        priority: 'normal' as const,
+        templateName,
+        templateProps: {
+          leadName: lead.name,
+          businessName,
+          summary: bodyText,
+        },
+      })
+    }
+  } catch (error) {
+    console.error(
+      '[AgentRunner:Comms] Failed to enqueue communications:',
+      error instanceof Error ? error.message : error
+    )
+  }
+}
+
+function buildSubjectLine(
+  agentType: string,
+  leadName: string,
+  _result: { type: string; message: string }
+): string {
+  switch (agentType) {
+    case 'followup':
+      return `Following up with you, ${leadName}`
+    case 'reminder':
+      return `Appointment reminder for ${leadName}`
+    case 'invoice':
+      return `Invoice update for ${leadName}`
+    case 'sales':
+      return `Update for ${leadName}`
+    default:
+      return `Update from our team`
+  }
+}
