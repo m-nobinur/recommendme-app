@@ -19,7 +19,7 @@ import {
 import { retrieveMemoryContext } from '@/lib/ai/memory/retrieval'
 import { getSystemPrompt } from '@/lib/ai/prompts/system'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers'
-import { createAIProvider, isValidProvider, isValidTier } from '@/lib/ai/providers'
+import { createAIProvider, getModelId, isValidProvider, isValidTier } from '@/lib/ai/providers'
 import {
   createApprovalTools,
   createCRMTools,
@@ -32,7 +32,19 @@ import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
 import { HTTP_STATUS, LIMITS } from '@/lib/constants'
+import { getTierLimits } from '@/lib/cost/budgets'
+import {
+  downgradeModelTier,
+  evaluateBudgetRouting,
+  getConversationWindowSize,
+  resolveBudgetTier,
+  trimMemoryContextForBudget,
+} from '@/lib/cost/manager'
+import { estimateCost } from '@/lib/cost/pricing'
 import { sanitizeForLogging, validateMessagesInput } from '@/lib/security/inputValidation'
+import { TraceContext } from '@/lib/tracing'
+import { type LangfuseGenerationUsage, syncTraceToLangfuse } from '@/lib/tracing/langfuse'
+import { withSpan } from '@/lib/tracing/spans'
 
 interface PersistedToolCall {
   id: string
@@ -74,6 +86,28 @@ interface NormalizedMemorySignal {
   data: MemoryEventData
 }
 
+interface OrganizationRuntimeSettings {
+  nicheId?: string
+  timezone?: string
+  budgetTier?: string
+}
+
+interface BudgetStatusSnapshot {
+  daily: {
+    tokensUsed: number
+    tokenLimit: number
+    percentUsed: number
+    costUsd: number
+  }
+  monthly: {
+    tokensUsed: number
+    tokenLimit: number
+    percentUsed: number
+    costUsd: number
+  }
+  truncated: boolean
+}
+
 let convexClient: ConvexHttpClient | null = null
 function getConvexClient(): ConvexHttpClient | null {
   const url = process.env.NEXT_PUBLIC_CONVEX_URL
@@ -87,6 +121,41 @@ function getConvexClient(): ConvexHttpClient | null {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 const VALID_ROLES = new Set(['user', 'assistant', 'system'])
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const
+const BUDGET_CACHE_TTL_MS = 10_000
+const MAX_BUDGET_CACHE_ENTRIES = 1_000
+const budgetStatusCache = new Map<string, { snapshot: BudgetStatusSnapshot; expiresAt: number }>()
+
+function getCachedBudgetStatus(cacheKey: string): BudgetStatusSnapshot | null {
+  const cached = budgetStatusCache.get(cacheKey)
+  if (!cached) return null
+  if (cached.expiresAt <= Date.now()) {
+    budgetStatusCache.delete(cacheKey)
+    return null
+  }
+  return cached.snapshot
+}
+
+function setCachedBudgetStatus(cacheKey: string, snapshot: BudgetStatusSnapshot): void {
+  const now = Date.now()
+  if (budgetStatusCache.size >= MAX_BUDGET_CACHE_ENTRIES) {
+    for (const [key, entry] of budgetStatusCache) {
+      if (entry.expiresAt <= now) {
+        budgetStatusCache.delete(key)
+      }
+    }
+
+    while (budgetStatusCache.size >= MAX_BUDGET_CACHE_ENTRIES) {
+      const oldestKey = budgetStatusCache.keys().next().value
+      if (!oldestKey) break
+      budgetStatusCache.delete(oldestKey)
+    }
+  }
+
+  budgetStatusCache.set(cacheKey, {
+    snapshot,
+    expiresAt: now + BUDGET_CACHE_TTL_MS,
+  })
+}
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
@@ -95,6 +164,8 @@ const CHAT_LATENCY_SLO_MS = Number(process.env.AI_CHAT_LATENCY_SLO_MS ?? 12000)
 
 export async function POST(req: Request) {
   const requestId = generateRequestId()
+  const trace = new TraceContext({ traceId: requestId })
+  const rootSpanId = trace.startSpan('chat.request', 'api')
 
   const chatConfig = getChatConfig()
   const featureFlags = getFeatureFlags()
@@ -102,6 +173,8 @@ export async function POST(req: Request) {
   const memoryAuthToken = process.env.MEMORY_API_TOKEN
   const timeoutMs = performanceConfig.requestTimeout
   const isDevMode = process.env.DISABLE_AUTH_IN_DEV === 'true'
+  let traceOrganizationId: string | undefined
+  let traceUserId: string | undefined
 
   try {
     const bodyPromise = req.json()
@@ -200,6 +273,8 @@ export async function POST(req: Request) {
     if (isDevMode) {
       userId = process.env.DEV_USER_ID
       organizationId = process.env.DEV_ORGANIZATION_ID
+      traceOrganizationId = organizationId
+      traceUserId = userId
     } else {
       const session = await sessionPromise
       if (!session?.user?.id) {
@@ -214,6 +289,8 @@ export async function POST(req: Request) {
       if (appUser) {
         userId = appUser._id
         organizationId = appUser.organizationId
+        traceOrganizationId = organizationId
+        traceUserId = userId
       }
     }
 
@@ -239,7 +316,7 @@ export async function POST(req: Request) {
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? ''
     const convexForMemory = getConvexClient()
 
-    const orgLookupPromise: Promise<{ nicheId?: string; timezone?: string }> = organizationId
+    const orgLookupPromise: Promise<OrganizationRuntimeSettings> = organizationId
       ? isDevMode
         ? convexForMemory
           ? convexForMemory
@@ -249,6 +326,7 @@ export async function POST(req: Request) {
               .then((org) => ({
                 nicheId: org?.settings?.nicheId ?? undefined,
                 timezone: org?.settings?.timezone ?? undefined,
+                budgetTier: org?.settings?.budgetTier ?? undefined,
               }))
               .catch(() => ({}))
           : Promise.resolve({})
@@ -258,34 +336,166 @@ export async function POST(req: Request) {
             .then((org) => ({
               nicheId: org?.settings?.nicheId ?? undefined,
               timezone: org?.settings?.timezone ?? undefined,
+              budgetTier: org?.settings?.budgetTier ?? undefined,
             }))
             .catch(() => ({}))
       : Promise.resolve({})
 
     const orgSettingsPromise = Promise.race([
       orgLookupPromise,
-      new Promise<{ nicheId?: string; timezone?: string }>((resolve) =>
-        setTimeout(() => resolve({}), 75)
-      ),
+      new Promise<OrganizationRuntimeSettings>((resolve) => setTimeout(() => resolve({}), 75)),
     ])
 
-    const memoryPromise =
-      featureFlags.enableMemory && organizationId
-        ? (async () => {
-            const { nicheId } = await orgSettingsPromise
-            return retrieveMemoryContext({
-              query: lastUserMessageText,
-              organizationId,
-              authToken: memoryAuthToken,
-              nicheId,
-              agentType: 'chat',
-              convexUrl,
-              traceId: requestId,
-            })
-          })()
-        : Promise.resolve(null)
-
     const orgSettings = await orgSettingsPromise
+    let effectiveModelTier: ModelTier = modelTier
+    let reduceContextForBudget = false
+    let budgetStatusForTrace: 'ok' | 'warning' | 'exceeded' = 'ok'
+    let budgetReason = 'Budget check skipped'
+
+    if (organizationId && (isDevMode ? convexForMemory : true)) {
+      try {
+        const budgetTier = resolveBudgetTier(orgSettings.budgetTier)
+        const limits = getTierLimits(budgetTier)
+        const convexForBudget = convexForMemory ?? getConvexClient()
+        const budgetArgs = {
+          organizationId: organizationId as Id<'organizations'>,
+          dailyLimitTokens: limits.dailyTokens,
+          monthlyLimitTokens: limits.monthlyTokens,
+          nowMs: Date.now(),
+          maxRows: 10000,
+        }
+        const cacheKey = `${organizationId}:${limits.dailyTokens}:${limits.monthlyTokens}`
+        const cachedSnapshot = getCachedBudgetStatus(cacheKey)
+        const budgetSnapshot: BudgetStatusSnapshot =
+          cachedSnapshot ??
+          (await withSpan<BudgetStatusSnapshot>(
+            trace,
+            'budget.check',
+            'internal',
+            async () =>
+              isDevMode
+                ? convexForBudget
+                  ? convexForBudget.query(api.llmUsage.getOrgBudgetStatus, budgetArgs)
+                  : Promise.reject(new Error('Convex client unavailable for dev budget check'))
+                : fetchAuthQuery(api.llmUsage.getOrgBudgetStatus, budgetArgs),
+            { organizationId, budgetTier },
+            rootSpanId
+          ))
+
+        if (!cachedSnapshot && !budgetSnapshot.truncated) {
+          setCachedBudgetStatus(cacheKey, budgetSnapshot)
+        }
+
+        let budgetDecision = evaluateBudgetRouting({
+          requestedTier: modelTier,
+          budgetTier: orgSettings.budgetTier,
+          usage: {
+            dailyTokensUsed: budgetSnapshot.daily.tokensUsed,
+            monthlyTokensUsed: budgetSnapshot.monthly.tokensUsed,
+          },
+        })
+
+        if (budgetSnapshot.truncated) {
+          budgetDecision = {
+            ...budgetDecision,
+            budget: {
+              ...budgetDecision.budget,
+              status: 'exceeded',
+            },
+            effectiveTier: 'regular',
+            reduceContext: true,
+            allowLlmCall: false,
+            retryAfterSeconds: 15 * 60,
+            reason:
+              'Usage scan truncated during budget evaluation; blocking request to prevent limit overrun.',
+          }
+        }
+
+        effectiveModelTier = budgetDecision.effectiveTier
+        reduceContextForBudget = budgetDecision.reduceContext
+        budgetStatusForTrace = budgetDecision.budget.status
+        budgetReason = budgetDecision.reason
+
+        if (!budgetDecision.allowLlmCall) {
+          trace.endSpan(rootSpanId, 'ok', {
+            budgetStatus: budgetDecision.budget.status,
+            budgetReason: budgetDecision.reason,
+            provider: aiProvider,
+            requestedTier: modelTier,
+            effectiveTier: budgetDecision.effectiveTier,
+          })
+
+          const orgId = organizationId as Id<'organizations'>
+          after(async () => {
+            try {
+              const spans = trace.getCompletedSpans()
+              if (spans.length > 0 && convexForBudget) {
+                await convexForBudget.mutation(api.traces.recordSpans, {
+                  authToken: memoryAuthToken,
+                  spans: spans.map((s) => ({
+                    ...s,
+                    organizationId: orgId,
+                  })),
+                })
+              }
+
+              await syncTraceToLangfuse({
+                traceId: requestId,
+                organizationId,
+                userId: traceUserId,
+                spans,
+                metadata: {
+                  provider: aiProvider,
+                  requestedTier: modelTier,
+                  effectiveTier: budgetDecision.effectiveTier,
+                  budgetStatus: budgetDecision.budget.status,
+                  budgetReason: budgetDecision.reason,
+                },
+              })
+            } catch (err) {
+              console.error('[Reme:Trace] Failed to persist budget-exceeded trace spans:', {
+                requestId,
+                error: err instanceof Error ? err.message : 'Unknown error',
+              })
+            }
+          })
+
+          return new Response(
+            JSON.stringify({
+              error:
+                'AI usage budget limit reached for your workspace. Please retry later or upgrade your plan.',
+              requestId,
+              budget: {
+                tier: budgetDecision.budgetTier,
+                status: budgetDecision.budget.status,
+                dailyPercent: budgetDecision.budget.dailyPercent,
+                monthlyPercent: budgetDecision.budget.monthlyPercent,
+              },
+            }),
+            {
+              status: HTTP_STATUS.TOO_MANY_REQUESTS,
+              headers: {
+                ...JSON_HEADERS,
+                'Retry-After': String(budgetDecision.retryAfterSeconds ?? 3600),
+              },
+            }
+          )
+        }
+      } catch (error) {
+        effectiveModelTier = downgradeModelTier(modelTier)
+        reduceContextForBudget = true
+        budgetStatusForTrace = 'warning'
+        budgetReason = 'Budget check unavailable; applied conservative degraded mode.'
+        console.warn('[Reme:Budget] Budget check failed, falling back to conservative mode', {
+          requestId,
+          organizationId,
+          requestedTier: modelTier,
+          effectiveTier: effectiveModelTier,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        })
+      }
+    }
+
     const toolCtx =
       userId && organizationId
         ? {
@@ -317,19 +527,50 @@ export async function POST(req: Request) {
           }
         : undefined
 
-    const model = createAIProvider(aiProvider, modelTier)
+    const memoryPromise =
+      featureFlags.enableMemory && organizationId
+        ? withSpan(
+            trace,
+            'memory.retrieve',
+            'retrieval',
+            async () =>
+              retrieveMemoryContext({
+                query: lastUserMessageText,
+                organizationId,
+                authToken: memoryAuthToken,
+                nicheId: orgSettings.nicheId,
+                agentType: 'chat',
+                convexUrl,
+                traceId: requestId,
+              }),
+            { organizationId },
+            rootSpanId
+          )
+        : Promise.resolve(null)
+
+    const model = createAIProvider(aiProvider, effectiveModelTier)
+    const resolvedModelId = getModelId(aiProvider, effectiveModelTier)
+    const summaryWindowSize = getConversationWindowSize({ reduceContext: reduceContextForBudget })
 
     const [memoryResult, summaryResult] = await Promise.all([
       memoryPromise,
       featureFlags.enableMemory && messages.length > 6
-        ? buildConversationWindow(messages)
+        ? buildConversationWindow(messages, {
+            windowSize: summaryWindowSize,
+            summaryMaxTokens: reduceContextForBudget ? 120 : undefined,
+            provider: aiProvider,
+            modelTier: effectiveModelTier,
+          })
         : Promise.resolve(null),
     ])
 
     const conversationSummaryText = summaryResult
       ? formatSummaryForPrompt(summaryResult.summary)
       : ''
-    const systemPrompt = getSystemPrompt(memoryResult?.context ?? '', conversationSummaryText)
+    const memoryContext = trimMemoryContextForBudget(memoryResult?.context ?? '', {
+      reduceContext: reduceContextForBudget,
+    })
+    const systemPrompt = getSystemPrompt(memoryContext, conversationSummaryText)
     const llmMessages = summaryResult?.wasTrimmed ? summaryResult.messages : messages
 
     if (chatConfig.debug && memoryResult) {
@@ -399,8 +640,10 @@ export async function POST(req: Request) {
     const requestStartTime = Date.now()
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    let langfuseGeneration: LangfuseGenerationUsage | undefined
 
     try {
+      const llmStartTime = Date.now()
       const result = streamText({
         model,
         system: systemPrompt,
@@ -408,6 +651,52 @@ export async function POST(req: Request) {
         tools,
         stopWhen: stepCountIs(chatConfig.maxSteps),
         abortSignal: controller.signal,
+        onFinish({ usage, totalUsage }) {
+          const sdkUsage = totalUsage ?? usage
+          if (!sdkUsage || !organizationId || !convex) return
+          const llmLatencyMs = Date.now() - llmStartTime
+          const orgId = organizationId as Id<'organizations'>
+          const inputTokens = sdkUsage.inputTokens ?? 0
+          const outputTokens = sdkUsage.outputTokens ?? 0
+          const totalTokens = sdkUsage.totalTokens ?? inputTokens + outputTokens
+          if (totalTokens === 0) return
+          const estimatedCostUsd = estimateCost(resolvedModelId, inputTokens, outputTokens)
+          langfuseGeneration = {
+            id: `${requestId}:chat`,
+            name: 'chat.completion',
+            model: resolvedModelId,
+            inputTokens,
+            outputTokens,
+            totalTokens,
+            estimatedCostUsd,
+            startTimeMs: llmStartTime,
+            endTimeMs: Date.now(),
+          }
+
+          after(async () => {
+            try {
+              await convex.mutation(api.llmUsage.recordUsage, {
+                authToken: memoryAuthToken,
+                organizationId: orgId,
+                traceId: requestId,
+                model: resolvedModelId,
+                provider: aiProvider,
+                inputTokens,
+                outputTokens,
+                totalTokens,
+                estimatedCostUsd,
+                purpose: 'chat' as const,
+                cached: (sdkUsage.cachedInputTokens ?? 0) > 0,
+                latencyMs: llmLatencyMs,
+              })
+            } catch (err) {
+              console.error('[Reme:Usage] Failed to record chat LLM usage:', {
+                requestId,
+                error: err instanceof Error ? err.message : 'Unknown error',
+              })
+            }
+          })
+        },
       })
 
       return result.toUIMessageStreamResponse({
@@ -440,7 +729,7 @@ export async function POST(req: Request) {
                   content: content || '[No text content]',
                   toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
                   metadata: {
-                    model: modelTier,
+                    model: effectiveModelTier,
                     provider: aiProvider,
                     latencyMs,
                     finishReason: finishReason ?? undefined,
@@ -575,13 +864,63 @@ export async function POST(req: Request) {
             })
           }
 
+          trace.endSpan(rootSpanId, 'ok', {
+            finishReason,
+            provider: aiProvider,
+            requestedTier: modelTier,
+            effectiveTier: effectiveModelTier,
+            budgetStatus: budgetStatusForTrace,
+            budgetReason,
+            latencyMs,
+          })
+
+          if (organizationId && convex) {
+            const orgId = organizationId as Id<'organizations'>
+            after(async () => {
+              try {
+                const spans = trace.getCompletedSpans()
+                if (spans.length > 0) {
+                  await convex.mutation(api.traces.recordSpans, {
+                    authToken: memoryAuthToken,
+                    spans: spans.map((s) => ({
+                      ...s,
+                      organizationId: orgId,
+                    })),
+                  })
+                }
+
+                await syncTraceToLangfuse({
+                  traceId: requestId,
+                  organizationId,
+                  userId: traceUserId,
+                  spans,
+                  generation: langfuseGeneration,
+                  metadata: {
+                    provider: aiProvider,
+                    requestedTier: modelTier,
+                    effectiveTier: effectiveModelTier,
+                    budgetStatus: budgetStatusForTrace,
+                    budgetReason,
+                  },
+                })
+              } catch (err) {
+                console.error('[Reme:Trace] Failed to persist trace spans:', {
+                  requestId,
+                  error: err instanceof Error ? err.message : 'Unknown error',
+                })
+              }
+            })
+          }
+
           if (chatConfig.debug) {
             console.log('[Reme:Chat] Chat completed:', {
               requestId,
               finishReason,
               messageId: responseMessage.id,
               provider: aiProvider,
-              tier: modelTier,
+              requestedTier: modelTier,
+              effectiveTier: effectiveModelTier,
+              budgetStatus: budgetStatusForTrace,
               latencyMs,
             })
           }
@@ -591,6 +930,41 @@ export async function POST(req: Request) {
       clearTimeout(timeout)
     }
   } catch (error) {
+    trace.endAllActive('error')
+    const convex = getConvexClient()
+    if (traceOrganizationId && convex) {
+      const orgId = traceOrganizationId as Id<'organizations'>
+      after(async () => {
+        try {
+          const spans = trace.getCompletedSpans()
+          if (spans.length > 0) {
+            await convex.mutation(api.traces.recordSpans, {
+              authToken: memoryAuthToken,
+              spans: spans.map((s) => ({
+                ...s,
+                organizationId: orgId,
+              })),
+            })
+          }
+
+          await syncTraceToLangfuse({
+            traceId: requestId,
+            organizationId: traceOrganizationId,
+            userId: traceUserId,
+            spans,
+            metadata: {
+              status: 'error',
+            },
+          })
+        } catch (err) {
+          console.error('[Reme:Trace] Failed to persist trace spans on error:', {
+            requestId,
+            error: err instanceof Error ? err.message : 'Unknown error',
+          })
+        }
+      })
+    }
+
     if (error instanceof Error && error.name === 'AbortError') {
       console.error('[Reme:Chat] Request timeout:', { requestId, timeout: timeoutMs })
       return new Response(
