@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (Review Pass 2 — production readiness)
 
+- **BLOCKER** `memoryExtraction.ts` (cross-conversation pattern accumulation): Fixed 3 broken regex literals in the stored-pattern parser — `[Pattern:(w+)]` → `/\[Pattern:(\w+)\]/`, `(d+)` → `/(\d+)/`, `([d.]+)` → `/([\d.]+)/`. Without this fix, every previously-stored pattern was reconstructed with `type: 'time_preference'`, `occurrences: 1`, `confidence: 0`, causing `shouldAutoLearn()` to always return false for accumulated patterns (Phase 11.2 cross-conversation learning was silently non-functional).
 - **HIGH** `agentDefinitions.list`: Changed unbounded `.collect()` to `.take(100)` on the user-facing `list` query to prevent full-table scans as agent definition count grows.
 - **HIGH** `memoryExtraction.adjustFeedbackScores`: Fixed semantic incorrectness where a thumbs-down/up would adjust all memories accessed in the last 30 minutes. Now accepts an optional `memoryIds` array for targeted adjustment; fallback time-window reduced from 30 min → 5 min and batch cap reduced from 20 → 10 to minimise blast radius. Added `TODO(phase-12)` to wire explicit memory IDs from the retrieval trace.
 - **HIGH** `memoryArchival`: Restored four missing `isCronDisabled()` early-exit guards in `archiveDecayedMemories`, `compressArchivedMemories`, `purgeExpiredMemories`, and `lifecycleHealthCheck` — these were present in commit `7de242b` and were inadvertently dropped in a subsequent rebase. Without the guards, all four cron jobs run in local dev environments, consuming LLM credits and producing noise.
@@ -26,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **HIGH** `auditLogs.list`: Any org member could query `high`/`critical` risk-level audit entries. Added role guard — requests with `riskLevel: 'high'` or `riskLevel: 'critical'` now throw `Insufficient permissions` for `member`-role users; only `owner` and `admin` roles may view these entries.
 - **MEDIUM** `feedback.ts normalizeFeedbackArgs`: User-supplied `comment` field was stored without PII redaction. Now applies `redactPiiContent()` before the memoryEvent insert.
 - **LOW** `memoryValidation.ts`: Added cross-reference comment pointing to `src/lib/security/pii.ts` — both files must be updated together when PII patterns change.
-- Added supporting internal queries: `agentExecutions.getById`, `approvalQueue.getApproval`, `approvalQueue.getByExecution`.
+- Added supporting internal queries: `agentExecutions.getById`, `approvalQueue.getById`, `approvalQueue.getByExecution`.
 - Added `agentRunner.recordApprovalExecutionResult` internalMutation to track per-approval execution outcomes.
 
 ### Added
@@ -71,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Utility module: `src/lib/learning/qualityMonitor.ts` — 5 weighted quality metrics (relevance 0.3, accuracy 0.25, freshness 0.2, retrieval_precision 0.15, recall 0.1); alerts on >10% quality drop within 24 h
 - Companion types in `src/types/index.ts`: `QualityMetricName`, `QualityMetric`, `QualitySnapshot`, `QualityAlert`, `PatternType`, `DetectedPattern`, `PatternDetectionConfig`, `PatternDetectionResult`, `FailureCategory`, `FailureRecord`, `FailureLearningResult`, `FailureCheckResult`
 - Added `scripts/test-phase11-complete.sh` for static verification of all 11.2–11.4 modules
+- Added unit test coverage for Phase 11.2–11.4 learning utility modules:
+  - `src/lib/learning/patternDetection.test.ts` — 35 tests covering `classifyEvent`, `detectPatterns`, `shouldAutoLearn`, `patternToMemoryContent`, and round-trip regex compatibility with `memoryExtraction.ts`
+  - `src/lib/learning/failureLearning.test.ts` — 28 tests covering `classifyFailure`, `createFailureRecord`, `checkForRelevantFailures`, `processFailureBatch`, `failureToMemoryContent`, `formatPreventionContext`
+  - `src/lib/learning/qualityMonitor.test.ts` — 21 tests covering all 5 score computations, `computeOverallScore`, `checkForAlerts`, `computeQualityMetrics`, `createQualitySnapshot`, `formatQualityReport`
 
 #### Security Hardening (Phase 9b)
 - Added server-side security rate limiting in `src/lib/security/rateLimiting.ts` with distributed Convex-backed enforcement in `src/convex/security.ts` and route-level enforcement in `src/app/api/chat/route.ts` and `src/app/api/approvals/route.ts` (returns HTTP `429` + `Retry-After`)
@@ -594,7 +599,7 @@ This is a major version with breaking changes:
 
 **Phase 12 — Memory UI & Admin Dashboard:**
 - Memory viewer component with filtering, search, and health indicators
-- Quality monitoring infrastructure from Phase 11 (note: Phase 11.4 library foundations exist; Convex runtime integration is deferred to Phase 12)
+- Quality monitoring dashboard surfacing metrics from the Phase 11.4 quality monitor (cron-driven, already wired in `crons.ts`)
 - Admin controls for memory management and system monitoring
 
 **Planned features for future releases:**
