@@ -4,7 +4,7 @@ import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { useQuery } from 'convex/react'
 import { Brain } from 'lucide-react'
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import {
   Bar,
   BarChart,
@@ -47,6 +47,30 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
 }: MemoryAnalyticsProps) {
   const stats = useQuery(api.businessMemories.getStats, { organizationId })
 
+  const typeChartData = useMemo(
+    () =>
+      stats
+        ? Object.entries(stats.typeCounts).map(([type, count]) => ({
+            name: type,
+            value: count,
+            color: TYPE_COLORS[type] ?? '#6b7280',
+          }))
+        : [],
+    [stats]
+  )
+
+  const decayChartData = useMemo(
+    () =>
+      stats
+        ? DECAY_BANDS.map((b) => ({
+            name: b.range,
+            count: stats.decayBands[b.range] ?? 0,
+            color: b.color,
+          }))
+        : [],
+    [stats]
+  )
+
   if (stats === undefined) {
     return (
       <div className="space-y-4">
@@ -61,19 +85,7 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
     )
   }
 
-  const { total, totalActive, totalArchived, avgDecay, typeCounts, decayBands } = stats
-
-  const typeChartData = Object.entries(typeCounts).map(([type, count]) => ({
-    name: type,
-    value: count,
-    color: TYPE_COLORS[type] ?? '#6b7280',
-  }))
-
-  const decayChartData = DECAY_BANDS.map((b) => ({
-    name: b.range,
-    count: decayBands[b.range] ?? 0,
-    color: b.color,
-  }))
+  const { total, totalActive, totalArchived, avgDecay } = stats
 
   return (
     <div className="space-y-6">

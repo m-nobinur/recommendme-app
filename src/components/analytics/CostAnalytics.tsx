@@ -4,7 +4,7 @@ import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { useQuery } from 'convex/react'
 import { DollarSign } from 'lucide-react'
-import { memo } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import {
   Bar,
   BarChart,
@@ -57,6 +57,9 @@ const MODEL_COLORS = [
   '#84cc16',
 ]
 
+const NOW_REFRESH_MS = 30_000
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000
+
 function formatCost(usd: number): string {
   if (usd === 0) return '$0.00'
   if (usd < 0.001) return `$${(usd * 1000).toFixed(3)}m`
@@ -95,8 +98,14 @@ export const CostAnalytics = memo(function CostAnalytics({
   organizationId,
   budgetTier = 'pro',
 }: CostAnalyticsProps) {
-  const now = Date.now()
-  const sinceMs = now - 30 * 24 * 60 * 60 * 1000 // 30 days
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    const id = setInterval(() => setNowMs(Date.now()), NOW_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [])
+
+  const sinceMs = nowMs - THIRTY_DAYS_MS
 
   const { dailyLimitTokens, monthlyLimitTokens } = BUDGET_TIER_LIMITS[budgetTier]
 
@@ -110,8 +119,40 @@ export const CostAnalytics = memo(function CostAnalytics({
     organizationId,
     dailyLimitTokens,
     monthlyLimitTokens,
-    nowMs: now,
+    nowMs,
   })
+
+  const purposeData = useMemo(
+    () =>
+      usage
+        ? Object.entries(usage.byPurpose)
+            .map(([purpose, data]) => ({
+              name: purpose.replace(/_/g, ' '),
+              key: purpose,
+              value: data.costUsd,
+              tokens: data.tokens,
+            }))
+            .sort((a, b) => b.value - a.value)
+        : [],
+    [usage]
+  )
+
+  const modelData = useMemo(
+    () =>
+      usage
+        ? Object.entries(usage.byModel)
+            .map(([model, data], i) => ({
+              name: model.split('/').pop() ?? model,
+              fullName: model,
+              costUsd: data.costUsd,
+              tokens: data.tokens,
+              color: MODEL_COLORS[i % MODEL_COLORS.length],
+            }))
+            .sort((a, b) => b.costUsd - a.costUsd)
+            .slice(0, 8)
+        : [],
+    [usage]
+  )
 
   if (usage === undefined) {
     return (
@@ -125,26 +166,6 @@ export const CostAnalytics = memo(function CostAnalytics({
       </div>
     )
   }
-
-  const purposeData = Object.entries(usage.byPurpose)
-    .map(([purpose, data]) => ({
-      name: purpose.replace(/_/g, ' '),
-      key: purpose,
-      value: data.costUsd,
-      tokens: data.tokens,
-    }))
-    .sort((a, b) => b.value - a.value)
-
-  const modelData = Object.entries(usage.byModel)
-    .map(([model, data], i) => ({
-      name: model.split('/').pop() ?? model,
-      fullName: model,
-      costUsd: data.costUsd,
-      tokens: data.tokens,
-      color: MODEL_COLORS[i % MODEL_COLORS.length],
-    }))
-    .sort((a, b) => b.costUsd - a.costUsd)
-    .slice(0, 8)
 
   return (
     <div className="space-y-6">

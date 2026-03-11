@@ -27,6 +27,8 @@ const SUGGESTIONS = [
   'List all my leads',
 ] as const
 
+const STREAMING_RENDER_WINDOW = 160
+
 const InlineUserMessage = memo(function InlineUserMessage({
   content,
   createdAt,
@@ -103,6 +105,21 @@ function isInspectorData(value: unknown): value is InspectorData {
     typeof v.tokenBudget === 'number' &&
     typeof v.tokensUsed === 'number'
   )
+}
+
+function mergeOlderMessages(prev: UIMessage[], older: UIMessage[]): UIMessage[] {
+  if (older.length === 0) {
+    return prev
+  }
+
+  const existingIds = new Set(prev.map((msg) => msg.id))
+  const uniqueOlder = older.filter((msg) => !existingIds.has(msg.id))
+
+  if (uniqueOlder.length === 0) {
+    return prev
+  }
+
+  return [...uniqueOlder, ...prev]
 }
 
 type ViewState = 'hydrating' | 'loading_history' | 'ready'
@@ -315,8 +332,14 @@ export function ChatContainer() {
       .then((data: { messages?: UIMessage[]; nextCursor?: number | null }) => {
         const older = data.messages
         if (older && older.length > 0) {
-          setMessages((prev) => [...older, ...prev])
-          historyMessageCount.current += older.length
+          setMessages((prev) => {
+            const merged = mergeOlderMessages(prev, older)
+            const addedCount = merged.length - prev.length
+            if (addedCount > 0) {
+              historyMessageCount.current += addedCount
+            }
+            return merged
+          })
         }
         setHistoryCursor(data.nextCursor ?? null)
       })
@@ -523,6 +546,7 @@ export function ChatContainer() {
               <MessageList
                 messages={messages}
                 historyCount={historyMessageCount.current}
+                isStreaming={status === 'streaming'}
                 onSuggestionClick={handleSend}
                 onFeedback={handleFeedback}
                 feedbackMap={feedbackMap}
@@ -589,50 +613,97 @@ export function ChatContainer() {
 interface MessageListProps {
   messages: UIMessage[]
   historyCount: number
+  isStreaming: boolean
   onSuggestionClick: (suggestion: string) => void
   onFeedback: (messageId: string, rating: FeedbackRating) => void
   feedbackMap: Record<string, FeedbackRating>
 }
 
+interface RenderableMessage {
+  message: UIMessage
+  key: string
+  content: string
+  createdAt: Date
+  isFromHistory: boolean
+  previousUserMessage?: string
+}
+
 const MessageList = memo(function MessageList({
   messages,
   historyCount,
+  isStreaming,
   onSuggestionClick,
   onFeedback,
   feedbackMap,
 }: MessageListProps) {
-  const { deduped, lastAssistantIdx } = useMemo(() => {
+  const renderable = useMemo(() => {
     const seen = new Set<string>()
-    let lastAst = -1
-    const items = messages.reduce<Array<{ msg: UIMessage; idx: number }>>((acc, msg, idx) => {
+    const items: RenderableMessage[] = []
+    let lastUserMessageText: string | undefined
+
+    for (let idx = 0; idx < messages.length; idx++) {
+      const msg = messages[idx]
       const key = msg.id || `msg-${idx}`
-      if (seen.has(key)) return acc
+      if (seen.has(key)) continue
       seen.add(key)
-      if (msg.role === 'assistant') lastAst = idx
-      acc.push({ msg, idx })
-      return acc
-    }, [])
-    return { deduped: items, lastAssistantIdx: lastAst }
-  }, [messages])
+
+      const content = extractTextFromParts(msg.parts)
+      const createdAt =
+        msg.metadata && typeof msg.metadata === 'object' && 'createdAt' in msg.metadata
+          ? new Date(msg.metadata.createdAt as number)
+          : new Date()
+
+      items.push({
+        message: msg,
+        key: msg.id ? `${msg.id}-${idx}` : `msg-${idx}`,
+        content,
+        createdAt,
+        isFromHistory: idx < historyCount,
+        previousUserMessage: msg.role === 'assistant' ? lastUserMessageText : undefined,
+      })
+
+      if (msg.role === 'user' && content) {
+        lastUserMessageText = content
+      }
+    }
+
+    return items
+  }, [messages, historyCount])
+
+  const displayMessages = useMemo(() => {
+    if (!isStreaming || renderable.length <= STREAMING_RENDER_WINDOW) {
+      return renderable
+    }
+    return renderable.slice(-STREAMING_RENDER_WINDOW)
+  }, [renderable, isStreaming])
+
+  const lastAssistantIdx = useMemo(() => {
+    for (let i = displayMessages.length - 1; i >= 0; i--) {
+      if (displayMessages[i].message.role === 'assistant') {
+        return i
+      }
+    }
+    return -1
+  }, [displayMessages])
+
+  const isWindowingActive = isStreaming && renderable.length > STREAMING_RENDER_WINDOW
 
   return (
     <>
-      {deduped.map(({ msg: message, idx: index }) => {
-        const content = extractTextFromParts(message.parts)
-        const messageKey = message.id ? `${message.id}-${index}` : `msg-${index}`
-        const isFromHistory = index < historyCount
+      {isWindowingActive && (
+        <div className="mb-3 rounded-lg border border-border bg-surface-secondary/70 px-3 py-2 text-center text-[11px] text-text-muted">
+          Showing latest {STREAMING_RENDER_WINDOW} messages while streaming for smoother
+          performance.
+        </div>
+      )}
 
-        const createdAt =
-          message.metadata &&
-          typeof message.metadata === 'object' &&
-          'createdAt' in message.metadata
-            ? new Date(message.metadata.createdAt as number)
-            : new Date()
+      {displayMessages.map((entry, index) => {
+        const { message, content, createdAt, isFromHistory, previousUserMessage } = entry
 
         if (message.role === 'user') {
           return (
             <InlineUserMessage
-              key={messageKey}
+              key={entry.key}
               content={content}
               createdAt={createdAt}
               animate={!isFromHistory}
@@ -640,17 +711,9 @@ const MessageList = memo(function MessageList({
           )
         }
 
-        let previousUserMessage: string | undefined
-        for (let i = index - 1; i >= 0; i--) {
-          if (messages[i].role === 'user') {
-            previousUserMessage = extractTextFromParts(messages[i].parts)
-            break
-          }
-        }
-
         return (
           <MessageBubble
-            key={messageKey}
+            key={entry.key}
             message={{
               id: message.id,
               role: message.role as 'user' | 'assistant',

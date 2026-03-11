@@ -26,11 +26,18 @@ export function DashboardShell({
 }: DashboardShellProps) {
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarDataActivated, setSidebarDataActivated] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>(initialNotifications)
   const { isHeaderVisible } = useHeader()
   const approvalNotificationIdsRef = useRef<Set<string>>(new Set())
-  const [now, setNow] = useState(Date.now)
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (sidebarOpen && !sidebarDataActivated) {
+      setSidebarDataActivated(true)
+    }
+  }, [sidebarOpen, sidebarDataActivated])
 
   const authUser = useQuery(api.auth.getCurrentUser)
   const appUser = useQuery(
@@ -39,7 +46,7 @@ export function DashboardShell({
   )
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000)
+    const id = setInterval(() => setNowMs(Date.now()), 30_000)
     return () => clearInterval(id)
   }, [])
 
@@ -49,7 +56,7 @@ export function DashboardShell({
       ? {
           userId: appUser._id,
           organizationId: appUser.organizationId,
-          now,
+          now: nowMs,
           limit: 10,
         }
       : 'skip'
@@ -57,17 +64,23 @@ export function DashboardShell({
 
   const leadsData = useQuery(
     api.leads.list,
-    appUser ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 50 } : 'skip'
+    appUser && sidebarDataActivated
+      ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 50 }
+      : 'skip'
   )
 
   const appointmentsData = useQuery(
     api.appointments.list,
-    appUser ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 } : 'skip'
+    appUser && sidebarDataActivated
+      ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 }
+      : 'skip'
   )
 
   const invoicesData = useQuery(
     api.invoices.list,
-    appUser ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 } : 'skip'
+    appUser && sidebarDataActivated
+      ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 }
+      : 'skip'
   )
 
   const leads: LeadDisplay[] = useMemo(
@@ -123,6 +136,36 @@ export function DashboardShell({
     [pendingApprovals]
   )
 
+  const mergedNotifications = useMemo(() => {
+    const latestApprovalIds = new Set(approvalNotifications.map((notification) => notification.id))
+    const previousApprovalIds = approvalNotificationIdsRef.current
+    const previousById = new Map(
+      notifications.map((notification) => [notification.id, notification])
+    )
+
+    const syncedApprovalNotifications = approvalNotifications.map((notification) => {
+      const existing = previousById.get(notification.id)
+      return existing ? { ...notification, read: existing.read } : notification
+    })
+
+    const retainedNonApprovalNotifications = notifications.filter((notification) => {
+      if (!previousApprovalIds.has(notification.id)) {
+        return true
+      }
+      return latestApprovalIds.has(notification.id)
+    })
+
+    const retainedIds = new Set(syncedApprovalNotifications.map((notification) => notification.id))
+    const passthroughNotifications = retainedNonApprovalNotifications.filter(
+      (notification) => !retainedIds.has(notification.id)
+    )
+
+    return {
+      list: [...syncedApprovalNotifications, ...passthroughNotifications],
+      latestApprovalIds,
+    }
+  }, [approvalNotifications, notifications])
+
   const handleSignOut = useCallback(async () => {
     setIsSigningOut(true)
     try {
@@ -139,32 +182,23 @@ export function DashboardShell({
   }, [])
 
   useEffect(() => {
-    setNotifications((prev) => {
-      const latestApprovalIds = new Set(
-        approvalNotifications.map((notification) => notification.id)
-      )
-      const previousApprovalIds = approvalNotificationIdsRef.current
-      const byId = new Map(prev.map((notification) => [notification.id, notification]))
-      const syncedApprovalNotifications = approvalNotifications.map((notification) => {
-        const existing = byId.get(notification.id)
-        return existing ? { ...notification, read: existing.read } : notification
-      })
-      const retainedNonApprovalNotifications = prev.filter((notification) => {
-        if (!previousApprovalIds.has(notification.id)) {
-          return true
-        }
-        return latestApprovalIds.has(notification.id)
-      })
-      const retainedIds = new Set(
-        syncedApprovalNotifications.map((notification) => notification.id)
-      )
-      const passthroughNotifications = retainedNonApprovalNotifications.filter(
-        (notification) => !retainedIds.has(notification.id)
-      )
-      approvalNotificationIdsRef.current = latestApprovalIds
-      return [...syncedApprovalNotifications, ...passthroughNotifications]
-    })
-  }, [approvalNotifications])
+    const prevIds = notifications.map((n) => n.id).join('|')
+    const nextIds = mergedNotifications.list.map((n) => n.id).join('|')
+    const prevRead = notifications.map((n) => Number(n.read)).join('')
+    const nextRead = mergedNotifications.list.map((n) => Number(n.read)).join('')
+
+    approvalNotificationIdsRef.current = mergedNotifications.latestApprovalIds
+
+    if (
+      prevIds === nextIds &&
+      prevRead === nextRead &&
+      notifications.length === mergedNotifications.list.length
+    ) {
+      return
+    }
+
+    setNotifications(mergedNotifications.list)
+  }, [mergedNotifications, notifications])
 
   const handleMarkAllRead = useCallback(() => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))

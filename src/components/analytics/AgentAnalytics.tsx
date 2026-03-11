@@ -4,7 +4,7 @@ import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { useQuery } from 'convex/react'
 import { Activity } from 'lucide-react'
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { StatCard } from '@/components/ui/StatCard'
@@ -54,6 +54,120 @@ export const AgentAnalytics = memo(function AgentAnalytics({
     now,
   })
 
+  const {
+    agentData,
+    statusData,
+    totalExecutions,
+    totalCompleted,
+    totalFailed,
+    overallSuccessRate,
+  } = useMemo(() => {
+    if (!executions) {
+      return {
+        agentData: [] as Array<{
+          name: string
+          key: string
+          total: number
+          completed: number
+          failed: number
+          skipped: number
+          successRate: number
+          avgDurationMs: number
+          color: string
+        }>,
+        statusData: [] as Array<{ name: string; key: string; count: number }>,
+        totalExecutions: 0,
+        totalCompleted: 0,
+        totalFailed: 0,
+        overallSuccessRate: 0,
+      }
+    }
+
+    const byAgentType: Record<
+      string,
+      {
+        total: number
+        completed: number
+        failed: number
+        skipped: number
+        totalDurationMs: number
+        durationCount: number
+      }
+    > = {}
+
+    const statusCounts: Record<string, number> = {}
+    let completedCount = 0
+    let failedCount = 0
+
+    for (const exec of executions) {
+      const key = exec.agentType
+      if (!byAgentType[key]) {
+        byAgentType[key] = {
+          total: 0,
+          completed: 0,
+          failed: 0,
+          skipped: 0,
+          totalDurationMs: 0,
+          durationCount: 0,
+        }
+      }
+
+      const bucket = byAgentType[key]
+      bucket.total++
+
+      if (exec.status === 'completed') {
+        bucket.completed++
+        completedCount++
+      } else if (exec.status === 'failed') {
+        bucket.failed++
+        failedCount++
+      } else if (exec.status === 'skipped') {
+        bucket.skipped++
+      }
+
+      if (exec.completedAt && exec.startedAt) {
+        bucket.totalDurationMs += exec.completedAt - exec.startedAt
+        bucket.durationCount++
+      }
+
+      statusCounts[exec.status] = (statusCounts[exec.status] ?? 0) + 1
+    }
+
+    const computedAgentData = Object.entries(byAgentType)
+      .map(([agentType, data], i) => ({
+        name: agentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+        key: agentType,
+        total: data.total,
+        completed: data.completed,
+        failed: data.failed,
+        skipped: data.skipped,
+        successRate: data.total > 0 ? Math.round((data.completed / data.total) * 100) : 0,
+        avgDurationMs:
+          data.durationCount > 0 ? Math.round(data.totalDurationMs / data.durationCount) : 0,
+        color: AGENT_COLORS[i % AGENT_COLORS.length],
+      }))
+      .sort((a, b) => b.total - a.total)
+
+    const computedStatusData = Object.entries(statusCounts)
+      .map(([status, count]) => ({
+        name: status.replace(/_/g, ' '),
+        key: status,
+        count,
+      }))
+      .sort((a, b) => b.count - a.count)
+
+    const total = executions.length
+
+    return {
+      agentData: computedAgentData,
+      statusData: computedStatusData,
+      totalExecutions: total,
+      totalCompleted: completedCount,
+      totalFailed: failedCount,
+      overallSuccessRate: total > 0 ? Math.round((completedCount / total) * 100) : 0,
+    }
+  }, [executions])
+
   if (executions === undefined || approvalStats === undefined) {
     return (
       <div className="space-y-4">
@@ -66,74 +180,6 @@ export const AgentAnalytics = memo(function AgentAnalytics({
       </div>
     )
   }
-
-  // Aggregate by agent type
-  const byAgentType: Record<
-    string,
-    {
-      total: number
-      completed: number
-      failed: number
-      skipped: number
-      totalDurationMs: number
-      durationCount: number
-    }
-  > = {}
-  for (const exec of executions) {
-    const key = exec.agentType
-    if (!byAgentType[key]) {
-      byAgentType[key] = {
-        total: 0,
-        completed: 0,
-        failed: 0,
-        skipped: 0,
-        totalDurationMs: 0,
-        durationCount: 0,
-      }
-    }
-    byAgentType[key].total++
-    if (exec.status === 'completed') byAgentType[key].completed++
-    else if (exec.status === 'failed') byAgentType[key].failed++
-    else if (exec.status === 'skipped') byAgentType[key].skipped++
-    if (exec.completedAt && exec.startedAt) {
-      byAgentType[key].totalDurationMs += exec.completedAt - exec.startedAt
-      byAgentType[key].durationCount++
-    }
-  }
-
-  const agentData = Object.entries(byAgentType)
-    .map(([agentType, data], i) => ({
-      name: agentType.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-      key: agentType,
-      total: data.total,
-      completed: data.completed,
-      failed: data.failed,
-      skipped: data.skipped,
-      successRate: data.total > 0 ? Math.round((data.completed / data.total) * 100) : 0,
-      avgDurationMs:
-        data.durationCount > 0 ? Math.round(data.totalDurationMs / data.durationCount) : 0,
-      color: AGENT_COLORS[i % AGENT_COLORS.length],
-    }))
-    .sort((a, b) => b.total - a.total)
-
-  // Status distribution across all executions
-  const statusCounts: Record<string, number> = {}
-  for (const exec of executions) {
-    statusCounts[exec.status] = (statusCounts[exec.status] ?? 0) + 1
-  }
-  const statusData = Object.entries(statusCounts)
-    .map(([status, count]) => ({
-      name: status.replace(/_/g, ' '),
-      key: status,
-      count,
-    }))
-    .sort((a, b) => b.count - a.count)
-
-  const totalExecutions = executions.length
-  const totalCompleted = executions.filter((e) => e.status === 'completed').length
-  const totalFailed = executions.filter((e) => e.status === 'failed').length
-  const overallSuccessRate =
-    totalExecutions > 0 ? Math.round((totalCompleted / totalExecutions) * 100) : 0
 
   return (
     <div className="space-y-6">
