@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Approval Workflow Core (Phase 9a)
+- Approval queue persistence with `approvalQueue` table + APIs in `src/convex/approvalQueue.ts`
+- Append-only audit logging with `auditLogs` table + APIs in `src/convex/auditLogs.ts`
+- Agent runner integration for approval-gated actions:
+  - high-risk actions enqueue through `internal.approvalQueue.enqueueBatch`
+  - queued IDs are returned in execution results as `approvalQueueItemIds`
+  - approval lifecycle reconciliation via `executeApprovedQueueItem` and `reconcileExecutionAfterApprovalDecision`
+  - pre-execution and lifecycle events are recorded through `internal.auditLogs.appendBatch`
+- Approval tools added for chat usage: `listPendingApprovals`, `approveAction`, `rejectAction`
+- Approval notification API route at `src/app/api/approvals/route.ts` and dashboard polling integration
+- Input validation layer for chat ingress in `src/lib/security/inputValidation.ts` wired into chat route
+- Approval expiration cron (`expireStalePending`) scheduled every 30 minutes in `src/convex/crons.ts`
+- Tenant bootstrap hardening: signup now creates dedicated organizations via `createOrganizationForSignup`
+- Test coverage added for approval queue, approval tools, audit logs, input validation, and approval lifecycle wiring
+
 #### Sales Funnel Agent (Phase 7d)
 - Sales funnel agent at `src/lib/ai/agents/sales/` — scores leads, detects stale pipelines, recommends stage transitions, and surfaces pipeline insights
 - Convex-side agent logic at `src/convex/agentLogic/sales.ts` with settings, config, system prompt, prompt builder, and plan validator
@@ -29,6 +44,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit tests: 22 tests in `src/convex/agentLogic/sales.test.ts` (prompt builder, plan validator, settings sanitizer), 17 tests in `src/lib/ai/tools/salesFunnel.test.ts` (engagement scoring, chat tool wiring, error handling)
 
 ### Fixed
+- Approval queue execution now performs real side effects for approved actions in `executeApprovedQueueItem` (was metadata-only), then records execution outcome in `agentExecutions.results.approvalExecutionResults`
+- Approval-gated actions now preserve original `actionParams` and assessed `riskLevel` when enqueued (no longer dropped/hardcoded)
+- Approval processing lifecycle now uses explicit execution fields (`executionClaimedAt`, `executionProcessedAt`) instead of overloading `rejectionReason`
+- `expireStalePending` now writes `approval_review_expired` audit log entries when pending approvals auto-expire
+- Approval review API (`POST /api/approvals`) now returns `400` for invalid JSON/payload validation failures instead of collapsing all failures to `500`
+- Approved action execution finalization is now fail-safe against duplicate side effects — successful actions are marked processed before non-critical result persistence so retry paths cannot re-run side effects
+- Approval queue public APIs no longer allow `authToken` bypass in production; authenticated user context is now mandatory
+- Queue audit entries now store the actual `approvalQueue` item ID (instead of the parent execution ID) for accurate traceability
+- Chat/reminder organization settings lookups now use authenticated query paths in production, preventing silent auth failures after org API hardening
 - Fixed idempotency marker mismatch in `agentRunner.updateLeadNotes` — sales dedup check now matches `[Sales ${timestamp}]` format (was incorrectly checking `[Sales Score ${timestamp}]`, causing duplicate daily scoring)
 - Replaced hardcoded stale threshold (`> 7`) in `prompt.ts` and `salesFunnel.ts` with shared `DEFAULT_SALES_SETTINGS.staleThresholdDays` for consistency between cron and chat paths
 - Added persistence to `executeRecommendStageChange` in Next.js-side sales handler — now writes `[Stage Recommendation]` notes to leads via `leads.updateByName` (was console-only)
@@ -50,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - E2E validation script `scripts/test-invoice-agent.sh`
 
 ### Security
+- Organization APIs in `src/convex/organizations.ts` now enforce authenticated access in production and organization-bound authorization checks for reads/settings updates
+- Chat ingress validation now scans all user-role messages in the request payload via `validateMessagesInput` (closing single-last-message bypasses)
 - Added `assertUserInOrganization` to `invoices.create`, `invoices.createByLeadName`, `invoices.update`, `invoices.remove`, `invoices.markAsPaidByLeadName`
 - Invoice `update` mutation now requires `organizationId` and `userId` args with org ownership checks
 - Invoice `remove` mutation now requires `organizationId` and `userId` args with org ownership checks
@@ -440,7 +466,7 @@ This is a major version with breaking changes:
 
 **Planned features for future releases:**
 - Worker architecture and background jobs (Phase 8)
-- Guardrails, approval queue, and audit logging (Phase 9)
+- Phase 9 hardening: rate limiting, anomaly controls, and PII/compliance workflows
 - Observability and cost tracking (Phase 10)
 - Continuous improvement and learning system (Phase 11)
 - Memory UI and admin dashboard (Phase 12)
