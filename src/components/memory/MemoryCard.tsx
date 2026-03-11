@@ -3,9 +3,7 @@
 import type { Id } from '@convex/_generated/dataModel'
 import { Archive, Clock, Database, Eye, RefreshCw, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils/cn'
-
-type MemoryType = 'fact' | 'preference' | 'instruction' | 'context' | 'relationship' | 'episodic'
-type MemorySource = 'extraction' | 'explicit' | 'tool' | 'system'
+import type { MemorySource, MemoryType } from '@/types'
 
 export interface MemoryCardData {
   _id: Id<'businessMemories'>

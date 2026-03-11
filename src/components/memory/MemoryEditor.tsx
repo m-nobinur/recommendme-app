@@ -7,9 +7,8 @@ import { X } from 'lucide-react'
 import { memo, useCallback, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils/cn'
+import type { MemoryType } from '@/types'
 import type { MemoryCardData } from './MemoryCard'
-
-type MemoryType = 'fact' | 'preference' | 'instruction' | 'context' | 'relationship' | 'episodic'
 
 interface MemoryEditorProps {
   memory?: MemoryCardData
