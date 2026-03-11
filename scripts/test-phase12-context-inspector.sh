@@ -1,96 +1,49 @@
 #!/usr/bin/env bash
-# test-phase12-context-inspector.sh
-# Phase 12.9 — ContextInspector Live Wiring — Static validation script
-#
-# Checks that all wiring points for the ContextInspector are in place:
-#   1. InspectorMemory + InspectorData exported from retrieval.ts
-#   2. inspectorData built inside retrieveMemoryContext (env-gated)
-#   3. messageMetadata callback present in route.ts
-#   4. ContextInspector imported + rendered in ChatContainer.tsx
-#   5. RetrievedMemory.id widened to string in ContextInspector.tsx
-#   6. TypeScript build is clean
+# ============================================================
+# Phase 12.9: Context Inspector Wiring Validation
+# Static checks only — no live Convex server required.
+# ============================================================
 
-set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/test-helpers.sh"
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PASS=0
-FAIL=0
+print_banner "Phase 12.9: Context Inspector Wiring"
 
-green() { printf '\033[32m✓ %s\033[0m\n' "$1"; }
-red()   { printf '\033[31m✗ %s\033[0m\n' "$1"; }
+CHAT_ROUTE="src/app/api/chat/route.ts"
+RETRIEVAL="src/lib/ai/memory/retrieval.ts"
+CHAT_CONTAINER="src/app/(dashboard)/chat/components/ChatContainer.tsx"
+HISTORY_ROUTE="src/app/api/chat/history/route.ts"
+MESSAGES="src/convex/messages.ts"
+SCHEMA="src/convex/schema.ts"
+INSPECTOR="src/components/memory/ContextInspector.tsx"
 
-check() {
-  local desc="$1"
-  local file="$2"
-  local pattern="$3"
-  if grep -qE "$pattern" "$file" 2>/dev/null; then
-    green "$desc"
-    PASS=$((PASS + 1))
-  else
-    red "$desc"
-    FAIL=$((FAIL + 1))
-  fi
-}
+header "Core Wiring"
+assert_file_contains "$CHAT_ROUTE" "messageMetadata" "Chat route emits message metadata"
+assert_file_contains "$CHAT_ROUTE" "retrievalTrace" "Chat route attaches retrievalTrace"
+assert_file_contains "$CHAT_ROUTE" "metadata:" "Assistant persistence includes metadata"
 
-echo ""
-echo "═══════════════════════════════════════════════════════════"
-echo "  Phase 12.9 — ContextInspector Live Wiring — Validation"
-echo "═══════════════════════════════════════════════════════════"
-echo ""
+header "Retrieval Payload"
+assert_file_contains "$RETRIEVAL" "InspectorData" "Retrieval exports InspectorData"
+assert_file_contains "$RETRIEVAL" "inspectorData" "Retrieval returns inspectorData"
+assert_file_contains "$RETRIEVAL" "tokenBudget: selected.budgetUsage.totalBudget" "Inspector token budget uses dynamic allocation"
+assert_file_contains "$RETRIEVAL" "tokensUsed: selected.budgetUsage.totalUsed" "Inspector token usage uses selected budget usage"
 
-RETRIEVAL="$ROOT/src/lib/ai/memory/retrieval.ts"
-ROUTE="$ROOT/src/app/api/chat/route.ts"
-CONTAINER="$ROOT/src/app/(dashboard)/chat/components/ChatContainer.tsx"
-INSPECTOR="$ROOT/src/components/memory/ContextInspector.tsx"
+header "Frontend Integration"
+assert_file_contains "$CHAT_CONTAINER" "ContextInspector" "ChatContainer mounts ContextInspector"
+assert_file_contains "$CHAT_CONTAINER" "retrievalTrace" "ChatContainer reads retrievalTrace metadata"
+assert_file_contains "$INSPECTOR" "InspectorMemory" "ContextInspector reuses shared InspectorMemory type"
 
-# ── retrieval.ts ──────────────────────────────────────────────
-check "InspectorMemory interface exported"        "$RETRIEVAL" "export interface InspectorMemory"
-check "InspectorData interface exported"          "$RETRIEVAL" "export interface InspectorData"
-check "inspectorData field on RetrievalResult"    "$RETRIEVAL" "inspectorData\?:.*InspectorData"
-check "inspectorData env-gate present"            "$RETRIEVAL" "NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR"
-check "INSPECTOR_MAX_MEMORIES cap applied"        "$RETRIEVAL" "INSPECTOR_MAX_MEMORIES"
-check "inspectorData assigned to result"          "$RETRIEVAL" "inspectorData,"
+header "Persistence + History"
+assert_file_contains "$MESSAGES" "retrievalTrace" "messages.save validator accepts retrievalTrace"
+assert_file_contains "$SCHEMA" "retrievalTrace" "schema messages metadata includes retrievalTrace"
+assert_file_contains "$HISTORY_ROUTE" "retrievalTrace" "History route returns retrievalTrace"
 
-# ── route.ts ─────────────────────────────────────────────────
-check "messageMetadata callback in route.ts"      "$ROUTE"     "messageMetadata"
-check "retrievalTrace emitted on finish"          "$ROUTE"     "retrievalTrace"
-check "finish part-type guard present"            "$ROUTE"     "part\.type.*finish"
-
-# ── ChatContainer.tsx ────────────────────────────────────────
-check "ContextInspector imported"                 "$CONTAINER" "import.*ContextInspector"
-check "InspectorData type imported"               "$CONTAINER" "import.*InspectorData"
-check "isInspectorData runtime guard defined"     "$CONTAINER" "function isInspectorData"
-check "lastAssistantTrace memo defined"           "$CONTAINER" "lastAssistantTrace"
-check "ContextInspector rendered conditionally"   "$CONTAINER" "<ContextInspector"
-
-# ── ContextInspector.tsx ──────────────────────────────────────
-check "RetrievedMemory.id widened to string"      "$INSPECTOR" "id: string"
-# Verify Convex Id import was removed (no longer needed)
-if ! grep -q "Id<'businessMemories'>" "$INSPECTOR" 2>/dev/null; then
-  green "Convex branded-id import removed from ContextInspector"
-  PASS=$((PASS + 1))
+header "Validation Gate"
+if bun run check:all >/dev/null 2>&1; then
+  ok "Full validation gate passes (check:all)"
 else
-  red "ContextInspector still references Id<'businessMemories'>"
-  FAIL=$((FAIL + 1))
+  err "Full validation gate failed (check:all)"
 fi
 
-# ── TypeScript build ──────────────────────────────────────────
-echo ""
-echo "Running TypeScript check..."
-if (cd "$ROOT" && bun run typecheck > /dev/null 2>&1); then
-  green "TypeScript: no type errors"
-  PASS=$((PASS + 1))
-else
-  red "TypeScript: type errors detected — run 'bun run typecheck' for details"
-  FAIL=$((FAIL + 1))
-fi
-
-echo ""
-echo "───────────────────────────────────────────────────────────"
-echo "  Results: ${PASS} passed, ${FAIL} failed"
-echo "───────────────────────────────────────────────────────────"
-echo ""
-
-if [ "$FAIL" -gt 0 ]; then
-  exit 1
-fi
+print_results
+exit $fail

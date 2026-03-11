@@ -15,12 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `isInspectorData()` runtime type guard in `ChatContainer.tsx` for safe metadata narrowing
 - `lastAssistantTrace` memo in `ChatContainer` that scans `messages` in reverse to find the most recent assistant `metadata.retrievalTrace`
 - `<ContextInspector>` conditionally mounted in `ChatContainer` with live `memories`, `tokenBudget`, and `tokensUsed` from the retrieval trace
-- New validation script: `scripts/test-phase12-context-inspector.sh` (17 static + TypeScript checks)
+- New validation script: `scripts/test-phase12-context-inspector.sh` (14 static + TypeScript checks)
+- Persisted retrieval trace metadata on assistant messages and replayed it from history (`src/convex/messages.ts`, `src/convex/schema.ts`, `src/app/api/chat/history/route.ts`) so inspector state survives refresh/pagination
 
 ### Changed (Phase 12.9)
 
 - `RetrievedMemory.id` in `src/components/memory/ContextInspector.tsx` widened from `Id<'businessMemories'>` to `string` (id is used only as a React key; Convex import removed)
 - `ContextInspector` now receives real retrieval data instead of empty/stub props
+- Inspector token metrics now reflect dynamic allocation (`selected.budgetUsage.totalBudget` / `totalUsed`) instead of hardcoded 4000 and formatted-token approximations
 
 ### Added (Phase 12.8 Sidebar CRM Wiring & Memory Stats)
 
@@ -673,13 +675,13 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-**Phase 12 — Memory UI & Admin Dashboard: NEAR-COMPLETE**
+**Phase 12 — Memory UI & Admin Dashboard: COMPLETE**
 
-Phase 12 deliverables shipped (12.1–12.8):
+Phase 12 deliverables shipped (12.1–12.9):
 - Memory viewer with filtering, search, and health indicators (`MemoryViewer`, `MemoryCard`, `MemoryFilters`)
 - Agent approval queue and execution log (`ApprovalQueue`, `ApprovalCard`, `ExecutionLog`)
 - Analytics dashboards for memory, agents, and cost (`MemoryAnalytics`, `AgentAnalytics`, `CostAnalytics`)
-- Context inspector for retrieval debugging (`ContextInspector` — component built, not yet mounted)
+- Context inspector for retrieval debugging (`ContextInspector` — live-wired in chat with persisted retrieval metadata)
 - Wired dashboard page at `/memory` combining all 11 components
 - Sidebar CRM tabs wired with live Convex data (leads, appointments, invoices)
 - Server-side memory stats aggregation replacing client-side 100-item cap

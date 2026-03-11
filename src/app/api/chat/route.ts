@@ -869,6 +869,7 @@ export async function POST(req: Request) {
                     provider: aiProvider,
                     latencyMs,
                     finishReason: finishReason ?? undefined,
+                    retrievalTrace: memoryResult?.inspectorData,
                   },
                 })
 

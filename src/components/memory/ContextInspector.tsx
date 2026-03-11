@@ -2,19 +2,11 @@
 
 import { ChevronDown, ChevronUp, Eye, X } from 'lucide-react'
 import { memo, useState } from 'react'
+import type { InspectorMemory } from '@/lib/ai/memory/retrieval'
 import { cn } from '@/lib/utils/cn'
 
-interface RetrievedMemory {
-  id: string
-  content: string
-  type: string
-  score: number
-  layer?: string
-  included: boolean
-}
-
 interface ContextInspectorProps {
-  memories: RetrievedMemory[]
+  memories: InspectorMemory[]
   tokenBudget: number
   tokensUsed: number
   className?: string

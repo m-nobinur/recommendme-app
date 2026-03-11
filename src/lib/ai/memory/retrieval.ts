@@ -36,6 +36,7 @@ import { allocateTokenBudget } from './tokenBudget'
 
 /** Maximum number of memory entries surfaced to the ContextInspector. */
 const INSPECTOR_MAX_MEMORIES = 50
+const INSPECTOR_CONTENT_MAX_CHARS = 240
 
 /**
  * A single memory entry surfaced to the ContextInspector UI.
@@ -45,7 +46,7 @@ export interface InspectorMemory {
   id: string
   content: string
   type: string
-  layer: string
+  layer: 'platform' | 'niche' | 'business' | 'agent'
   score: number
   included: boolean
 }
@@ -106,12 +107,14 @@ function hashKeyPart(input: string): string {
 }
 
 function buildRetrievalCacheKey(params: RetrievalParams): string {
+  const inspectorEnabled = process.env.NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR === 'true' ? '1' : '0'
   return [
     params.organizationId,
     hashKeyPart(params.authToken ?? ''),
     params.nicheId ?? '',
     params.agentType ?? 'chat',
     params.skipAIIntent ? '1' : '0',
+    inspectorEnabled,
     params.query.trim().toLowerCase(),
   ].join('|')
 }
@@ -159,6 +162,14 @@ function getRetrievalClient(url: string): ConvexHttpClient {
     retrievalClientUrl = url
   }
   return retrievalClient
+}
+
+function truncateInspectorContent(content: string): string {
+  if (content.length <= INSPECTOR_CONTENT_MAX_CHARS) {
+    return content
+  }
+
+  return `${content.slice(0, INSPECTOR_CONTENT_MAX_CHARS - 3)}...`
 }
 
 /**
@@ -358,33 +369,33 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
     const allScored: InspectorMemory[] = [
       ...scored.platform.map((m) => ({
         id: m.document._id as string,
-        content: m.document.content,
+        content: truncateInspectorContent(m.document.content),
         type: m.document.category as string,
-        layer: 'platform',
+        layer: 'platform' as const,
         score: m.compositeScore,
         included: includedIds.has(m.document._id as string),
       })),
       ...scored.niche.map((m) => ({
         id: m.document._id as string,
-        content: m.document.content,
+        content: truncateInspectorContent(m.document.content),
         type: m.document.category,
-        layer: 'niche',
+        layer: 'niche' as const,
         score: m.compositeScore,
         included: includedIds.has(m.document._id as string),
       })),
       ...scored.business.map((m) => ({
         id: m.document._id as string,
-        content: m.document.content,
+        content: truncateInspectorContent(m.document.content),
         type: m.document.type,
-        layer: 'business',
+        layer: 'business' as const,
         score: m.compositeScore,
         included: includedIds.has(m.document._id as string),
       })),
       ...scored.agent.map((m) => ({
         id: m.document._id as string,
-        content: m.document.content,
+        content: truncateInspectorContent(m.document.content),
         type: m.document.category,
-        layer: 'agent',
+        layer: 'agent' as const,
         score: m.compositeScore,
         included: includedIds.has(m.document._id as string),
       })),
@@ -394,8 +405,8 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
 
     inspectorData = {
       memories: allScored,
-      tokenBudget: 4000,
-      tokensUsed: formatted.tokenCount,
+      tokenBudget: selected.budgetUsage.totalBudget,
+      tokensUsed: selected.budgetUsage.totalUsed,
     }
   }
 

@@ -29,6 +29,10 @@ interface HistoryMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   parts: HistoryMessagePart[]
+  metadata?: {
+    createdAt: number
+    retrievalTrace?: unknown
+  }
   createdAt: Date
 }
 
@@ -142,6 +146,10 @@ export async function GET(req: Request) {
       role: msg.role,
       content: msg.content,
       parts: buildParts(msg),
+      metadata: {
+        createdAt: msg.createdAt,
+        retrievalTrace: msg.metadata?.retrievalTrace,
+      },
       createdAt: new Date(msg.createdAt),
     }))
 

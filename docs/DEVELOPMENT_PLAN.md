@@ -2126,7 +2126,7 @@ Build the frontend components for memory inspection, management, and system heal
 - Added script: `scripts/test-dashboard-nav-polish.sh`
 
 **Remaining Phase 12 gaps (tracked):**
-- `ContextInspector` still receives hardcoded empty props (env-gated)
+- ~~`ContextInspector` still receives hardcoded empty props (env-gated)~~ — resolved in 12.9
 - ~~`MemoryAnalytics` still aggregates a capped 100-item client sample~~ — resolved in 12.8
 - ~~Sidebar CRM tabs (Leads/Schedule/Invoices) are not yet wired with live data~~ — resolved in 12.8
 
@@ -2147,7 +2147,7 @@ Build the frontend components for memory inspection, management, and system heal
 - Added script: `scripts/test-phase12-crm-wiring.sh` (15 checks)
 
 **Remaining Phase 12 gap:**
-- `ContextInspector` is not mounted in any view (requires chat route integration and shared retrieval state)
+- ~~`ContextInspector` is not mounted in any view (requires chat route integration and shared retrieval state)~~ — resolved in 12.9
 
 ---
 
@@ -2156,20 +2156,29 @@ Build the frontend components for memory inspection, management, and system heal
 **Objective:** Wire the fully-built `ContextInspector` component with real retrieval data so it shows which memories were included/dropped in every AI response.
 
 **Completed:**
-- Added `InspectorMemory` and `InspectorData` interfaces to `src/lib/ai/memory/retrieval.ts`
+- Added `InspectorMemory` and `InspectorData` interfaces in `src/lib/ai/memory/retrieval.ts`
 - Added optional `inspectorData` field to `RetrievalResult` (backward-compatible)
-- Built `inspectorData` inside `retrieveMemoryContext` using already-computed `scored` and `formatted.memoryIds`; env-gated by `NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR === 'true'`; capped at 50 memories
-- Added `messageMetadata` callback to `result.toUIMessageStreamResponse({...})` in `src/app/api/chat/route.ts`; emits `{ retrievalTrace: inspectorData }` on `finish` part with zero extra cost and zero schema changes
-- Widened `RetrievedMemory.id` from `Id<'businessMemories'>` to `string` in `ContextInspector.tsx` (id is used only as React key)
-- Imported `ContextInspector` and `InspectorData` in `ChatContainer.tsx`
-- Added `isInspectorData()` runtime guard and `lastAssistantTrace` memo (scans messages in reverse for `metadata.retrievalTrace`)
-- Mounted `<ContextInspector>` conditionally when `lastAssistantTrace` is non-null
+- Built `inspectorData` in `retrieveMemoryContext` using already-computed `scored` arrays and `formatted.memoryIds`; env-gated by `NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR === 'true'`; capped at 50 memories; token metrics now come from `selected.budgetUsage`
+- Added `messageMetadata` callback to `result.toUIMessageStreamResponse({...})` in `src/app/api/chat/route.ts`; emits `{ retrievalTrace: inspectorData }` on `finish` parts
+- Persisted retrieval trace on assistant messages via `api.messages.save` metadata (`retrievalTrace`)
+- Extended message metadata validators in both `src/convex/messages.ts` and `src/convex/schema.ts` to include `retrievalTrace`
+- Updated `src/app/api/chat/history/route.ts` to return persisted `metadata.retrievalTrace` so inspector state survives refresh/history pagination
+- Updated `ContextInspector.tsx` to reuse `InspectorMemory` type
+- Added `isInspectorData()` runtime guard and `lastAssistantTrace` memo in `ChatContainer.tsx` (reverse scan over assistant messages)
+- Mounted `<ContextInspector>` conditionally in `ChatContainer` when `lastAssistantTrace` exists
 
-**Transport:** Vercel AI SDK v6 `messageMetadata` callback on `toUIMessageStreamResponse` — zero extra HTTP calls, zero schema changes, emitted per-message on `finish` part type.
+**Transport:** Vercel AI SDK v6 `messageMetadata` callback on `toUIMessageStreamResponse` for streaming metadata + Convex message metadata persistence for refresh/history continuity.
 
 **Validation:**
 - `bun run check:all` passes (typecheck + lint)
-- Added script: `scripts/test-phase12-context-inspector.sh` (17 checks, all green)
+- `bash ./scripts/test-phase12-context-inspector.sh` passes (14 checks)
+- `bash ./scripts/test-phase12-dashboard.sh` passes (updated context-inspector wiring checks)
+
+**Manual QA Checklist:**
+1. Set `NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR=true` and open `/chat`; send a memory-heavy query; verify overlay appears with included/dropped rows.
+2. Refresh the chat page and verify inspector still renders from history metadata (`retrievalTrace`).
+3. Send a low-relevance message and verify token bar updates and memory list can be empty.
+4. Set `NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR=false`; verify overlay does not render.
 
 ---
 
@@ -2252,4 +2261,4 @@ bun add recharts  # For analytics charts (if not present)
 *Created: February 8, 2026*
 *Last Updated: March 11, 2026*
 *Author: RecommendMe AI Team*
-*Status: Phase 12 PARTIAL — sub-phases 12.1–12.8 are implemented; only ContextInspector wiring remains*
+*Status: Phase 12 COMPLETE — sub-phases 12.1–12.9 are implemented and validated*

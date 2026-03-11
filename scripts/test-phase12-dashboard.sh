@@ -134,15 +134,21 @@ for ANALYTICS_FILE in \
 done
 
 # ────────────────────────────────────────────────────────
-# 9. ContextInspector not wired with empty data
+# 9. ContextInspector chat wiring
 # ────────────────────────────────────────────────────────
-header "ContextInspector: No Placeholder Wiring"
+header "ContextInspector: Chat Wiring"
 
-if grep -q 'ContextInspector' "$CONTAINER" 2>/dev/null; then
-  err "ContextInspector should not be in dashboard with empty data"
-else
-  ok "ContextInspector not mounted with placeholder data"
-fi
+CHAT_CONTAINER="src/app/(dashboard)/chat/components/ChatContainer.tsx"
+CHAT_ROUTE="src/app/api/chat/route.ts"
+HISTORY_ROUTE="src/app/api/chat/history/route.ts"
+MESSAGES="src/convex/messages.ts"
+
+assert_file_contains "$CHAT_CONTAINER" "ContextInspector" "ChatContainer mounts ContextInspector"
+assert_file_contains "$CHAT_CONTAINER" "retrievalTrace" "ChatContainer reads retrievalTrace metadata"
+assert_file_contains "$CHAT_ROUTE" "messageMetadata" "Chat route emits UI message metadata"
+assert_file_contains "$CHAT_ROUTE" "retrievalTrace" "Chat route attaches retrieval trace metadata"
+assert_file_contains "$HISTORY_ROUTE" "retrievalTrace" "History route returns retrievalTrace metadata"
+assert_file_contains "$MESSAGES" "retrievalTrace" "Messages validator accepts retrievalTrace metadata"
 
 # ────────────────────────────────────────────────────────
 # 10. TypeScript + Lint clean

@@ -29,6 +29,27 @@ export const save = mutation({
         tokenCount: v.optional(v.number()),
         latencyMs: v.optional(v.number()),
         finishReason: v.optional(v.string()),
+        retrievalTrace: v.optional(
+          v.object({
+            memories: v.array(
+              v.object({
+                id: v.string(),
+                content: v.string(),
+                type: v.string(),
+                layer: v.union(
+                  v.literal('platform'),
+                  v.literal('niche'),
+                  v.literal('business'),
+                  v.literal('agent')
+                ),
+                score: v.number(),
+                included: v.boolean(),
+              })
+            ),
+            tokenBudget: v.number(),
+            tokensUsed: v.number(),
+          })
+        ),
       })
     ),
   },
