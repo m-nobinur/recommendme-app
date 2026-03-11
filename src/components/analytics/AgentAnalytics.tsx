@@ -160,7 +160,7 @@ export const AgentAnalytics = memo(function AgentAnalytics({
           value={`${overallSuccessRate}%`}
           sub={`${totalCompleted} completed`}
         />
-        <StatCard label="Failed" value={String(totalFailed)} />
+        <StatCard label="Failed" value={String(totalFailed)} sub="last 100 runs" />
         <StatCard
           label="Pending Approvals"
           value={String(approvalStats.pending)}

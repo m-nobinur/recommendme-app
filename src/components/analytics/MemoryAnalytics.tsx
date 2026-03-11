@@ -58,7 +58,7 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
     organizationId,
     activeOnly: false,
     includeArchived: true,
-    limit: 500,
+    limit: 100,
   })
 
   if (memories === undefined) {
@@ -128,6 +128,12 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
         <StatCard label="Archived" value={archivedCount} />
         <StatCard label="Avg Decay" value={`${avgDecay}%`} />
       </div>
+      {total >= 100 && (
+        <p className="text-xs text-text-secondary">
+          Showing stats for the most recent 100 memories. Results may be a subset of your full
+          memory store.
+        </p>
+      )}
 
       {/* Type distribution — Pie */}
       <div className="rounded-xl border border-border bg-surface-secondary p-5">

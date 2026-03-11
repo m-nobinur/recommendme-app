@@ -21,7 +21,18 @@ import { cn } from '@/lib/utils/cn'
 
 interface CostAnalyticsProps {
   organizationId: Id<'organizations'>
+  budgetTier?: 'free' | 'starter' | 'pro' | 'enterprise'
   className?: string
+}
+
+const BUDGET_TIER_LIMITS: Record<
+  'free' | 'starter' | 'pro' | 'enterprise',
+  { dailyLimitTokens: number; monthlyLimitTokens: number }
+> = {
+  free: { dailyLimitTokens: 100_000, monthlyLimitTokens: 1_000_000 },
+  starter: { dailyLimitTokens: 500_000, monthlyLimitTokens: 5_000_000 },
+  pro: { dailyLimitTokens: 1_000_000, monthlyLimitTokens: 20_000_000 },
+  enterprise: { dailyLimitTokens: 5_000_000, monthlyLimitTokens: 100_000_000 },
 }
 
 const PURPOSE_COLORS: Record<string, string> = {
@@ -89,9 +100,14 @@ function BudgetBar({ label, used, limit }: { label: string; used: number; limit:
   )
 }
 
-export const CostAnalytics = memo(function CostAnalytics({ organizationId }: CostAnalyticsProps) {
+export const CostAnalytics = memo(function CostAnalytics({
+  organizationId,
+  budgetTier = 'pro',
+}: CostAnalyticsProps) {
   const now = Date.now()
   const sinceMs = now - 30 * 24 * 60 * 60 * 1000 // 30 days
+
+  const { dailyLimitTokens, monthlyLimitTokens } = BUDGET_TIER_LIMITS[budgetTier]
 
   const usage = useQuery(api.llmUsage.getOrgUsage, {
     organizationId,
@@ -101,8 +117,8 @@ export const CostAnalytics = memo(function CostAnalytics({ organizationId }: Cos
 
   const budget = useQuery(api.llmUsage.getOrgBudgetStatus, {
     organizationId,
-    dailyLimitTokens: 1_000_000,
-    monthlyLimitTokens: 20_000_000,
+    dailyLimitTokens,
+    monthlyLimitTokens,
     nowMs: now,
   })
 
