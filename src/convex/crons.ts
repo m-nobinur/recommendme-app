@@ -74,6 +74,17 @@ crons.interval(
 )
 
 // ============================================
+// GUARDRAILS: Approval Queue Maintenance
+// ============================================
+
+crons.interval(
+  'expire stale pending approvals',
+  { minutes: 30 },
+  internal.approvalQueue.expireStalePending,
+  {}
+)
+
+// ============================================
 // AGENT FRAMEWORK: Scheduled Agent Runs
 // ============================================
 

@@ -31,6 +31,7 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
     user: {
       /**
        * onCreate Trigger - Automatically create appUser when auth user is created
+       * Creates a dedicated per-user organization (no shared "default" org)
        * Runs in the same transaction as user signup
        */
       onCreate: async (ctx, authUser) => {
@@ -38,33 +39,18 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
           console.log('[Auth Trigger] Creating appUser for new user:', authUser.email)
         }
 
-        // Get or create default organization for new users
-        let defaultOrg = await ctx.db
-          .query('organizations')
-          .filter((q) => q.eq(q.field('slug'), 'default'))
-          .first()
+        const { createOrganizationForSignup } = await import('./organizations')
+        const orgName = `${authUser.name ?? authUser.email?.split('@')[0] ?? 'My'}'s Workspace`
+        const orgId = await createOrganizationForSignup(ctx, {
+          name: orgName,
+          userEmail: authUser.email ?? 'user@workspace.local',
+          slugHint: authUser._id,
+        })
 
-        if (!defaultOrg) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.log('[Auth Trigger] Creating default organization')
-          }
-          const orgId = await ctx.db.insert('organizations', {
-            name: 'Default Organization',
-            slug: 'default',
-            createdAt: Date.now(),
-          })
-          defaultOrg = await ctx.db.get(orgId)
-        }
-
-        if (!defaultOrg) {
-          throw new Error('Failed to create or get default organization')
-        }
-
-        // Create appUser atomically with auth user
         const appUserId = await ctx.db.insert('appUsers', {
           authUserId: authUser._id,
-          organizationId: defaultOrg._id,
-          role: 'owner', // First user in an org is owner
+          organizationId: orgId,
+          role: 'owner',
           settings: {
             aiProvider: 'openrouter',
             modelTier: 'smart',
@@ -75,7 +61,7 @@ export const authComponent = createClient<DataModel>(components.betterAuth, {
         })
 
         if (process.env.NODE_ENV !== 'production') {
-          console.log('[Auth Trigger] Created appUser:', appUserId)
+          console.log('[Auth Trigger] Created appUser:', appUserId, 'in org:', String(orgId))
         }
       },
 

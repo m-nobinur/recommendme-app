@@ -246,6 +246,8 @@ describe('reviewPlannedActions', () => {
     assert.equal(reviewed.rejectedByPolicy.length, 2)
     assert.equal(reviewed.rejectedForApproval.length, 1)
     assert.equal(reviewed.rejectedForApproval[0].type, 'custom_high_action')
+    assert.equal(reviewed.rejectedForApproval[0].riskLevel, 'high')
+    assert.deepEqual(reviewed.rejectedForApproval[0].params, {})
   })
 })
 

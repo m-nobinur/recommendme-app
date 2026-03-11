@@ -71,6 +71,8 @@ type PlannedAction = {
 type RejectedAction = {
   type: string
   target: string
+  params: Record<string, unknown>
+  riskLevel: 'low' | 'medium' | 'high'
   reason: string
 }
 
@@ -93,6 +95,13 @@ type ExecutionOutcome = {
   error?: string
 }
 
+type ActionExecutionResult = {
+  success: boolean
+  skipped: boolean
+  message: string
+  retryable?: boolean
+}
+
 export function determineExecutionOutcome({
   failureCount,
   rejectedForApprovalCount,
@@ -112,6 +121,35 @@ export function determineExecutionOutcome({
   }
 
   return { status: 'completed' }
+}
+
+function buildQueuedActionParams(
+  action: RejectedAction,
+  defaultInvoiceTermsDays: number
+): Record<string, unknown> {
+  const params: Record<string, unknown> =
+    action.params && typeof action.params === 'object' ? { ...action.params } : {}
+
+  if (action.type !== 'create_invoice') {
+    return params
+  }
+
+  const dueDate =
+    typeof params.dueDate === 'string' && params.dueDate.trim().length > 0
+      ? params.dueDate.trim()
+      : undefined
+  if (!dueDate) {
+    const defaultDueDate = new Date(Date.now() + defaultInvoiceTermsDays * 86_400_000)
+      .toISOString()
+      .split('T')[0]
+    params.dueDate = defaultDueDate
+  }
+
+  if (typeof params.defaultPaymentTermsDays !== 'number') {
+    params.defaultPaymentTermsDays = defaultInvoiceTermsDays
+  }
+
+  return params
 }
 
 export function sanitizeReminderSettings(raw: unknown): ReminderAgentSettings {
@@ -237,6 +275,8 @@ export function reviewPlannedActions(
       rejectedByPolicy.push({
         type: action.type,
         target: action.target,
+        params: action.params,
+        riskLevel: action.riskLevel,
         reason: 'Action not in allowed list',
       })
       continue
@@ -248,6 +288,8 @@ export function reviewPlannedActions(
         rejectedByPolicy.push({
           type: action.type,
           target: action.target,
+          params: action.params,
+          riskLevel: action.riskLevel,
           reason: 'Duplicate reminder action for the same target',
         })
         continue
@@ -260,6 +302,8 @@ export function reviewPlannedActions(
       rejectedForApproval.push({
         type: action.type,
         target: action.target,
+        params: action.params,
+        riskLevel: assessment.assessedRisk,
         reason: assessment.reason ?? `Risk level '${assessment.assessedRisk}' requires approval`,
       })
       continue
@@ -498,6 +542,7 @@ export const runAgentForOrg = internalAction({
     actionsExecuted?: number
     actionsSkipped?: number
     actionsRejectedForApproval?: number
+    approvalQueueItemIds?: string[]
   }> => {
     const executionStart: {
       skipped: boolean
@@ -905,277 +950,38 @@ export const runAgentForOrg = internalAction({
         status: 'executing',
       })
 
+      const defaultInvoiceTermsDays = sanitizeInvoiceSettings(
+        args.invoiceSettings
+      ).defaultPaymentTermsDays
       let executed = 0
       let skippedInExecution = 0
       const results: Array<{ type: string; target: string; success: boolean; message: string }> = []
 
       for (const action of reviewedActions.approved) {
         try {
-          if (action.type === 'update_lead_notes') {
-            const notesText = String(action.params?.notes ?? '').trim()
-            if (!notesText) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: empty notes',
-              })
-              skippedInExecution++
-              continue
-            }
-            await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
-              organizationId: args.organizationId,
-              leadId: action.target as Id<'leads'>,
-              notes: notesText,
-              agentType: args.agentType,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: 'Notes updated',
-            })
-          } else if (action.type === 'update_lead_status') {
-            await ctx.runMutation(internal.agentRunner.updateLeadStatus, {
-              organizationId: args.organizationId,
-              leadId: action.target as Id<'leads'>,
-              status: String(action.params?.status ?? ''),
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Status updated to ${action.params?.status}`,
-            })
-          } else if (action.type === 'update_appointment_notes') {
-            const apptNotes = String(action.params?.notes ?? '').trim()
-            if (!apptNotes) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: empty notes',
-              })
-              skippedInExecution++
-              continue
-            }
-            await ctx.runMutation(internal.agentRunner.updateAppointmentNotes, {
-              organizationId: args.organizationId,
-              appointmentId: action.target as Id<'appointments'>,
-              notes: apptNotes,
-              timezone: args.timezone,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: 'Reminder note added to appointment',
-            })
-          } else if (action.type === 'create_invoice') {
-            const leadName = String(action.params?.leadName ?? '').trim()
-            const amount = Number(action.params?.amount ?? 0)
-            const description = String(action.params?.description ?? 'Service').trim()
-            const configuredTerms = sanitizeInvoiceSettings(
-              args.invoiceSettings
-            ).defaultPaymentTermsDays
-            const defaultDueDate = new Date(Date.now() + configuredTerms * 86_400_000)
-              .toISOString()
-              .split('T')[0]
-            const dueDate = action.params?.dueDate ? String(action.params.dueDate) : defaultDueDate
+          const executionResult = await executeApprovedQueueAction(ctx, {
+            organizationId: args.organizationId,
+            agentType: args.agentType,
+            action: action.type,
+            target: action.target,
+            params: action.params,
+            invoiceDefaultTermsDays: defaultInvoiceTermsDays,
+          })
 
-            if (amount <= 0 || !description) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: invalid invoice params',
-              })
-              skippedInExecution++
-              continue
-            }
+          results.push({
+            type: action.type,
+            target: action.target,
+            success: executionResult.success,
+            message: executionResult.message,
+          })
 
-            await ctx.runMutation(internal.invoices.createDraftForLeadInternal, {
-              organizationId: args.organizationId,
-              leadId: action.target as Id<'leads'>,
-              amount,
-              description,
-              dueDate,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Draft invoice created for ${leadName || action.target} — $${amount.toFixed(2)}`,
-            })
-          } else if (action.type === 'update_invoice_status') {
-            const status = String(action.params?.status ?? '').trim()
-            if (!['draft', 'sent', 'paid'].includes(status)) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: invalid invoice status',
-              })
+          if (executionResult.success) {
+            if (executionResult.skipped) {
               skippedInExecution++
-              continue
+            } else {
+              executed++
             }
-
-            await ctx.runMutation(internal.invoices.updateStatusInternal, {
-              organizationId: args.organizationId,
-              invoiceId: action.target as Id<'invoices'>,
-              status: status as 'draft' | 'sent' | 'paid',
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Invoice status updated to ${status}`,
-            })
-          } else if (action.type === 'flag_overdue_invoice') {
-            const notes = String(action.params?.notes ?? '').trim()
-            if (!notes) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: empty overdue flag',
-              })
-              skippedInExecution++
-              continue
-            }
-            await ctx.runMutation(internal.invoices.flagOverdueInvoiceInternal, {
-              organizationId: args.organizationId,
-              invoiceId: action.target as Id<'invoices'>,
-              notes,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Flagged overdue invoice ${action.target}`,
-            })
-          } else if (action.type === 'score_lead') {
-            const score = Number(action.params?.score ?? 0)
-            const reasoning = String(action.params?.reasoning ?? '').trim()
-            if (score < 1 || score > 10 || !reasoning) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: invalid score params',
-              })
-              skippedInExecution++
-              continue
-            }
-            await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
-              organizationId: args.organizationId,
-              leadId: action.target as Id<'leads'>,
-              notes: `[Sales Score] ${score}/10 — ${reasoning}`,
-              agentType: 'sales',
-              touchLastContact: false,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Lead scored ${score}/10`,
-            })
-          } else if (action.type === 'recommend_stage_change') {
-            const recommendedStage = String(
-              action.params?.recommendedStage ?? action.params?.toStage ?? ''
-            ).trim()
-            const reasoning = String(action.params?.reasoning ?? '').trim()
-            if (!recommendedStage || !reasoning) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: missing stage/reasoning',
-              })
-              skippedInExecution++
-              continue
-            }
-            await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
-              organizationId: args.organizationId,
-              leadId: action.target as Id<'leads'>,
-              notes: `[Stage Recommendation] Move to ${recommendedStage} — ${reasoning}`,
-              agentType: 'sales',
-              touchLastContact: false,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Recommended stage change to ${recommendedStage}`,
-            })
-          } else if (action.type === 'flag_stale_lead') {
-            const daysSinceUpdate = Number(
-              action.params?.daysSinceUpdate ?? action.params?.daysSinceContact ?? 0
-            )
-            const staleNotes = String(
-              action.params?.notes ?? action.params?.suggestion ?? ''
-            ).trim()
-            await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
-              organizationId: args.organizationId,
-              leadId: action.target as Id<'leads'>,
-              notes: `[Stale Alert] ${daysSinceUpdate}d since contact${staleNotes ? ` — ${staleNotes}` : ''}`,
-              agentType: 'sales',
-              touchLastContact: false,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Flagged stale (${daysSinceUpdate}d)`,
-            })
-          } else if (action.type === 'log_pipeline_insight') {
-            const insight = String(action.params?.insight ?? '').trim()
-            if (!insight) {
-              results.push({
-                type: action.type,
-                target: action.target,
-                success: true,
-                message: 'Skipped: empty insight',
-              })
-              skippedInExecution++
-              continue
-            }
-            await ctx.runMutation(internal.agentRunner.recordAgentLearning, {
-              organizationId: args.organizationId,
-              agentType: 'sales',
-              category: 'pattern',
-              content: insight,
-              confidence: 0.7,
-            })
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: `Pipeline insight logged`,
-            })
-          } else if (
-            action.type === 'log_recommendation' ||
-            action.type === 'log_reminder_recommendation' ||
-            action.type === 'log_invoice_recommendation' ||
-            action.type === 'log_sales_recommendation'
-          ) {
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: String(action.params?.recommendation ?? action.params?.status ?? ''),
-            })
-          } else {
-            results.push({
-              type: action.type,
-              target: action.target,
-              success: true,
-              message: 'Skipped: unsupported action type',
-            })
-            skippedInExecution++
-            continue
           }
-          executed++
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown'
           results.push({ type: action.type, target: action.target, success: false, message })
@@ -1206,6 +1012,86 @@ export const runAgentForOrg = internalAction({
         })
       }
 
+      let approvalQueueItemIds: string[] | undefined
+      if (reviewedActions.rejectedForApproval.length > 0) {
+        const queuedIds = await ctx.runMutation(internal.approvalQueue.enqueueBatch, {
+          organizationId: args.organizationId,
+          executionId,
+          agentType: args.agentType,
+          context: plan.summary,
+          actions: reviewedActions.rejectedForApproval.map((a) => ({
+            action: a.type,
+            target: a.target,
+            actionParams: buildQueuedActionParams(a, defaultInvoiceTermsDays),
+            riskLevel: a.riskLevel,
+            description: a.reason,
+          })),
+        })
+        approvalQueueItemIds = queuedIds.map(String)
+      }
+      const queuedApprovalAuditItems = reviewedActions.rejectedForApproval.map((rej, index) => ({
+        ...rej,
+        queueId: approvalQueueItemIds?.[index],
+      }))
+
+      const auditLogs: Array<{
+        organizationId: Id<'organizations'>
+        actorType: 'agent'
+        action: string
+        resourceType: string
+        resourceId?: string
+        details: Record<string, unknown>
+        riskLevel: 'low' | 'medium' | 'high' | 'critical'
+      }> = []
+
+      for (const rej of reviewedActions.rejectedByPolicy) {
+        auditLogs.push({
+          organizationId: args.organizationId,
+          actorType: 'agent',
+          action: 'agent_action_rejected_by_policy',
+          resourceType: 'agentExecution',
+          resourceId: String(executionId),
+          details: { actionType: rej.type, target: rej.target, reason: rej.reason },
+          riskLevel: 'medium',
+        })
+      }
+      for (const rej of queuedApprovalAuditItems) {
+        auditLogs.push({
+          organizationId: args.organizationId,
+          actorType: 'agent',
+          action: 'agent_action_queued_for_approval',
+          resourceType: 'approvalQueue',
+          resourceId: rej.queueId,
+          details: {
+            actionType: rej.type,
+            target: rej.target,
+            reason: rej.reason,
+            riskLevel: rej.riskLevel,
+          },
+          riskLevel: rej.riskLevel,
+        })
+      }
+      auditLogs.push({
+        organizationId: args.organizationId,
+        actorType: 'agent',
+        action: `agent_execution_${failures.length > 0 ? 'partial' : 'completed'}`,
+        resourceType: 'agentExecution',
+        resourceId: String(executionId),
+        details: {
+          agentType: args.agentType,
+          planned: plan.actions.length,
+          executed,
+          failed: failures.length,
+          skippedByPolicy,
+          queuedForApproval: rejectedForApproval,
+        },
+        riskLevel: 'low',
+      })
+
+      if (auditLogs.length > 0) {
+        await ctx.runMutation(internal.auditLogs.appendBatch, { logs: auditLogs })
+      }
+
       const actionsSkipped = skippedByPolicy + skippedInExecution
       const executionOutcome = determineExecutionOutcome({
         failureCount: failures.length,
@@ -1215,7 +1101,10 @@ export const runAgentForOrg = internalAction({
       await ctx.runMutation(internal.agentExecutions.complete, {
         id: executionId,
         status: executionOutcome.status,
-        results,
+        results: {
+          actions: results,
+          approvalQueueItemIds,
+        },
         actionsPlanned: plan.actions.length,
         actionsExecuted: executed,
         actionsSkipped,
@@ -1229,6 +1118,7 @@ export const runAgentForOrg = internalAction({
         actionsExecuted: executed,
         actionsSkipped,
         actionsRejectedForApproval: rejectedForApproval,
+        approvalQueueItemIds,
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error'
@@ -1243,6 +1133,623 @@ export const runAgentForOrg = internalAction({
       })
       return { status: 'failed', error: message }
     }
+  },
+})
+
+async function executeApprovedQueueAction(
+  ctx: { runMutation: any; runQuery: any },
+  args: {
+    organizationId: Id<'organizations'>
+    agentType: string
+    action: string
+    target?: string
+    params: Record<string, unknown>
+    invoiceDefaultTermsDays?: number
+  }
+): Promise<ActionExecutionResult> {
+  try {
+    if (args.action === 'update_lead_notes') {
+      if (!args.target) {
+        return { success: false, skipped: false, message: 'Missing target for lead note update' }
+      }
+      const notesText = String(args.params?.notes ?? '').trim()
+      if (!notesText) return { success: true, skipped: true, message: 'Skipped: empty notes' }
+      await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
+        organizationId: args.organizationId,
+        leadId: args.target as Id<'leads'>,
+        notes: notesText,
+        agentType: args.agentType,
+      })
+      return { success: true, skipped: false, message: 'Notes updated' }
+    }
+
+    if (args.action === 'update_lead_status') {
+      if (!args.target) {
+        return { success: false, skipped: false, message: 'Missing target for lead status update' }
+      }
+      const status = String(args.params?.status ?? '').trim()
+      if (!status) return { success: true, skipped: true, message: 'Skipped: invalid lead status' }
+      await ctx.runMutation(internal.agentRunner.updateLeadStatus, {
+        organizationId: args.organizationId,
+        leadId: args.target as Id<'leads'>,
+        status,
+      })
+      return { success: true, skipped: false, message: `Status updated to ${status}` }
+    }
+
+    if (args.action === 'update_appointment_notes') {
+      if (!args.target) {
+        return {
+          success: false,
+          skipped: false,
+          message: 'Missing target for appointment note update',
+        }
+      }
+      const notesText = String(args.params?.notes ?? '').trim()
+      if (!notesText) return { success: true, skipped: true, message: 'Skipped: empty notes' }
+      const orgTimezone = await ctx.runQuery(internal.agentRunner.getOrgTimezone, {
+        organizationId: args.organizationId,
+      })
+      await ctx.runMutation(internal.agentRunner.updateAppointmentNotes, {
+        organizationId: args.organizationId,
+        appointmentId: args.target as Id<'appointments'>,
+        notes: notesText,
+        timezone: resolveTimezone(orgTimezone),
+      })
+      return { success: true, skipped: false, message: 'Reminder note added to appointment' }
+    }
+
+    if (args.action === 'create_invoice') {
+      if (!args.target) {
+        return { success: false, skipped: false, message: 'Missing target for invoice creation' }
+      }
+      const amount = Number(args.params?.amount ?? 0)
+      const description = String(args.params?.description ?? 'Service').trim()
+      const providedTerms = Number(
+        args.params?.defaultPaymentTermsDays ?? args.invoiceDefaultTermsDays
+      )
+      const fallbackTerms = sanitizeInvoiceSettings(undefined).defaultPaymentTermsDays
+      const configuredTerms =
+        Number.isFinite(providedTerms) &&
+        providedTerms >= MIN_INVOICE_PAYMENT_TERMS_DAYS &&
+        providedTerms <= MAX_INVOICE_PAYMENT_TERMS_DAYS
+          ? Math.floor(providedTerms)
+          : fallbackTerms
+      const defaultDueDate = new Date(Date.now() + configuredTerms * 86_400_000)
+        .toISOString()
+        .split('T')[0]
+      const dueDate =
+        typeof args.params?.dueDate === 'string' && args.params.dueDate.trim().length > 0
+          ? args.params.dueDate.trim()
+          : defaultDueDate
+      if (amount <= 0 || !description) {
+        return { success: true, skipped: true, message: 'Skipped: invalid invoice params' }
+      }
+      await ctx.runMutation(internal.invoices.createDraftForLeadInternal, {
+        organizationId: args.organizationId,
+        leadId: args.target as Id<'leads'>,
+        amount,
+        description,
+        dueDate,
+      })
+      return {
+        success: true,
+        skipped: false,
+        message: `Draft invoice created — $${amount.toFixed(2)}`,
+      }
+    }
+
+    if (args.action === 'update_invoice_status') {
+      if (!args.target) {
+        return {
+          success: false,
+          skipped: false,
+          message: 'Missing target for invoice status update',
+        }
+      }
+      const status = String(args.params?.status ?? '').trim()
+      if (!['draft', 'sent', 'paid'].includes(status)) {
+        return { success: true, skipped: true, message: 'Skipped: invalid invoice status' }
+      }
+      await ctx.runMutation(internal.invoices.updateStatusInternal, {
+        organizationId: args.organizationId,
+        invoiceId: args.target as Id<'invoices'>,
+        status: status as 'draft' | 'sent' | 'paid',
+      })
+      return { success: true, skipped: false, message: `Invoice status updated to ${status}` }
+    }
+
+    if (args.action === 'flag_overdue_invoice') {
+      if (!args.target) {
+        return {
+          success: false,
+          skipped: false,
+          message: 'Missing target for overdue invoice flag',
+        }
+      }
+      const notes = String(args.params?.notes ?? '').trim()
+      if (!notes) return { success: true, skipped: true, message: 'Skipped: empty overdue flag' }
+      await ctx.runMutation(internal.invoices.flagOverdueInvoiceInternal, {
+        organizationId: args.organizationId,
+        invoiceId: args.target as Id<'invoices'>,
+        notes,
+      })
+      return { success: true, skipped: false, message: `Flagged overdue invoice ${args.target}` }
+    }
+
+    if (args.action === 'score_lead') {
+      if (!args.target) {
+        return { success: false, skipped: false, message: 'Missing target for lead scoring' }
+      }
+      const score = Number(args.params?.score ?? 0)
+      const reasoning = String(args.params?.reasoning ?? '').trim()
+      if (score < 1 || score > 10 || !reasoning) {
+        return { success: true, skipped: true, message: 'Skipped: invalid score params' }
+      }
+      await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
+        organizationId: args.organizationId,
+        leadId: args.target as Id<'leads'>,
+        notes: `[Sales Score] ${score}/10 — ${reasoning}`,
+        agentType: 'sales',
+        touchLastContact: false,
+      })
+      return { success: true, skipped: false, message: `Lead scored ${score}/10` }
+    }
+
+    if (args.action === 'recommend_stage_change') {
+      if (!args.target) {
+        return {
+          success: false,
+          skipped: false,
+          message: 'Missing target for stage recommendation',
+        }
+      }
+      const recommendedStage = String(
+        args.params?.recommendedStage ?? args.params?.toStage ?? ''
+      ).trim()
+      const reasoning = String(args.params?.reasoning ?? '').trim()
+      if (!recommendedStage || !reasoning) {
+        return { success: true, skipped: true, message: 'Skipped: missing stage/reasoning' }
+      }
+      await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
+        organizationId: args.organizationId,
+        leadId: args.target as Id<'leads'>,
+        notes: `[Stage Recommendation] Move to ${recommendedStage} — ${reasoning}`,
+        agentType: 'sales',
+        touchLastContact: false,
+      })
+      return {
+        success: true,
+        skipped: false,
+        message: `Recommended stage change to ${recommendedStage}`,
+      }
+    }
+
+    if (args.action === 'flag_stale_lead') {
+      if (!args.target) {
+        return { success: false, skipped: false, message: 'Missing target for stale lead flag' }
+      }
+      const daysSinceUpdate = Number(
+        args.params?.daysSinceUpdate ?? args.params?.daysSinceContact ?? 0
+      )
+      const staleNotes = String(args.params?.notes ?? args.params?.suggestion ?? '').trim()
+      await ctx.runMutation(internal.agentRunner.updateLeadNotes, {
+        organizationId: args.organizationId,
+        leadId: args.target as Id<'leads'>,
+        notes: `[Stale Alert] ${daysSinceUpdate}d since contact${staleNotes ? ` — ${staleNotes}` : ''}`,
+        agentType: 'sales',
+        touchLastContact: false,
+      })
+      return { success: true, skipped: false, message: `Flagged stale (${daysSinceUpdate}d)` }
+    }
+
+    if (args.action === 'log_pipeline_insight') {
+      const insight = String(args.params?.insight ?? '').trim()
+      if (!insight) return { success: true, skipped: true, message: 'Skipped: empty insight' }
+      await ctx.runMutation(internal.agentRunner.recordAgentLearning, {
+        organizationId: args.organizationId,
+        agentType: 'sales',
+        category: 'pattern',
+        content: insight,
+        confidence: 0.7,
+      })
+      return { success: true, skipped: false, message: 'Pipeline insight logged' }
+    }
+
+    if (
+      args.action === 'log_recommendation' ||
+      args.action === 'log_reminder_recommendation' ||
+      args.action === 'log_invoice_recommendation' ||
+      args.action === 'log_sales_recommendation'
+    ) {
+      return {
+        success: true,
+        skipped: false,
+        message: String(
+          args.params?.recommendation ?? args.params?.status ?? 'Recommendation logged'
+        ),
+      }
+    }
+
+    return {
+      success: true,
+      skipped: true,
+      message: `Skipped: unsupported action type (${args.action})`,
+    }
+  } catch (error) {
+    return {
+      success: false,
+      skipped: false,
+      message: error instanceof Error ? error.message : 'Unknown error',
+      retryable: true,
+    }
+  }
+}
+
+/**
+ * Execute a single approved queue item.
+ * Called via scheduler after an admin approves an action.
+ */
+export const executeApprovedQueueItem = internalAction({
+  args: {
+    approvalId: v.id('approvalQueue'),
+  },
+  handler: async (ctx, args): Promise<{ status: 'executed' | 'skipped'; reason?: string }> => {
+    let queueItem: {
+      _id: Id<'approvalQueue'>
+      organizationId: Id<'organizations'>
+      executionId?: Id<'agentExecutions'>
+      agentType: string
+      action: string
+      target?: string
+      actionParams?: Record<string, unknown>
+      riskLevel: 'low' | 'medium' | 'high' | 'critical'
+      status: string
+    } | null = null
+    let actionExecuted = false
+    let actionSucceeded = false
+    let actionExecutionResult: ActionExecutionResult | null = null
+
+    try {
+      queueItem = await ctx.runQuery(internal.approvalQueue.getById, {
+        id: args.approvalId,
+      })
+      if (!queueItem || queueItem.status !== 'approved') {
+        return { status: 'skipped', reason: 'not_approved' }
+      }
+      if (!queueItem.executionId) {
+        return { status: 'skipped', reason: 'missing_execution_id' }
+      }
+
+      const execution = await ctx.runQuery(internal.agentExecutions.getById, {
+        id: queueItem.executionId,
+      })
+      if (!execution) {
+        return { status: 'skipped', reason: 'execution_not_found' }
+      }
+
+      const approvalExecutionResults =
+        execution.results &&
+        typeof execution.results === 'object' &&
+        !Array.isArray(execution.results) &&
+        Array.isArray(
+          (execution.results as { approvalExecutionResults?: unknown[] }).approvalExecutionResults
+        )
+          ? ((execution.results as { approvalExecutionResults: Array<{ approvalId: string }> })
+              .approvalExecutionResults ?? [])
+          : []
+
+      if (approvalExecutionResults.some((entry) => entry.approvalId === String(args.approvalId))) {
+        await ctx.runAction(internal.agentRunner.reconcileExecutionAfterApprovalDecision, {
+          executionId: queueItem.executionId,
+        })
+        return { status: 'skipped', reason: 'already_recorded' }
+      }
+
+      const claim = await ctx.runMutation(internal.approvalQueue.claimApprovedForExecution, {
+        id: args.approvalId,
+      })
+      if (!claim || claim.claimed !== true) {
+        return { status: 'skipped', reason: 'already_claimed_or_processed' }
+      }
+
+      const actionParams = queueItem.actionParams ?? {}
+      const executionResult = await executeApprovedQueueAction(ctx, {
+        organizationId: queueItem.organizationId,
+        agentType: queueItem.agentType,
+        action: queueItem.action,
+        target: queueItem.target,
+        params: actionParams,
+      })
+      actionExecuted = true
+      actionExecutionResult = executionResult
+      actionSucceeded = executionResult.success
+
+      if (!executionResult.success && executionResult.retryable) {
+        const retryState = await ctx.runMutation(
+          internal.approvalQueue.recordExecutionAttemptFailure,
+          {
+            id: args.approvalId,
+          }
+        )
+        if (retryState.shouldRetry) {
+          await ctx.scheduler.runAfter(
+            retryState.retryDelayMs,
+            internal.agentRunner.executeApprovedQueueItem,
+            {
+              approvalId: args.approvalId,
+            }
+          )
+          return { status: 'skipped', reason: 'execution_retry_scheduled' }
+        }
+      }
+
+      if (executionResult.success) {
+        const processedState = await ctx.runMutation(internal.approvalQueue.markApprovedProcessed, {
+          id: args.approvalId,
+        })
+        if (!processedState.updated) {
+          await ctx.runAction(internal.agentRunner.reconcileExecutionAfterApprovalDecision, {
+            executionId: queueItem.executionId,
+          })
+          return { status: 'skipped', reason: 'already_processed' }
+        }
+        try {
+          await ctx.runMutation(internal.agentRunner.recordApprovalExecutionResult, {
+            executionId: queueItem.executionId,
+            approvalId: args.approvalId,
+            action: queueItem.action,
+            target: queueItem.target,
+            riskLevel: queueItem.riskLevel,
+            success: executionResult.success,
+            message: executionResult.message,
+          })
+        } catch (recordError) {
+          console.error('[AgentRunner] Failed to persist approval execution result:', {
+            approvalId: String(args.approvalId),
+            executionId: String(queueItem.executionId),
+            error: recordError instanceof Error ? recordError.message : 'Unknown',
+          })
+        }
+      } else {
+        await ctx.runMutation(internal.agentRunner.recordApprovalExecutionResult, {
+          executionId: queueItem.executionId,
+          approvalId: args.approvalId,
+          action: queueItem.action,
+          target: queueItem.target,
+          riskLevel: queueItem.riskLevel,
+          success: executionResult.success,
+          message: executionResult.message,
+        })
+
+        await ctx.runMutation(internal.approvalQueue.markApprovedProcessed, {
+          id: args.approvalId,
+        })
+      }
+
+      await ctx.runAction(internal.agentRunner.reconcileExecutionAfterApprovalDecision, {
+        executionId: queueItem.executionId,
+      })
+
+      return { status: 'executed' }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown'
+      console.error('[AgentRunner] Failed to execute approved queue item:', {
+        approvalId: String(args.approvalId),
+        error: errorMessage,
+      })
+
+      if (queueItem?.executionId && queueItem.status === 'approved') {
+        if (actionExecuted && actionSucceeded) {
+          try {
+            await ctx.runAction(internal.agentRunner.reconcileExecutionAfterApprovalDecision, {
+              executionId: queueItem.executionId,
+            })
+          } catch (reconcileError) {
+            console.error('[AgentRunner] Failed to reconcile after finalize error:', {
+              approvalId: String(args.approvalId),
+              executionId: String(queueItem.executionId),
+              error: reconcileError instanceof Error ? reconcileError.message : 'Unknown',
+            })
+          }
+          return { status: 'skipped', reason: 'post_execution_finalize_failed' }
+        }
+
+        try {
+          const canRetryExecution = !actionExecuted || actionExecutionResult?.retryable === true
+          if (canRetryExecution) {
+            const retryState = await ctx.runMutation(
+              internal.approvalQueue.recordExecutionAttemptFailure,
+              {
+                id: args.approvalId,
+              }
+            )
+            if (retryState.shouldRetry) {
+              await ctx.scheduler.runAfter(
+                retryState.retryDelayMs,
+                internal.agentRunner.executeApprovedQueueItem,
+                {
+                  approvalId: args.approvalId,
+                }
+              )
+              return { status: 'skipped', reason: 'execution_retry_scheduled' }
+            }
+          }
+
+          await ctx.runMutation(internal.agentRunner.recordApprovalExecutionResult, {
+            executionId: queueItem.executionId,
+            approvalId: args.approvalId,
+            action: queueItem.action,
+            target: queueItem.target,
+            riskLevel: queueItem.riskLevel,
+            success: false,
+            message: `Execution error: ${errorMessage}`,
+          })
+
+          await ctx.runMutation(internal.approvalQueue.markApprovedProcessed, {
+            id: args.approvalId,
+          })
+
+          await ctx.runAction(internal.agentRunner.reconcileExecutionAfterApprovalDecision, {
+            executionId: queueItem.executionId,
+          })
+        } catch (recoveryError) {
+          console.error('[AgentRunner] Failed to recover from approved queue execution error:', {
+            approvalId: String(args.approvalId),
+            error: recoveryError instanceof Error ? recoveryError.message : 'Unknown',
+          })
+        }
+      }
+      return { status: 'skipped', reason: 'execution_error' }
+    }
+  },
+})
+
+/**
+ * Reconcile an agent execution after all its approval items have been decided.
+ * Checks if any pending items remain; if not, marks the execution accordingly.
+ */
+export const reconcileExecutionAfterApprovalDecision = internalAction({
+  args: {
+    executionId: v.id('agentExecutions'),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const execution = await ctx.runQuery(internal.agentExecutions.getById, {
+      id: args.executionId,
+    })
+    if (!execution || execution.status !== 'awaiting_approval') {
+      return
+    }
+
+    const rawItems = await ctx.runQuery(internal.approvalQueue.listPendingByExecution, {
+      executionId: args.executionId,
+    })
+    const items: Array<{
+      _id?: Id<'approvalQueue'>
+      status: string
+      executionProcessedAt?: number
+    }> = Array.isArray(rawItems) ? rawItems : []
+
+    const hasPending = items.some((item) => item.status === 'pending')
+    if (hasPending) return
+
+    const hasUnprocessedApproved = items.some((item) => {
+      if (item.status !== 'approved') return false
+      return typeof item.executionProcessedAt !== 'number'
+    })
+    if (hasUnprocessedApproved) return
+
+    const existingResults =
+      execution.results &&
+      typeof execution.results === 'object' &&
+      !Array.isArray(execution.results)
+        ? (execution.results as Record<string, unknown>)
+        : {}
+    const approvalExecutionResults = Array.isArray(existingResults.approvalExecutionResults)
+      ? (existingResults.approvalExecutionResults as Array<{
+          approvalId: string
+          success?: boolean
+          message?: string
+        }>)
+      : []
+    const approvedIds = new Set(
+      items.filter((item) => item.status === 'approved' && item._id).map((item) => String(item._id))
+    )
+    const approvalResultIds = new Set(approvalExecutionResults.map((result) => result.approvalId))
+    const missingApprovedResultIds = [...approvedIds].filter(
+      (approvalId) => !approvalResultIds.has(approvalId)
+    )
+    const failedApprovedResults = approvalExecutionResults.filter(
+      (result) => approvedIds.has(result.approvalId) && result.success === false
+    )
+    const hasApprovedExecutionFailures =
+      failedApprovedResults.length > 0 || missingApprovedResultIds.length > 0
+    const failureReasons: string[] = []
+    if (failedApprovedResults.length > 0) {
+      failureReasons.push(
+        ...failedApprovedResults
+          .slice(0, 3)
+          .map((result) => result.message ?? 'Unknown execution error')
+      )
+    }
+    if (missingApprovedResultIds.length > 0) {
+      failureReasons.push(
+        `${missingApprovedResultIds.length} approved action(s) missing execution result metadata`
+      )
+    }
+
+    await ctx.runMutation(internal.agentExecutions.complete, {
+      id: args.executionId,
+      status: hasApprovedExecutionFailures ? 'failed' : 'completed',
+      results: execution.results,
+      actionsPlanned: execution.actionsPlanned ?? 0,
+      actionsExecuted: execution.actionsExecuted ?? 0,
+      actionsSkipped: execution.actionsSkipped ?? 0,
+      error: hasApprovedExecutionFailures
+        ? `${failureReasons.length} approval execution issue(s): ${failureReasons.join('; ')}`
+        : undefined,
+    })
+  },
+})
+
+export const recordApprovalExecutionResult = internalMutation({
+  args: {
+    executionId: v.id('agentExecutions'),
+    approvalId: v.id('approvalQueue'),
+    action: v.string(),
+    target: v.optional(v.string()),
+    riskLevel: v.union(
+      v.literal('low'),
+      v.literal('medium'),
+      v.literal('high'),
+      v.literal('critical')
+    ),
+    success: v.boolean(),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const execution = await ctx.db.get(args.executionId)
+    if (!execution) return
+
+    const existingResults =
+      execution.results &&
+      typeof execution.results === 'object' &&
+      !Array.isArray(execution.results)
+        ? (execution.results as Record<string, unknown>)
+        : {}
+
+    const existingApprovalResults = Array.isArray(existingResults.approvalExecutionResults)
+      ? (existingResults.approvalExecutionResults as Array<{
+          approvalId: string
+          action: string
+          target?: string
+          riskLevel: 'low' | 'medium' | 'high' | 'critical'
+          success: boolean
+          message: string
+          recordedAt: number
+        }>)
+      : []
+
+    const now = Date.now()
+    const nextApprovalResults = [
+      ...existingApprovalResults.filter((result) => result.approvalId !== String(args.approvalId)),
+      {
+        approvalId: String(args.approvalId),
+        action: args.action,
+        target: args.target,
+        riskLevel: args.riskLevel,
+        success: args.success,
+        message: args.message,
+        recordedAt: now,
+      },
+    ]
+
+    await ctx.db.patch(args.executionId, {
+      results: {
+        ...existingResults,
+        approvalExecutionResults: nextApprovalResults,
+      },
+    })
   },
 })
 
