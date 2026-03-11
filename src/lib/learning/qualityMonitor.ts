@@ -1,4 +1,9 @@
-import type { QualityAlert, QualityMetric, QualityMetricName, QualitySnapshot } from '@/types'
+import type {
+  QualityAlert,
+  QualityMetric,
+  QualityMetricName,
+  QualitySnapshot,
+} from '../../types/learning'
 
 const ALERT_DROP_THRESHOLD_PERCENT = 10
 const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000

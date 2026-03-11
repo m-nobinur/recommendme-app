@@ -3,7 +3,7 @@ import type {
   FailureCheckResult,
   FailureLearningResult,
   FailureRecord,
-} from '@/types'
+} from '../../types/learning'
 
 const FAILURE_CATEGORY_KEYWORDS: Record<FailureCategory, readonly string[]> = {
   tool_error: [

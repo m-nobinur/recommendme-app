@@ -19,6 +19,17 @@ export interface AppUser {
 
 export type UserRole = 'owner' | 'admin' | 'member'
 
+// Business Memory types (mirrors src/convex/businessMemories.ts validator unions)
+export type MemoryType =
+  | 'fact'
+  | 'preference'
+  | 'instruction'
+  | 'context'
+  | 'relationship'
+  | 'episodic'
+
+export type MemorySource = 'extraction' | 'explicit' | 'tool' | 'system'
+
 export interface UserSettings {
   aiProvider?: string
   modelTier?: string
@@ -255,21 +266,14 @@ export interface NicheMemory {
   updatedAt: number
 }
 
-export type BusinessMemoryType =
-  | 'fact'
-  | 'preference'
-  | 'instruction'
-  | 'context'
-  | 'relationship'
-  | 'episodic'
-
-export type MemorySource = 'extraction' | 'explicit' | 'tool' | 'system'
+// Alias kept for backward compatibility; canonical type is MemoryType (defined above)
+export type BusinessMemoryType = MemoryType
 
 export interface BusinessMemory {
   _id: Id<'businessMemories'>
   organizationId: Id<'organizations'>
   userId?: string
-  type: BusinessMemoryType
+  type: MemoryType
   content: string
   embedding?: number[]
   subjectType?: string
@@ -410,105 +414,24 @@ export interface ScoreAdjustment {
 }
 
 // ============================================
-// PATTERN DETECTION TYPES
+// PATTERN DETECTION / FAILURE LEARNING / QUALITY MONITORING TYPES
+// Re-exported from src/types/learning.ts (Convex-dependency-free)
 // ============================================
 
-export type PatternType =
-  | 'time_preference'
-  | 'communication_style'
-  | 'decision_speed'
-  | 'price_sensitivity'
-  | 'channel_preference'
-
-export interface DetectedPattern {
-  type: PatternType
-  description: string
-  occurrences: number
-  confidence: number
-  firstSeen: number
-  lastSeen: number
-  autoLearned: boolean
-  evidence: string[]
-}
-
-export interface PatternDetectionConfig {
-  minOccurrences: number
-  timeWindowMs: number
-  confidenceThreshold: number
-  autoLearnConfidence: number
-  autoLearnMinOccurrences: number
-}
-
-export interface PatternDetectionResult {
-  patterns: DetectedPattern[]
-  newPatterns: number
-  reinforcedPatterns: number
-  totalEventsAnalyzed: number
-}
-
-// ============================================
-// FAILURE LEARNING TYPES
-// ============================================
-
-export type FailureCategory = 'tool_error' | 'misunderstanding' | 'wrong_action' | 'incomplete_info'
-
-export interface FailureRecord {
-  category: FailureCategory
-  description: string
-  context: string
-  correction?: string
-  timestamp: number
-  agentType: string
-  preventionRule?: string
-}
-
-export interface FailureLearningResult {
-  failuresRecorded: number
-  correctionsApplied: number
-  preventionRulesCreated: number
-}
-
-export interface FailureCheckResult {
-  hasRelevantFailures: boolean
-  failures: FailureRecord[]
-  preventionAdvice: string[]
-}
-
-// ============================================
-// QUALITY MONITORING TYPES
-// ============================================
-
-export type QualityMetricName =
-  | 'relevance'
-  | 'accuracy'
-  | 'freshness'
-  | 'retrieval_precision'
-  | 'recall'
-
-export interface QualityMetric {
-  name: QualityMetricName
-  value: number
-  previousValue: number
-  delta: number
-  timestamp: number
-}
-
-export interface QualitySnapshot {
-  organizationId: string
-  metrics: QualityMetric[]
-  overallScore: number
-  alertTriggered: boolean
-  alertReason?: string
-  timestamp: number
-}
-
-export interface QualityAlert {
-  metric: QualityMetricName
-  currentValue: number
-  previousValue: number
-  dropPercent: number
-  timestamp: number
-}
+export type {
+  DetectedPattern,
+  FailureCategory,
+  FailureCheckResult,
+  FailureLearningResult,
+  FailureRecord,
+  PatternDetectionConfig,
+  PatternDetectionResult,
+  PatternType,
+  QualityAlert,
+  QualityMetric,
+  QualityMetricName,
+  QualitySnapshot,
+} from './learning'
 
 export interface Notification {
   id: string

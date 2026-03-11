@@ -3,7 +3,7 @@ import type {
   PatternDetectionConfig,
   PatternDetectionResult,
   PatternType,
-} from '@/types'
+} from '../../types/learning'
 
 const DEFAULT_CONFIG: PatternDetectionConfig = {
   minOccurrences: 5,
