@@ -1,12 +1,11 @@
 'use client'
 
-import type { Id } from '@convex/_generated/dataModel'
 import { ChevronDown, ChevronUp, Eye, X } from 'lucide-react'
 import { memo, useState } from 'react'
 import { cn } from '@/lib/utils/cn'
 
 interface RetrievedMemory {
-  id: Id<'businessMemories'>
+  id: string
   content: string
   type: string
   score: number

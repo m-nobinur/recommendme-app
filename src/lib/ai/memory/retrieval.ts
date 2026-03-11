@@ -34,6 +34,28 @@ import type { RawSearchResults } from './scoring'
 import { scoreAndRank } from './scoring'
 import { allocateTokenBudget } from './tokenBudget'
 
+/** Maximum number of memory entries surfaced to the ContextInspector. */
+const INSPECTOR_MAX_MEMORIES = 50
+
+/**
+ * A single memory entry surfaced to the ContextInspector UI.
+ * Intentionally lightweight — only the fields the panel needs to render.
+ */
+export interface InspectorMemory {
+  id: string
+  content: string
+  type: string
+  layer: string
+  score: number
+  included: boolean
+}
+
+export interface InspectorData {
+  memories: InspectorMemory[]
+  tokenBudget: number
+  tokensUsed: number
+}
+
 export interface RetrievalResult {
   context: string
   memoriesUsed: number
@@ -46,6 +68,8 @@ export interface RetrievalResult {
     business: number
     agent: number
   }
+  /** Populated only when NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR === 'true'. */
+  inspectorData?: InspectorData
 }
 
 export interface RetrievalParams {
@@ -326,6 +350,55 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
 
   const latencyMs = Math.round(performance.now() - startTime)
 
+  let inspectorData: InspectorData | undefined
+  if (process.env.NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR === 'true') {
+    // Use the memoryIds already computed by formatContext to mark included memories.
+    const includedIds = new Set<string>(formatted.memoryIds)
+
+    const allScored: InspectorMemory[] = [
+      ...scored.platform.map((m) => ({
+        id: m.document._id as string,
+        content: m.document.content,
+        type: m.document.category as string,
+        layer: 'platform',
+        score: m.compositeScore,
+        included: includedIds.has(m.document._id as string),
+      })),
+      ...scored.niche.map((m) => ({
+        id: m.document._id as string,
+        content: m.document.content,
+        type: m.document.category,
+        layer: 'niche',
+        score: m.compositeScore,
+        included: includedIds.has(m.document._id as string),
+      })),
+      ...scored.business.map((m) => ({
+        id: m.document._id as string,
+        content: m.document.content,
+        type: m.document.type,
+        layer: 'business',
+        score: m.compositeScore,
+        included: includedIds.has(m.document._id as string),
+      })),
+      ...scored.agent.map((m) => ({
+        id: m.document._id as string,
+        content: m.document.content,
+        type: m.document.category,
+        layer: 'agent',
+        score: m.compositeScore,
+        included: includedIds.has(m.document._id as string),
+      })),
+    ]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, INSPECTOR_MAX_MEMORIES)
+
+    inspectorData = {
+      memories: allScored,
+      tokenBudget: 4000,
+      tokensUsed: formatted.tokenCount,
+    }
+  }
+
   const result = {
     context: formatted.text,
     memoriesUsed: formatted.memoriesUsed,
@@ -338,6 +411,7 @@ export async function retrieveMemoryContext(params: RetrievalParams): Promise<Re
       business: selected.business.length,
       agent: selected.agent.length,
     },
+    inspectorData,
   }
 
   if (cacheEnabled) {

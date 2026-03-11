@@ -3,7 +3,7 @@
 > **Comprehensive phased implementation plan for the Unified Memory Architecture**
 > Document Version: 2.0 | Created: February 8, 2026 | Updated: March 11, 2026
 > Branch: `feat/feedback-collection-11a`
-> **Current Status: Phase 12 PARTIAL (12.8 sidebar CRM wiring + memory stats complete; ContextInspector gap remaining)**
+> **Current Status: Phase 12 COMPLETE — all Memory UI & Admin Dashboard features implemented and validated**
 
 ---
 
@@ -66,7 +66,7 @@
 | **Guardrails** | **PARTIAL (Phase 9a core done)** | Risk assessment + action guardrails + approval queue/audit logging implemented; remaining Phase 9 work includes input validation/rate limiting/PII workflows |
 | **Tracing** | **DONE (Phase 10a+10b)** | TraceContext + span helpers, Convex `traces`/`llmUsage`, budget-aware chat routing, cache-friendly prompt/context ordering, optional Langfuse sync |
 | **Feedback Collection** | **DONE (Phase 11.1)** | Thumbs up/down UI, feedback API with auth/rate-limiting, implicit signal detection (rephrase/completion/follow-up/tool-retry), memory score adjustment via extraction pipeline |
-| **Memory UI** | PARTIAL | Core memory/admin dashboards implemented; sidebar CRM wired (12.8), memory stats server-side (12.8); ContextInspector not yet mounted |
+| **Memory UI** | COMPLETE | All memory/admin dashboards implemented; sidebar CRM wired (12.8); ContextInspector live-wired (12.9) |
 
 ### Blocking Dependencies
 
@@ -178,7 +178,7 @@ Phase 8: Worker Architecture ────────── (4-5 days)   ── 
 Phase 9: Guardrails & Security ──────── (4-5 days)   ── SECURITY      [~]
 Phase 10a: Observability Foundation ──── (4-5 days)   ── OPERATIONS    [COMPLETE]
 Phase 11: Improvement & Learning ────── (3-4 days)   ── INTELLIGENCE  [COMPLETE]
-Phase 12: Memory UI & Dashboard ─────── (4-5 days)   ── UI/UX         [PARTIAL]
+Phase 12: Memory UI & Dashboard ─────── (4-5 days)   ── UI/UX         [COMPLETE]
                                          ─────────
                                          ~48-57 days total
 ```
@@ -2148,6 +2148,32 @@ Build the frontend components for memory inspection, management, and system heal
 
 **Remaining Phase 12 gap:**
 - `ContextInspector` is not mounted in any view (requires chat route integration and shared retrieval state)
+
+---
+
+### 12.9 ContextInspector Live Wiring — COMPLETE (March 11, 2026)
+
+**Objective:** Wire the fully-built `ContextInspector` component with real retrieval data so it shows which memories were included/dropped in every AI response.
+
+**Completed:**
+- Added `InspectorMemory` and `InspectorData` interfaces to `src/lib/ai/memory/retrieval.ts`
+- Added optional `inspectorData` field to `RetrievalResult` (backward-compatible)
+- Built `inspectorData` inside `retrieveMemoryContext` using already-computed `scored` and `formatted.memoryIds`; env-gated by `NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR === 'true'`; capped at 50 memories
+- Added `messageMetadata` callback to `result.toUIMessageStreamResponse({...})` in `src/app/api/chat/route.ts`; emits `{ retrievalTrace: inspectorData }` on `finish` part with zero extra cost and zero schema changes
+- Widened `RetrievedMemory.id` from `Id<'businessMemories'>` to `string` in `ContextInspector.tsx` (id is used only as React key)
+- Imported `ContextInspector` and `InspectorData` in `ChatContainer.tsx`
+- Added `isInspectorData()` runtime guard and `lastAssistantTrace` memo (scans messages in reverse for `metadata.retrievalTrace`)
+- Mounted `<ContextInspector>` conditionally when `lastAssistantTrace` is non-null
+
+**Transport:** Vercel AI SDK v6 `messageMetadata` callback on `toUIMessageStreamResponse` — zero extra HTTP calls, zero schema changes, emitted per-message on `finish` part type.
+
+**Validation:**
+- `bun run check:all` passes (typecheck + lint)
+- Added script: `scripts/test-phase12-context-inspector.sh` (17 checks, all green)
+
+---
+
+**Phase 12 is now COMPLETE.**
 
 ---
 

@@ -8,9 +8,11 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ChatInput from '@/components/chat/ChatInput'
 import MessageBubble from '@/components/chat/MessageBubble'
 import TypingIndicator from '@/components/chat/TypingIndicator'
+import { ContextInspector } from '@/components/memory/ContextInspector'
 import { IconButton } from '@/components/ui/IconButton'
 import { Logo } from '@/components/ui/Logo'
 import { useHeader } from '@/contexts/HeaderContext'
+import type { InspectorData } from '@/lib/ai/memory/retrieval'
 import { API, UI, Z_INDEX } from '@/lib/constants'
 import { useChatStore, useModelStore } from '@/stores'
 import type { FeedbackRating, MessagePart } from '@/types'
@@ -91,6 +93,16 @@ function extractTextFromParts(parts: Array<{ type?: string; text?: string }> | u
     })
     .filter(Boolean)
     .join('')
+}
+
+function isInspectorData(value: unknown): value is InspectorData {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    Array.isArray(v.memories) &&
+    typeof v.tokenBudget === 'number' &&
+    typeof v.tokensUsed === 'number'
+  )
 }
 
 type ViewState = 'hydrating' | 'loading_history' | 'ready'
@@ -457,6 +469,18 @@ export function ChatContainer() {
 
   const errorMessage = error?.message
 
+  const lastAssistantTrace = useMemo<InspectorData | undefined>(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role !== 'assistant') continue
+      const meta = m.metadata as Record<string, unknown> | undefined
+      if (!meta) continue
+      const trace = (meta as { retrievalTrace?: unknown }).retrievalTrace
+      if (isInspectorData(trace)) return trace
+    }
+    return undefined
+  }, [messages])
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       <div
@@ -549,6 +573,15 @@ export function ChatContainer() {
           <ChatInput onSend={handleSend} disabled={false} isLoading={isLoading} />
         </div>
       </div>
+
+      {/* Context Inspector — dev-only, fixed-position overlay */}
+      {lastAssistantTrace && (
+        <ContextInspector
+          memories={lastAssistantTrace.memories}
+          tokenBudget={lastAssistantTrace.tokenBudget}
+          tokensUsed={lastAssistantTrace.tokensUsed}
+        />
+      )}
     </div>
   )
 }

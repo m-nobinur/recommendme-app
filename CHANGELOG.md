@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 12.9 ContextInspector Live Wiring — Phase 12 COMPLETE)
+
+- `InspectorMemory` and `InspectorData` interfaces exported from `src/lib/ai/memory/retrieval.ts`
+- Optional `inspectorData` field on `RetrievalResult`; built inside `retrieveMemoryContext` using already-computed `scored` arrays and `formatted.memoryIds`; env-gated by `NEXT_PUBLIC_SHOW_CONTEXT_INSPECTOR === 'true'`; capped at 50 memories sorted by composite score
+- `messageMetadata` callback on `result.toUIMessageStreamResponse()` in `src/app/api/chat/route.ts`; emits `{ retrievalTrace: inspectorData }` on `finish` part — zero extra HTTP calls, zero schema changes
+- `isInspectorData()` runtime type guard in `ChatContainer.tsx` for safe metadata narrowing
+- `lastAssistantTrace` memo in `ChatContainer` that scans `messages` in reverse to find the most recent assistant `metadata.retrievalTrace`
+- `<ContextInspector>` conditionally mounted in `ChatContainer` with live `memories`, `tokenBudget`, and `tokensUsed` from the retrieval trace
+- New validation script: `scripts/test-phase12-context-inspector.sh` (17 static + TypeScript checks)
+
+### Changed (Phase 12.9)
+
+- `RetrievedMemory.id` in `src/components/memory/ContextInspector.tsx` widened from `Id<'businessMemories'>` to `string` (id is used only as a React key; Convex import removed)
+- `ContextInspector` now receives real retrieval data instead of empty/stub props
+
 ### Added (Phase 12.8 Sidebar CRM Wiring & Memory Stats)
 
 - Sidebar CRM tabs (Leads/Schedule/Invoices) now display live Convex data via `useQuery` in `DashboardShell`

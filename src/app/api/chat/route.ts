@@ -831,6 +831,12 @@ export async function POST(req: Request) {
 
       return result.toUIMessageStreamResponse({
         originalMessages: messages,
+        messageMetadata: ({ part }) => {
+          if (part.type !== 'finish') return undefined
+          const trace = memoryResult?.inspectorData
+          if (!trace) return undefined
+          return { retrievalTrace: trace }
+        },
         onFinish: ({ responseMessage, finishReason }) => {
           clearTimeout(timeout)
           const latencyMs = Date.now() - requestStartTime
