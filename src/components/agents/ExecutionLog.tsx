@@ -51,7 +51,16 @@ const STATUS_STYLES: Record<ExecutionStatus, string> = {
   skipped: 'bg-surface-elevated text-text-muted',
 }
 
-const AGENT_TYPES = ['all', 'memory', 'lead', 'crm', 'followup'] as const
+const AGENT_TYPES = [
+  'all',
+  'memory',
+  'lead',
+  'crm',
+  'followup',
+  'reminder',
+  'invoice',
+  'sales',
+] as const
 const STATUS_FILTERS = ['all', 'completed', 'failed', 'awaiting_approval'] as const
 
 function durationMs(row: ExecutionRow): string {

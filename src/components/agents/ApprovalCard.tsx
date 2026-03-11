@@ -4,7 +4,7 @@ import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { useMutation } from 'convex/react'
 import { AlertTriangle, Check, Clock, X } from 'lucide-react'
-import { memo, useCallback, useState } from 'react'
+import { memo, useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils/cn'
 
@@ -54,7 +54,12 @@ const STATUS_STYLES: Record<string, string> = {
 }
 
 function useCountdown(expiresAt: number): string {
-  const remaining = Math.max(0, expiresAt - Date.now())
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const remaining = Math.max(0, expiresAt - now)
   const hours = Math.floor(remaining / 3_600_000)
   const minutes = Math.floor((remaining % 3_600_000) / 60_000)
   if (remaining === 0) return 'Expired'

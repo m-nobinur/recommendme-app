@@ -4,7 +4,7 @@ import { api } from '@convex/_generated/api'
 import type { Id } from '@convex/_generated/dataModel'
 import { useQuery } from 'convex/react'
 import { CheckCircle, Clock, XCircle } from 'lucide-react'
-import { memo, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { cn } from '@/lib/utils/cn'
 import type { ApprovalQueueRow } from './ApprovalCard'
@@ -52,7 +52,13 @@ export const ApprovalQueue = memo(function ApprovalQueue({
   className,
 }: ApprovalQueueProps) {
   const [activeTab, setActiveTab] = useState<Tab>('pending')
-  const now = Date.now()
+
+  // Reactive now — refreshes every 30s so listPending re-filters expired items
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
 
   const pending = useQuery(api.approvalQueue.listPending, {
     userId,
