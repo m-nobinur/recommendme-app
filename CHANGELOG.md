@@ -30,35 +30,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dedup against both active and pending platform memories (threshold: 0.90)
 - Weekly cron on Sunday at 07:00 UTC
 
+#### Communication Worker (8.7) — `src/convex/communicationWorker.ts`
+- Outbound communication queue with `communicationQueue` schema table (3 indexes)
+- Pluggable channel adapters: email (Resend — scaffolded), SMS (Twilio — scaffolded), in-app (working)
+- Message lifecycle: pending → sending → sent/failed/skipped with retry logic (default 3 retries)
+- `enqueue` mutation for agents/system to queue messages; `processQueue` action for cron-driven delivery
+- Graceful degradation: marks messages as 'skipped' when delivery provider is not configured
+- Public `listByOrg` and `getStats` queries for dashboard integration
+- Cron: every 5 minutes
+
 #### Analytics Worker (8.8) — `src/convex/analyticsWorker.ts`
 - Pre-computes daily analytics snapshots per organization for fast dashboard reads
 - 6 stat categories computed in parallel: leads, appointments, invoices, memory, AI usage, agent executions
 - Idempotent upsert: re-running for same org+date updates existing snapshot
 - New `dailyAnalytics` schema table with `by_org_date` and `by_org_created` indexes
+- Public `getLatestSnapshot` and `getRecentSnapshots` queries for dashboard consumption
 
-#### Shared Infrastructure — `src/convex/lib/vectorMath.ts`
-- Extracted `cosineSimilarity` utility shared across all 3 aggregation workers (DRY)
+#### Shared Infrastructure
+- `src/convex/lib/clusterBuilder.ts` — Generic Union-Find `buildEmbeddingClusters()` + `dominantValue()` shared across all aggregation workers
+- `src/convex/lib/orgHelpers.ts` — Shared `listAllOrganizationIds()` eliminates duplication across 3 workers
+- `src/convex/lib/vectorMath.ts` — `cosineSimilarity` utility shared across all aggregation workers
+
+#### Unit Tests (19 tests, 2 files)
+- `src/convex/lib/vectorMath.test.ts` — 8 tests: identity, orthogonal, opposite, mismatched/empty/zero vectors, high-dim, commutativity
+- `src/convex/lib/clusterBuilder.test.ts` — 11 tests: empty, single, identical, orthogonal, two-cluster, minClusterSize, transitive clustering, dominantValue edge cases
+
+#### Dashboard Integration
+- `MemoryAnalytics` component now reads from `dailyAnalytics` snapshot with automatic fallback to live `businessMemories.getStats` query
 
 #### Schema Changes
-- Added `dailyAnalytics` table to `src/convex/schema.ts` for pre-computed analytics
+- Added `dailyAnalytics` table for pre-computed analytics snapshots
+- Added `communicationQueue` table for outbound message queue
 
-#### Cron Additions (4 new entries in `src/convex/crons.ts`)
+#### Cron Additions (5 new entries in `src/convex/crons.ts`)
 - `memory consolidation` — daily 08:30 UTC
 - `niche pattern aggregation` — daily 09:00 UTC
 - `platform pattern aggregation` — weekly Sunday 07:00 UTC
 - `daily analytics snapshot` — daily 06:00 UTC
+- `communication queue processing` — every 5 minutes
 
 #### Documentation
 - `docs/CRON_REFERENCE.md` — comprehensive cron schedule reference with configuration guide
-- `docs/DEVELOPMENT_PLAN.md` updated to v3.0 with Phase 8 completion, Phase 7/9 status fixes
+- `docs/DEVELOPMENT_PLAN.md` updated to v3.0 with full Phase 8 completion
 - `docs/PHASE_8_PLAN_AND_AUDIT.md` updated with implementation completion status
 
 ### Changed (Phase 8)
 
-- `src/convex/crons.ts` header comment updated to document all 22 cron jobs
-- `docs/DEVELOPMENT_PLAN.md` Technology Decisions table updated: LangGraph → Convex-native agent pipeline
-- `docs/DEVELOPMENT_PLAN.md` Phase Overview markers fixed: Phase 7 `[ ]` → `[COMPLETE]`, Phase 8 → `[COMPLETE]`, Phase 9 → `[COMPLETE]`
-- `docs/DEVELOPMENT_PLAN.md` dependency schedule updated: LangGraph marked deferred, recharts marked installed
+- `src/convex/crons.ts` header comment updated to document all 23 cron jobs
+- `src/convex/memoryConsolidation.ts` refactored: inline Union-Find → shared `clusterBuilder`, inline `listAllOrganizationIds` → shared `orgHelpers`, inline type resolution → `dominantValue`
+- `src/convex/nicheAggregation.ts` refactored: inline Union-Find → shared `clusterBuilder`, inline type resolution → `dominantValue`
+- `src/convex/platformAggregation.ts` refactored: inline Union-Find → shared `clusterBuilder`, inline category resolution → `dominantValue`
+- `src/convex/analyticsWorker.ts` refactored: removed inline `listAllOrganizationIds`, removed `as any` casts in `saveDailySnapshot` call
+- `src/components/analytics/MemoryAnalytics.tsx` reads from pre-computed `dailyAnalytics` snapshot with live fallback
 
 ### Fixed (Phase 8)
 

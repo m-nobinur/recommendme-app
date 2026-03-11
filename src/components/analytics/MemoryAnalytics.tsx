@@ -45,7 +45,28 @@ const DECAY_BANDS = [
 export const MemoryAnalytics = memo(function MemoryAnalytics({
   organizationId,
 }: MemoryAnalyticsProps) {
-  const stats = useQuery(api.businessMemories.getStats, { organizationId })
+  const snapshot = useQuery(api.analyticsWorker.getLatestSnapshot, { organizationId })
+  const liveStats = useQuery(
+    api.businessMemories.getStats,
+    snapshot === null ? { organizationId } : 'skip'
+  )
+
+  const stats = useMemo(() => {
+    if (snapshot?.memory) {
+      return {
+        total: snapshot.memory.totalActive + snapshot.memory.totalArchived,
+        totalActive: snapshot.memory.totalActive,
+        totalArchived: snapshot.memory.totalArchived,
+        avgDecay: Math.round(snapshot.memory.avgDecayScore * 100),
+        typeCounts: (snapshot.memory.byType ?? {}) as Record<string, number>,
+        decayBands: {} as Record<string, number>,
+        capped: false,
+        source: 'snapshot' as const,
+      }
+    }
+    if (liveStats) return { ...liveStats, source: 'live' as const }
+    return undefined
+  }, [snapshot, liveStats])
 
   const typeChartData = useMemo(
     () =>
@@ -102,9 +123,14 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
         <StatCard label="Archived" value={totalArchived} centered />
         <StatCard label="Avg Decay" value={`${avgDecay}%`} centered />
       </div>
-      {stats.capped && (
+      {stats.source === 'live' && stats.capped && (
         <p className="text-xs text-text-secondary">
           Stats aggregated from the most recent 500 active + 200 archived memories.
+        </p>
+      )}
+      {stats.source === 'snapshot' && (
+        <p className="text-xs text-text-secondary">
+          Pre-computed daily snapshot. Decay bands require live data.
         </p>
       )}
 

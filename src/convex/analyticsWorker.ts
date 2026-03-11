@@ -1,8 +1,9 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
-import type { Id } from './_generated/dataModel'
-import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { internalAction, internalMutation, internalQuery, query } from './_generated/server'
+import { assertAuthenticatedUserInOrganization } from './lib/auth'
 import { isCronDisabled } from './lib/cronGuard'
+import { listAllOrganizationIds } from './lib/orgHelpers'
 
 /**
  * Analytics Worker (Phase 8.8)
@@ -22,7 +23,6 @@ import { isCronDisabled } from './lib/cronGuard'
  * Schedule: daily at 06:00 UTC
  */
 
-const ORG_PAGE_SIZE = 100
 const QUERY_CAP = 1000
 
 export const computeLeadStats = internalQuery({
@@ -249,25 +249,6 @@ export const saveDailySnapshot = internalMutation({
   },
 })
 
-async function listAllOrganizationIds(ctx: {
-  runQuery: (...args: any[]) => Promise<any>
-}): Promise<Id<'organizations'>[]> {
-  const orgIds: Id<'organizations'>[] = []
-  let cursor: string | null = null
-
-  do {
-    const page = await ctx.runQuery(internal.memoryDecay.listOrganizations, {
-      paginationOpts: { numItems: ORG_PAGE_SIZE, cursor },
-    })
-    for (const org of page.page) {
-      orgIds.push(org._id as Id<'organizations'>)
-    }
-    cursor = page.isDone ? null : page.continueCursor
-  } while (cursor)
-
-  return orgIds
-}
-
 export const runDailyAnalytics = internalAction({
   args: {},
   handler: async (ctx): Promise<{ orgsProcessed: number }> => {
@@ -310,12 +291,27 @@ export const runDailyAnalytics = internalAction({
         await ctx.runMutation(internal.analyticsWorker.saveDailySnapshot, {
           organizationId: orgId,
           date: todayDate,
-          leads: leads as any,
-          appointments: appointments as any,
-          invoices: invoices as any,
-          memory: memory as any,
-          aiUsage: aiUsage as any,
-          agents: agents as any,
+          leads: { total: leads.total, byStatus: leads.byStatus, totalValue: leads.totalValue },
+          appointments: { total: appointments.total, byStatus: appointments.byStatus },
+          invoices: {
+            total: invoices.total,
+            byStatus: invoices.byStatus,
+            totalRevenue: invoices.totalRevenue,
+            paidRevenue: invoices.paidRevenue,
+          },
+          memory: {
+            totalActive: memory.totalActive,
+            totalArchived: memory.totalArchived,
+            byType: memory.byType,
+            avgDecayScore: memory.avgDecayScore,
+          },
+          aiUsage: {
+            callCount: aiUsage.callCount,
+            totalTokens: aiUsage.totalTokens,
+            totalCostUsd: aiUsage.totalCostUsd,
+            byPurpose: aiUsage.byPurpose,
+          },
+          agents: { totalExecutions: agents.totalExecutions, byAgent: agents.byAgent },
         })
 
         orgsProcessed++
@@ -332,5 +328,31 @@ export const runDailyAnalytics = internalAction({
     }
 
     return { orgsProcessed }
+  },
+})
+
+export const getLatestSnapshot = query({
+  args: { organizationId: v.id('organizations') },
+  handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
+    return await ctx.db
+      .query('dailyAnalytics')
+      .withIndex('by_org_date', (q) => q.eq('organizationId', args.organizationId))
+      .order('desc')
+      .first()
+  },
+})
+
+export const getRecentSnapshots = query({
+  args: { organizationId: v.id('organizations'), days: v.number() },
+  handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
+    return await ctx.db
+      .query('dailyAnalytics')
+      .withIndex('by_org_created', (q) => q.eq('organizationId', args.organizationId))
+      .order('desc')
+      .take(args.days)
   },
 })

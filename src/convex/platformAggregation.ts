@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { buildEmbeddingClusters, dominantValue } from './lib/clusterBuilder'
 import { isCronDisabled } from './lib/cronGuard'
 import { cosineSimilarity } from './lib/vectorMath'
 import { callLLMWithUsage, resolveLLMProvider } from './llmProvider'
@@ -158,47 +159,10 @@ export const createPlatformCandidate = internalMutation({
 })
 
 function buildPlatformClusters(memories: NicheMemoryWithEmbedding[]): PlatformCluster[] {
-  const parent = new Map<string, string>()
-
-  function find(id: string): string {
-    let root = id
-    while (parent.get(root) !== root) root = parent.get(root) ?? root
-    let current = id
-    while (current !== root) {
-      const next = parent.get(current) ?? current
-      parent.set(current, root)
-      current = next
-    }
-    return root
-  }
-
-  function union(a: string, b: string) {
-    const ra = find(a)
-    const rb = find(b)
-    if (ra !== rb) parent.set(ra, rb)
-  }
-
-  for (const m of memories) parent.set(m._id, m._id)
-
-  for (let i = 0; i < memories.length; i++) {
-    for (let j = i + 1; j < memories.length; j++) {
-      const sim = cosineSimilarity(memories[i].embedding, memories[j].embedding)
-      if (sim >= SIMILARITY_THRESHOLD) {
-        union(memories[i]._id, memories[j]._id)
-      }
-    }
-  }
-
-  const groups = new Map<string, NicheMemoryWithEmbedding[]>()
-  for (const m of memories) {
-    const root = find(m._id)
-    const group = groups.get(root) ?? []
-    group.push(m)
-    groups.set(root, group)
-  }
+  const rawClusters = buildEmbeddingClusters(memories, SIMILARITY_THRESHOLD, 1)
 
   const clusters: PlatformCluster[] = []
-  for (const group of groups.values()) {
+  for (const group of rawClusters) {
     const distinctNiches = new Set(group.map((m) => m.nicheId))
     const avgConfidence = group.reduce((sum, m) => sum + m.confidence, 0) / group.length
     const totalContributors = group.reduce((sum, m) => sum + m.contributorCount, 0)
@@ -309,21 +273,10 @@ Respond with JSON: { "content": "the universal best practice" }`
 
         if (isDuplicate) continue
 
-        const categoryCounts = new Map<string, number>()
-        for (const m of cluster.memories) {
-          categoryCounts.set(m.category, (categoryCounts.get(m.category) ?? 0) + 1)
-        }
-        let dominantCategory = 'pattern'
-        let maxCount = 0
-        for (const [cat, count] of categoryCounts) {
-          if (count > maxCount) {
-            dominantCategory = cat
-            maxCount = count
-          }
-        }
+        const resolvedCategory = dominantValue(cluster.memories, (m) => m.category, 'pattern')
 
         await ctx.runMutation(internal.platformAggregation.createPlatformCandidate, {
-          category: mapToPlatformCategory(dominantCategory),
+          category: mapToPlatformCategory(resolvedCategory),
           content,
           confidence: cluster.avgConfidence,
           sourceCount: cluster.totalContributors,

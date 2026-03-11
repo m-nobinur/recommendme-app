@@ -1,9 +1,10 @@
 import { v } from 'convex/values'
 import { internal } from './_generated/api'
-import type { Doc, Id } from './_generated/dataModel'
+import type { Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
+import { buildEmbeddingClusters, dominantValue } from './lib/clusterBuilder'
 import { isCronDisabled } from './lib/cronGuard'
-import { cosineSimilarity } from './lib/vectorMath'
+import { listAllOrganizationIds } from './lib/orgHelpers'
 import { callLLMWithUsage, type ResolvedLLMProvider, resolveLLMProvider } from './llmProvider'
 
 /**
@@ -26,7 +27,6 @@ const MAX_MEMORIES_PER_ORG = 200
 const MAX_MERGES_PER_ORG = 20
 const MAX_MERGES_PER_RUN = 50
 const MIN_CLUSTER_SIZE = 2
-const ORG_PAGE_SIZE = 100
 
 interface MemoryWithEmbedding {
   _id: Id<'businessMemories'>
@@ -38,56 +38,6 @@ interface MemoryWithEmbedding {
   accessCount: number
   subjectType?: string
   subjectId?: string
-}
-
-type Cluster = MemoryWithEmbedding[]
-
-/**
- * Union-Find for efficient cluster building.
- */
-function buildClusters(memories: MemoryWithEmbedding[]): Cluster[] {
-  const parent = new Map<string, string>()
-
-  function find(id: string): string {
-    let root = id
-    while (parent.get(root) !== root) {
-      root = parent.get(root) ?? root
-    }
-    let current = id
-    while (current !== root) {
-      const next = parent.get(current) ?? current
-      parent.set(current, root)
-      current = next
-    }
-    return root
-  }
-
-  function union(a: string, b: string) {
-    const ra = find(a)
-    const rb = find(b)
-    if (ra !== rb) parent.set(ra, rb)
-  }
-
-  for (const m of memories) parent.set(m._id, m._id)
-
-  for (let i = 0; i < memories.length; i++) {
-    for (let j = i + 1; j < memories.length; j++) {
-      const sim = cosineSimilarity(memories[i].embedding, memories[j].embedding)
-      if (sim >= SIMILARITY_THRESHOLD) {
-        union(memories[i]._id, memories[j]._id)
-      }
-    }
-  }
-
-  const groups = new Map<string, MemoryWithEmbedding[]>()
-  for (const m of memories) {
-    const root = find(m._id)
-    const group = groups.get(root) ?? []
-    group.push(m)
-    groups.set(root, group)
-  }
-
-  return Array.from(groups.values()).filter((g) => g.length >= MIN_CLUSTER_SIZE)
 }
 
 export const getConsolidationCandidates = internalQuery({
@@ -207,25 +157,6 @@ Respond with JSON: { "content": "the consolidated memory text" }`
   return content
 }
 
-async function listAllOrganizationIds(ctx: {
-  runQuery: (...args: any[]) => Promise<any>
-}): Promise<Id<'organizations'>[]> {
-  const orgIds: Id<'organizations'>[] = []
-  let cursor: string | null = null
-
-  do {
-    const page = await ctx.runQuery(internal.memoryDecay.listOrganizations, {
-      paginationOpts: { numItems: ORG_PAGE_SIZE, cursor },
-    })
-    for (const org of page.page) {
-      orgIds.push(org._id as Id<'organizations'>)
-    }
-    cursor = page.isDone ? null : page.continueCursor
-  } while (cursor)
-
-  return orgIds
-}
-
 /**
  * Main consolidation entry point. Runs daily via cron.
  */
@@ -256,7 +187,7 @@ export const runConsolidation = internalAction({
 
       if (candidates.length < MIN_CLUSTER_SIZE) continue
 
-      const clusters = buildClusters(candidates)
+      const clusters = buildEmbeddingClusters(candidates, SIMILARITY_THRESHOLD, MIN_CLUSTER_SIZE)
       let orgMerges = 0
 
       for (const cluster of clusters) {
@@ -265,24 +196,11 @@ export const runConsolidation = internalAction({
         try {
           const content = await summarizeCluster(provider, cluster)
 
-          const typeCounts = new Map<string, number>()
-          let totalImportance = 0
           let totalConfidence = 0
           let totalAccess = 0
           for (const m of cluster) {
-            typeCounts.set(m.type, (typeCounts.get(m.type) ?? 0) + 1)
-            totalImportance += m.importance
             totalConfidence += m.confidence
             totalAccess += m.accessCount
-          }
-
-          let dominantType = 'fact'
-          let maxCount = 0
-          for (const [type, count] of typeCounts) {
-            if (count > maxCount) {
-              dominantType = type
-              maxCount = count
-            }
           }
 
           const validTypes = [
@@ -293,30 +211,19 @@ export const runConsolidation = internalAction({
             'relationship',
             'episodic',
           ] as const
-          const resolvedType = validTypes.includes(dominantType as any)
-            ? (dominantType as (typeof validTypes)[number])
+          const rawType = dominantValue(cluster, (m) => m.type, 'fact')
+          const resolvedType = validTypes.includes(rawType as any)
+            ? (rawType as (typeof validTypes)[number])
             : 'fact'
 
-          const subjectCounts = new Map<string, number>()
-          for (const m of cluster) {
-            if (m.subjectType && m.subjectId) {
-              const key = `${m.subjectType}::${m.subjectId}`
-              subjectCounts.set(key, (subjectCounts.get(key) ?? 0) + 1)
-            }
-          }
-          let resolvedSubjectType: string | undefined
-          let resolvedSubjectId: string | undefined
-          if (subjectCounts.size > 0) {
-            let maxSubjectCount = 0
-            for (const [key, count] of subjectCounts) {
-              if (count > maxSubjectCount) {
-                maxSubjectCount = count
-                const [st, si] = key.split('::')
-                resolvedSubjectType = st
-                resolvedSubjectId = si
-              }
-            }
-          }
+          const withSubjects = cluster.filter((m) => m.subjectType && m.subjectId)
+          const subjectKey =
+            withSubjects.length > 0
+              ? dominantValue(withSubjects, (m) => `${m.subjectType}::${m.subjectId}`, '')
+              : ''
+          const [resolvedSubjectType, resolvedSubjectId] = subjectKey
+            ? subjectKey.split('::')
+            : [undefined, undefined]
 
           await ctx.runMutation(internal.memoryConsolidation.mergeCluster, {
             organizationId: orgId,

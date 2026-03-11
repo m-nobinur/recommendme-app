@@ -25,6 +25,7 @@ import { internal } from './_generated/api'
  *   - Niche aggregation:       daily 9:00 UTC (business → niche pattern promotion)
  *   - Platform aggregation:    weekly Sun 7:00 UTC (niche → platform promotion)
  *   - Daily analytics:         daily 6:00 UTC (pre-computed analytics snapshots)
+ *   - Communication queue:     every 5 min (outbound email/SMS/in-app delivery)
  *   - Pattern detection:       every 6 hours (cross-conversation pattern accumulation)
  *   - Failure learning:        every 2 hours (failure analysis and prevention rule creation)
  *   - Quality monitor:         daily 07:00 UTC (memory quality snapshots)
@@ -109,6 +110,13 @@ crons.daily(
   'daily analytics snapshot',
   { hourUTC: 6, minuteUTC: 0 },
   internal.analyticsWorker.runDailyAnalytics,
+  {}
+)
+
+crons.interval(
+  'communication queue processing',
+  { minutes: 5 },
+  internal.communicationWorker.processQueue,
   {}
 )
 

@@ -848,6 +848,47 @@ export default defineSchema({
     .index('by_org_date', ['organizationId', 'date'])
     .index('by_org_created', ['organizationId', 'createdAt']),
 
+  // ============================================
+  // COMMUNICATION: Outbound Message Queue (Phase 8.7)
+  // Queue for agent-generated communications (email/SMS/in-app)
+  // Delivery adapters pluggable: Resend (email), Twilio (SMS), in-app
+  // ============================================
+  communicationQueue: defineTable({
+    organizationId: v.id('organizations'),
+    channel: v.union(v.literal('email'), v.literal('sms'), v.literal('in_app')),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('sending'),
+      v.literal('sent'),
+      v.literal('failed'),
+      v.literal('skipped')
+    ),
+    recipientType: v.union(v.literal('lead'), v.literal('user')),
+    recipientId: v.string(),
+    recipientAddress: v.optional(v.string()),
+    subject: v.optional(v.string()),
+    body: v.string(),
+    sourceType: v.union(
+      v.literal('agent_followup'),
+      v.literal('agent_reminder'),
+      v.literal('agent_invoice'),
+      v.literal('agent_sales'),
+      v.literal('system')
+    ),
+    sourceExecutionId: v.optional(v.id('agentExecutions')),
+    priority: v.union(v.literal('low'), v.literal('normal'), v.literal('high')),
+    scheduledAt: v.optional(v.number()),
+    sentAt: v.optional(v.number()),
+    error: v.optional(v.string()),
+    retryCount: v.number(),
+    maxRetries: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_org_status', ['organizationId', 'status'])
+    .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_status_scheduled', ['status', 'scheduledAt']),
+
   memoryEventDeadLetters: defineTable({
     organizationId: v.id('organizations'),
     eventId: v.id('memoryEvents'),
