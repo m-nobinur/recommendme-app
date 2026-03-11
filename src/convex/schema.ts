@@ -726,6 +726,63 @@ export default defineSchema({
     .index('by_org_model_created', ['organizationId', 'model', 'createdAt'])
     .index('by_created', ['createdAt']),
 
+  // ============================================
+  // LEARNING: Detected Patterns (Phase 11.2)
+  // Tracks recurring behavioural patterns per org
+  // ============================================
+  detectedPatterns: defineTable({
+    organizationId: v.id('organizations'),
+    patternType: v.union(
+      v.literal('time_preference'),
+      v.literal('communication_style'),
+      v.literal('decision_speed'),
+      v.literal('price_sensitivity'),
+      v.literal('channel_preference')
+    ),
+    description: v.string(),
+    confidence: v.float64(),
+    occurrenceCount: v.number(),
+    firstSeenAt: v.number(),
+    lastSeenAt: v.number(),
+    autoLearned: v.boolean(),
+    evidence: v.array(v.string()),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_org_type', ['organizationId', 'patternType'])
+    .index('by_org_active', ['organizationId', 'isActive']),
+
+  // ============================================
+  // LEARNING: Quality Snapshots (Phase 11.4)
+  // Periodic memory quality metric snapshots
+  // ============================================
+  qualitySnapshots: defineTable({
+    organizationId: v.id('organizations'),
+    overallScore: v.float64(),
+    metrics: v.array(
+      v.object({
+        name: v.string(),
+        value: v.float64(),
+        previousValue: v.float64(),
+        delta: v.float64(),
+        timestamp: v.number(),
+      })
+    ),
+    alerts: v.array(
+      v.object({
+        metric: v.string(),
+        currentValue: v.float64(),
+        previousValue: v.float64(),
+        dropPercent: v.float64(),
+        timestamp: v.number(),
+      })
+    ),
+    alertTriggered: v.boolean(),
+    alertReason: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index('by_org_created', ['organizationId', 'createdAt']),
+
   memoryEventDeadLetters: defineTable({
     organizationId: v.id('organizations'),
     eventId: v.id('memoryEvents'),

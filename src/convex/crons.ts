@@ -14,17 +14,20 @@ import { internal } from './_generated/api'
  *     npx convex env unset DISABLE_CRONS
  *
  * Schedule (production):
- *   - Memory extraction:   every 30 min (LLM-based knowledge extraction)
- *   - Decay score update:  every 4 hours (Ebbinghaus decay recalculation)
- *   - Memory archival:     daily 8:00 UTC (archive decayed memories)
- *   - Memory compression:  daily 8:15 UTC (compress archived groups)
- *   - Memory cleanup:      weekly Sun 8:00 UTC (purge expired, hard-delete, orphan cleanup)
- *   - Lifecycle health:    every 12 hours (backlog/sanity checks)
- *   - Stuck recovery:      every 30 min (reset stuck events)
- *   - Followup agent:      daily 14:00 UTC
- *   - Reminder agent:      daily 09:00 UTC
- *   - Invoice agent:       daily 10:00 UTC
- *   - Sales funnel agent:  daily 11:00 UTC
+ *   - Memory extraction:       every 30 min (LLM-based knowledge extraction)
+ *   - Decay score update:      every 4 hours (Ebbinghaus decay recalculation)
+ *   - Memory archival:         daily 8:00 UTC (archive decayed memories)
+ *   - Memory compression:      daily 8:15 UTC (compress archived groups)
+ *   - Memory cleanup:          weekly Sun 8:00 UTC (purge expired, hard-delete, orphan cleanup)
+ *   - Lifecycle health:        every 12 hours (backlog/sanity checks)
+ *   - Stuck recovery:          every 30 min (reset stuck events)
+ *   - Pattern detection:       every 6 hours (cross-conversation pattern accumulation)
+ *   - Failure learning:        every 2 hours (failure analysis and prevention rule creation)
+ *   - Quality monitor:         daily 07:00 UTC (memory quality snapshots)
+ *   - Followup agent:          daily 14:00 UTC
+ *   - Reminder agent:          daily 09:00 UTC
+ *   - Invoice agent:           daily 10:00 UTC
+ *   - Sales funnel agent:      daily 11:00 UTC
  */
 
 const crons = cronJobs()
@@ -142,8 +145,22 @@ crons.daily(
 )
 
 // ============================================
-// LEARNING: Memory Quality Monitoring
+// LEARNING: Pattern Detection, Failure Learning, Quality Monitoring
 // ============================================
+
+crons.interval(
+  'pattern detection pipeline',
+  { hours: 6 },
+  internal.learningPipeline.runPatternDetectionBatch,
+  {}
+)
+
+crons.interval(
+  'failure learning pipeline',
+  { hours: 2 },
+  internal.learningPipeline.runFailureLearningBatch,
+  {}
+)
 
 crons.daily(
   'memory quality monitor',

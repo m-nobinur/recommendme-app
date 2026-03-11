@@ -6,6 +6,7 @@ import {
   patternToMemoryContent,
   shouldAutoLearn,
 } from '../lib/learning/patternDetection'
+import type { DetectedPattern } from '../types/learning'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
@@ -1209,7 +1210,9 @@ async function processConversationEnd(
           eventsAnalyzed: detectionResult.totalEventsAnalyzed,
           newPatterns: detectionResult.newPatterns,
           reinforcedPatterns: detectionResult.reinforcedPatterns,
-          autoLearnedPatterns: detectionResult.patterns.filter((p) => p.autoLearned).length,
+          autoLearnedPatterns: detectionResult.patterns.filter(
+            (p: DetectedPattern) => p.autoLearned
+          ).length,
           organizationId: String(event.organizationId),
         })
       }
@@ -1727,6 +1730,16 @@ export const processExtractionBatch = internalAction({
         durationMs: Date.now() - batchStartMs,
         provider: provider.name,
       })
+    }
+
+    // Phase 11: Schedule learning pipeline after extraction so pattern
+    // detection and failure learning process freshly extracted data.
+    if (totalProcessed > 0) {
+      try {
+        await ctx.runMutation(internal.learningPipeline.scheduleLearningAfterExtraction, {})
+      } catch {
+        // Non-critical: learning pipeline scheduling failure must not affect extraction.
+      }
     }
 
     return {

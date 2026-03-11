@@ -629,18 +629,6 @@ export const getById = internalQuery({
 })
 
 /**
- * Get approval item by ID — alias used by executeApprovedQueueItem.
- */
-export const getApproval = internalQuery({
-  args: {
-    id: v.id('approvalQueue'),
-  },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.id)
-  },
-})
-
-/**
  * Get all approval items for a given execution (all statuses).
  * Used by reconcileExecutionAfterApprovalDecision to determine
  * whether all approvals are resolved.

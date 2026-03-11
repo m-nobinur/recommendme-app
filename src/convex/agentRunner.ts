@@ -70,6 +70,38 @@ const MAX_SALES_HIGH_VALUE = 1_000_000
 
 import { estimateCost } from '../lib/cost/pricing'
 
+/**
+ * Build a failure prevention suffix for the system prompt by extracting
+ * relevant past failures from agent memories. Returns an empty string if
+ * no actionable failure context is found.
+ */
+function buildFailurePreventionPrompt(
+  agentMemories: Array<{ category: string; content: string }>,
+  agentType: string
+): string {
+  const failureMemories = agentMemories.filter((m) => m.category === 'failure')
+  if (failureMemories.length === 0) return ''
+
+  const pastFailures = failureMemories.map(
+    (m) =>
+      createFailureRecord(m.content, agentType, agentType) ?? {
+        category: 'tool_error' as const,
+        description: m.content.slice(0, 200),
+        context: agentType,
+        timestamp: Date.now(),
+        agentType,
+        preventionRule: undefined,
+        correction: undefined,
+      }
+  )
+
+  const failureCheck = checkForRelevantFailures(agentType, pastFailures)
+  const context = formatPreventionContext(failureCheck)
+  if (!context) return ''
+
+  return `\n\n## Known Issues to Avoid\n${context}`
+}
+
 type PlannedAction = {
   type: string
   target: string
@@ -658,9 +690,10 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
+        const failureSuffix = buildFailurePreventionPrompt(agentMemories, 'reminder')
         const llmResult = await callLLMWithUsage(
           provider,
-          REMINDER_SYSTEM_PROMPT,
+          REMINDER_SYSTEM_PROMPT + failureSuffix,
           userPrompt,
           0.1,
           2500
@@ -768,9 +801,10 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
+        const failureSuffix = buildFailurePreventionPrompt(agentMemories, 'invoice')
         const llmResult = await callLLMWithUsage(
           provider,
-          INVOICE_SYSTEM_PROMPT,
+          INVOICE_SYSTEM_PROMPT + failureSuffix,
           userPrompt,
           0.1,
           2500
@@ -894,9 +928,10 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
+        const failureSuffix = buildFailurePreventionPrompt(agentMemories, 'sales')
         const llmResult = await callLLMWithUsage(
           provider,
-          SALES_SYSTEM_PROMPT,
+          SALES_SYSTEM_PROMPT + failureSuffix,
           userPrompt,
           0.1,
           3000
@@ -958,9 +993,10 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
+        const failureSuffix = buildFailurePreventionPrompt(agentMemories, 'followup')
         const llmResult = await callLLMWithUsage(
           provider,
-          FOLLOWUP_SYSTEM_PROMPT,
+          FOLLOWUP_SYSTEM_PROMPT + failureSuffix,
           userPrompt,
           0.1,
           2500

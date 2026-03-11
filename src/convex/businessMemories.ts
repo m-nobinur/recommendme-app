@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
+import { assertAuthenticatedUserInOrganization } from './lib/auth'
 import { applyMemoryLayerPiiPolicy, validateBusinessMemoryInput } from './memoryValidation'
 
 /**
@@ -104,6 +105,8 @@ export const create = mutation({
     expiresAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const contentPolicy = applyMemoryLayerPiiPolicy(args.content, 'business')
     validateBusinessMemoryInput({
       content: contentPolicy.content,
@@ -155,6 +158,7 @@ export const get = query({
     organizationId: v.id('organizations'),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
     const memory = await ctx.db.get(args.id)
     if (!memory || memory.organizationId !== args.organizationId) {
       return null
@@ -177,6 +181,8 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const pageSize = Math.min(args.limit ?? 50, 100)
     const activeOnly = args.activeOnly ?? true
     const includeArchived = args.includeArchived ?? false
@@ -274,6 +280,8 @@ export const update = mutation({
     expiresAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const { id, organizationId, ...updates } = args
     const existing = await ctx.db.get(id)
 
@@ -359,6 +367,8 @@ export const softDelete = mutation({
     organizationId: v.id('organizations'),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const existing = await ctx.db.get(args.id)
     if (!existing || existing.organizationId !== args.organizationId) {
       throw new Error('Business memory not found or access denied')
@@ -382,6 +392,8 @@ export const archive = mutation({
     organizationId: v.id('organizations'),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const existing = await ctx.db.get(args.id)
     if (!existing || existing.organizationId !== args.organizationId) {
       throw new Error('Business memory not found or access denied')

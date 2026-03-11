@@ -1,11 +1,14 @@
 import { v } from 'convex/values'
 import {
+  checkForAlerts,
   createQualitySnapshot,
   formatQualityReport,
   type MemoryStats,
   type RetrievalStats,
 } from '../lib/learning/qualityMonitor'
+import type { QualityAlert, QualityMetric } from '../types/learning'
 import { internal } from './_generated/api'
+import type { Doc } from './_generated/dataModel'
 import { internalAction, internalQuery } from './_generated/server'
 import { isCronDisabled } from './lib/cronGuard'
 
@@ -14,8 +17,8 @@ import { isCronDisabled } from './lib/cronGuard'
  *
  * Scheduled daily action that computes memory quality metrics for every active
  * organisation, surfaces alerts when a metric drops >10% from its previous
- * value, and writes a structured audit log entry so dashboards (Phase 12) can
- * render trend data.
+ * value, persists snapshots for trend tracking, and writes a structured audit
+ * log entry so dashboards (Phase 12) can render trend data.
  *
  * Metrics computed (see qualityMonitor.ts for weights):
  *   relevance (0.30) · accuracy (0.25) · freshness (0.20)
@@ -158,11 +161,50 @@ export const runQualityMonitorCheck = internalAction({
           emptyResultCount: 0,
         }
 
-        // No previous metrics to compare against in this initial pass —
-        // the snapshot will record a baseline (delta = 0 for all metrics).
-        const snapshot = createQualitySnapshot(orgId, memoryStats, retrievalStats, [])
+        // Load previous snapshot for delta comparison.
+        const prevSnapshot: Doc<'qualitySnapshots'> | null = await ctx.runQuery(
+          internal.learningPipeline.getPreviousQualitySnapshot,
+          { organizationId: orgId as any }
+        )
+        const previousMetrics = prevSnapshot
+          ? prevSnapshot.metrics.map((m) => ({
+              name: m.name as any,
+              value: m.value,
+              previousValue: m.previousValue,
+              delta: m.delta,
+              timestamp: m.timestamp,
+            }))
+          : []
 
+        const snapshot = createQualitySnapshot(orgId, memoryStats, retrievalStats, previousMetrics)
         const report = formatQualityReport(snapshot)
+
+        // Persist the snapshot for trend tracking in Phase 12 dashboard.
+        try {
+          const alerts = checkForAlerts(snapshot.metrics)
+          await ctx.runMutation(internal.learningPipeline.insertQualitySnapshot, {
+            organizationId: orgId as any,
+            overallScore: snapshot.overallScore,
+            metrics: snapshot.metrics.map((m: QualityMetric) => ({
+              name: m.name,
+              value: m.value,
+              previousValue: m.previousValue,
+              delta: m.delta,
+              timestamp: m.timestamp,
+            })),
+            alerts: alerts.map((a: QualityAlert) => ({
+              metric: a.metric,
+              currentValue: a.currentValue,
+              previousValue: a.previousValue,
+              dropPercent: a.dropPercent,
+              timestamp: a.timestamp,
+            })),
+            alertTriggered: snapshot.alertTriggered,
+            alertReason: snapshot.alertReason,
+          })
+        } catch {
+          // Non-critical: snapshot persistence failure must not block the run.
+        }
 
         if (snapshot.alertTriggered) {
           alertsTriggered++
@@ -172,7 +214,6 @@ export const runQualityMonitorCheck = internalAction({
             alertReason: snapshot.alertReason,
           })
 
-          // Write to audit log so the Phase 12 dashboard can surface alerts.
           await ctx.runMutation(internal.auditLogs.append, {
             organizationId: orgId as any,
             actorType: 'system' as const,
@@ -181,7 +222,7 @@ export const runQualityMonitorCheck = internalAction({
             details: {
               overallScore: snapshot.overallScore,
               alertReason: snapshot.alertReason,
-              metrics: snapshot.metrics.map((m) => ({
+              metrics: snapshot.metrics.map((m: QualityMetric) => ({
                 name: m.name,
                 value: m.value,
                 delta: m.delta,
@@ -190,7 +231,6 @@ export const runQualityMonitorCheck = internalAction({
             riskLevel: 'medium' as const,
           })
         } else if (memoryStats.totalActive > 0) {
-          // Emit a low-risk info audit entry for trend tracking.
           await ctx.runMutation(internal.auditLogs.append, {
             organizationId: orgId as any,
             actorType: 'system' as const,
@@ -199,7 +239,10 @@ export const runQualityMonitorCheck = internalAction({
             details: {
               overallScore: snapshot.overallScore,
               totalActive: memoryStats.totalActive,
-              metrics: snapshot.metrics.map((m) => ({ name: m.name, value: m.value })),
+              metrics: snapshot.metrics.map((m: QualityMetric) => ({
+                name: m.name,
+                value: m.value,
+              })),
             },
             riskLevel: 'low' as const,
           })
