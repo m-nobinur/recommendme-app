@@ -162,6 +162,14 @@ export const STORAGE_KEYS = {
   THEME: 'reme-theme',
   SIDEBAR_STATE: 'reme-sidebar-state',
   CHAT_STATE: 'reme-chat-state',
+  DEV_MODE: 'reme-dev-mode',
+} as const
+
+// === Cookie Names ===
+export const COOKIES = {
+  DEV_AUTH_MODE: 'reme-auth-mode',
+  SESSION: 'better-auth.session_token',
+  SESSION_SECURE: '__Secure-better-auth.session_token',
 } as const
 
 // === Z-Index Layers ===

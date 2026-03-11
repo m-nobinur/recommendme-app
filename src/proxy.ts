@@ -1,47 +1,45 @@
 import { type NextRequest, NextResponse } from 'next/server'
-import { ROUTES } from '@/lib/constants'
+import { COOKIES, ROUTES } from '@/lib/constants'
 
-// Routes that require authentication
-const protectedRoutes = [ROUTES.CHAT, ROUTES.SETTINGS]
+const PROTECTED_ROUTES = [ROUTES.CHAT, ROUTES.MEMORY, ROUTES.SETTINGS]
+const AUTH_ROUTES = [ROUTES.LOGIN, ROUTES.REGISTER]
 
-// Routes that should redirect to /chat if already authenticated
-const authRoutes = [ROUTES.LOGIN, ROUTES.REGISTER]
+function hasSessionToken(request: NextRequest): boolean {
+  return !!(
+    request.cookies.get(COOKIES.SESSION)?.value ||
+    request.cookies.get(COOKIES.SESSION_SECURE)?.value
+  )
+}
 
 export default function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   const isDev = process.env.NODE_ENV === 'development'
-  const authDisabled = isDev && process.env.DISABLE_AUTH_IN_DEV === 'true'
+  const authEnvDisabled = isDev && process.env.DISABLE_AUTH_IN_DEV === 'true'
 
-  if (authDisabled) {
-    if (pathname === '/') {
-      console.log('🔓 [DEV MODE] Authentication disabled - all routes accessible')
+  if (authEnvDisabled) {
+    const devAuthMode = request.cookies.get(COOKIES.DEV_AUTH_MODE)?.value ?? 'dev'
+    if (devAuthMode === 'dev') {
+      return NextResponse.next()
     }
-    return NextResponse.next()
   }
 
-  const sessionToken =
-    request.cookies.get('better-auth.session_token')?.value ||
-    request.cookies.get('__Secure-better-auth.session_token')?.value
+  const isAuthenticated = hasSessionToken(request)
 
-  const isAuthenticated = !!sessionToken
-
-  const isProtectedRoute = protectedRoutes.some(
+  const isProtectedRoute = PROTECTED_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   )
 
-  const isAuthRoute = authRoutes.some(
+  const isAuthRoute = AUTH_ROUTES.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`)
   )
 
-  // Redirect unauthenticated users to login
   if (isProtectedRoute && !isAuthenticated) {
     const loginUrl = new URL(ROUTES.LOGIN, request.url)
     loginUrl.searchParams.set('callbackUrl', pathname)
     return NextResponse.redirect(loginUrl)
   }
 
-  // Redirect authenticated users to chat
   if (isAuthRoute && isAuthenticated) {
     return NextResponse.redirect(new URL(ROUTES.CHAT, request.url))
   }
@@ -51,14 +49,6 @@ export default function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - api (API routes)
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico, sitemap.xml, robots.txt (metadata files)
-     * - public folder files
-     */
-    '/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|.*\\..*).*)',
+    '/((?!api|_next/static|_next/image|favicon\\.ico|sitemap\\.xml|robots\\.txt|.*\\..*).*)',
   ],
 }

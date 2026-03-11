@@ -169,16 +169,16 @@ function MessageBubbleComponent({
               <p className="text-text-primary">{content}</p>
             )}
           </div>
-        </div>
 
-        {/* Feedback buttons */}
-        {isAi && onFeedback && (
-          <FeedbackButtons
-            feedbackState={feedbackState ?? null}
-            onThumbsUp={handleThumbsUp}
-            onThumbsDown={handleThumbsDown}
-          />
-        )}
+          {/* Feedback anchored inside bubble bottom-right */}
+          {isAi && onFeedback && (
+            <FeedbackButtons
+              feedbackState={feedbackState ?? null}
+              onThumbsUp={handleThumbsUp}
+              onThumbsDown={handleThumbsDown}
+            />
+          )}
+        </div>
 
         {/* Follow-up suggestions */}
         {isAi && (isLastAssistantMessage || suggestions.length > 0) && (
@@ -216,37 +216,37 @@ const FeedbackButtons = memo(function FeedbackButtons({
   const hasRated = feedbackState !== null
   return (
     <div
-      className={`mt-1.5 ml-1 flex items-center gap-1 transition-opacity duration-200 ${hasRated ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+      className={`relative flex items-center justify-end gap-0.5 px-3 pb-2 -mt-1 transition-opacity duration-200 ${hasRated ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
     >
       <button
         type="button"
         onClick={onThumbsUp}
         disabled={hasRated}
         aria-label="Good response"
-        className={`inline-flex items-center justify-center rounded-md p-1.5 transition-all duration-150 ${
+        className={`inline-flex items-center justify-center rounded-md p-1 transition-all duration-150 ${
           feedbackState === 'up'
-            ? 'text-amber-500 scale-110'
+            ? 'text-amber-500'
             : hasRated
               ? 'text-text-disabled cursor-default'
-              : 'text-text-muted hover:text-amber-500 hover:bg-surface-tertiary cursor-pointer'
+              : 'text-text-muted/50 hover:text-amber-500 cursor-pointer'
         }`}
       >
-        <ThumbsUp size={14} strokeWidth={feedbackState === 'up' ? 2.5 : 1.5} />
+        <ThumbsUp size={13} strokeWidth={feedbackState === 'up' ? 2.5 : 1.5} />
       </button>
       <button
         type="button"
         onClick={onThumbsDown}
         disabled={hasRated}
         aria-label="Poor response"
-        className={`inline-flex items-center justify-center rounded-md p-1.5 transition-all duration-150 ${
+        className={`inline-flex items-center justify-center rounded-md p-1 transition-all duration-150 ${
           feedbackState === 'down'
-            ? 'text-red-400 scale-110'
+            ? 'text-red-400'
             : hasRated
               ? 'text-text-disabled cursor-default'
-              : 'text-text-muted hover:text-red-400 hover:bg-surface-tertiary cursor-pointer'
+              : 'text-text-muted/50 hover:text-red-400 cursor-pointer'
         }`}
       >
-        <ThumbsDown size={14} strokeWidth={feedbackState === 'down' ? 2.5 : 1.5} />
+        <ThumbsDown size={13} strokeWidth={feedbackState === 'down' ? 2.5 : 1.5} />
       </button>
     </div>
   )
@@ -266,7 +266,7 @@ const SuggestionsArea = memo(function SuggestionsArea({
   onSuggestionClick,
 }: SuggestionsAreaProps) {
   return (
-    <div className="mt-3 min-h-9 relative">
+    <div className="mt-2 min-h-9 relative">
       <div
         className={`flex gap-2 overflow-hidden ml-1 transition-opacity duration-300 ${
           isLoading ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'

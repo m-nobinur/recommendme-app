@@ -11,6 +11,7 @@ import { DashboardView } from '@/components/dashboard/DashboardView'
 import { useHeader } from '@/contexts'
 import { signOut } from '@/lib/auth/client'
 import { ROUTES, UI, Z_INDEX } from '@/lib/constants'
+import { useDevModeStore } from '@/stores'
 import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, Notification, User } from '@/types'
 
 interface DashboardShellProps {
@@ -33,6 +34,10 @@ export function DashboardShell({
   const approvalNotificationIdsRef = useRef<Set<string>>(new Set())
   const [nowMs, setNowMs] = useState(() => Date.now())
 
+  const isDev = process.env.NODE_ENV === 'development'
+  const { authMode } = useDevModeStore()
+  const isDevMode = isDev && authMode === 'dev'
+
   useEffect(() => {
     if (sidebarOpen && !sidebarDataActivated) {
       setSidebarDataActivated(true)
@@ -40,9 +45,13 @@ export function DashboardShell({
   }, [sidebarOpen, sidebarDataActivated])
 
   const authUser = useQuery(api.auth.getCurrentUser)
+  const needsDevFallback = isDevMode && !authUser
+  const devAppUser = useQuery(api.appUsers.getDevAppUser, needsDevFallback ? {} : 'skip')
+  const resolvedAuthId = authUser?._id ?? (isDevMode ? devAppUser?.authUserId : undefined)
+
   const appUser = useQuery(
     api.appUsers.getAppUserByAuthId,
-    authUser?._id ? { authUserId: authUser._id } : 'skip'
+    resolvedAuthId ? { authUserId: resolvedAuthId } : 'skip'
   )
 
   useEffect(() => {

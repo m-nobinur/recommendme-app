@@ -2,8 +2,10 @@ import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { Suspense } from 'react'
+import { DevModeBanner } from '@/components/dashboard/DevModeBanner'
 import { getServerSession } from '@/lib/auth/server'
 import { ROUTES } from '@/lib/constants'
+import { isAuthDisabledInDev } from '@/lib/env'
 import { DashboardShell } from './components/DashboardShell'
 import { DashboardSkeleton } from './components/DashboardSkeleton'
 
@@ -25,9 +27,14 @@ export default async function DashboardLayout({ children }: DashboardLayoutProps
     redirect(ROUTES.LOGIN)
   }
 
+  const authDisabled = isAuthDisabledInDev()
+
   return (
     <Suspense fallback={<DashboardSkeleton />}>
-      <DashboardShell user={session.user}>{children}</DashboardShell>
+      <DashboardShell user={session.user}>
+        {children}
+        {authDisabled && <DevModeBanner />}
+      </DashboardShell>
     </Suspense>
   )
 }

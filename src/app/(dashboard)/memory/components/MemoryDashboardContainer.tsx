@@ -11,6 +11,7 @@ import { MemoryAnalytics } from '@/components/analytics/MemoryAnalytics'
 import { MemoryViewer } from '@/components/memory/MemoryViewer'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { cn } from '@/lib/utils/cn'
+import { useDevModeStore } from '@/stores'
 
 type ActiveTab = 'memory' | 'agents' | 'analytics'
 
@@ -39,17 +40,31 @@ function DashboardSkeleton() {
 export const MemoryDashboardContainer = memo(function MemoryDashboardContainer() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('memory')
 
+  const isDev = process.env.NODE_ENV === 'development'
+  const { authMode } = useDevModeStore()
+  const isDevMode = isDev && authMode === 'dev'
+
   const authUser = useQuery(api.auth.getCurrentUser)
+  const needsDevFallback = isDevMode && !authUser
+  const devAppUser = useQuery(api.appUsers.getDevAppUser, needsDevFallback ? {} : 'skip')
+  const resolvedAuthId = authUser?._id ?? (isDevMode ? devAppUser?.authUserId : undefined)
+
   const appUser = useQuery(
     api.appUsers.getAppUserByAuthId,
-    authUser?._id ? { authUserId: authUser._id } : 'skip'
+    resolvedAuthId ? { authUserId: resolvedAuthId } : 'skip'
   )
   const organization = useQuery(
     api.organizations.getOrganization,
     appUser ? { id: appUser.organizationId } : 'skip'
   )
 
-  if (authUser === undefined || appUser === undefined || organization === undefined) {
+  const isLoading =
+    authUser === undefined ||
+    (isDevMode && !authUser && devAppUser === undefined) ||
+    (resolvedAuthId && appUser === undefined) ||
+    (appUser && organization === undefined)
+
+  if (isLoading) {
     return <DashboardSkeleton />
   }
 

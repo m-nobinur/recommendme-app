@@ -157,16 +157,23 @@ export const retrieveContext = action({
 
     const hasKeywordHints = args.keywordType || args.keywordSubjectType || args.keywordSubjectId
 
-    const vectorResults = await ctx.runAction(internal.vectorSearch.searchAllLayers, {
-      query: args.query,
-      organizationId: args.organizationId,
-      nicheId: args.nicheId,
-      agentType: args.agentType,
-      platformLimit: args.platformLimit,
-      nicheLimit: args.nicheLimit,
-      businessLimit: args.businessLimit,
-      agentLimit: args.agentLimit,
-    })
+    const vectorResults = await ctx
+      .runAction(internal.vectorSearch.searchAllLayers, {
+        query: args.query,
+        organizationId: args.organizationId,
+        nicheId: args.nicheId,
+        agentType: args.agentType,
+        platformLimit: args.platformLimit,
+        nicheLimit: args.nicheLimit,
+        businessLimit: args.businessLimit,
+        agentLimit: args.agentLimit,
+      })
+      .catch((error: unknown) => {
+        console.error('[Memory] Embedding/vector search failed:', error)
+        return null
+      })
+
+    if (!vectorResults) return emptyLayerResults()
 
     const hybridBusinessResults = hasKeywordHints
       ? await ctx.runAction(internal.hybridSearch.hybridSearchBusinessMemories, {
@@ -265,17 +272,24 @@ export const retrieveSelectedContext = action({
     const layerSet = new Set(args.layers)
     const hasKeywordHints = args.keywordType || args.keywordSubjectType || args.keywordSubjectId
 
-    const vectorResults = await ctx.runAction(internal.vectorSearch.searchSelectedLayers, {
-      query: args.query,
-      organizationId: args.organizationId,
-      layers: args.layers,
-      nicheId: args.nicheId,
-      agentType: args.agentType,
-      platformLimit: args.platformLimit,
-      nicheLimit: args.nicheLimit,
-      businessLimit: args.businessLimit,
-      agentLimit: args.agentLimit,
-    })
+    const vectorResults = await ctx
+      .runAction(internal.vectorSearch.searchSelectedLayers, {
+        query: args.query,
+        organizationId: args.organizationId,
+        layers: args.layers,
+        nicheId: args.nicheId,
+        agentType: args.agentType,
+        platformLimit: args.platformLimit,
+        nicheLimit: args.nicheLimit,
+        businessLimit: args.businessLimit,
+        agentLimit: args.agentLimit,
+      })
+      .catch((error: unknown) => {
+        console.error('[Memory] Embedding/vector search failed:', error)
+        return null
+      })
+
+    if (!vectorResults) return emptyLayerResults()
 
     const hybridBusinessResults =
       layerSet.has('business') && hasKeywordHints

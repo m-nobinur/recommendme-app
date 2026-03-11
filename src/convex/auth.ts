@@ -222,12 +222,17 @@ export const createAuth = (ctx: GenericCtx<DataModel>) => {
 
 /**
  * Get the current authenticated user
- * Use this in your Convex queries/mutations to check authentication
+ * Returns null when unauthenticated instead of throwing,
+ * so client-side useQuery callers get a safe fallback.
  */
 export const getCurrentUser = query({
   args: {},
   handler: async (ctx) => {
-    return await authComponent.getAuthUser(ctx)
+    try {
+      return await authComponent.getAuthUser(ctx)
+    } catch {
+      return null
+    }
   },
 })
 
