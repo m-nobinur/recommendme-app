@@ -21,6 +21,10 @@ import { internal } from './_generated/api'
  *   - Memory cleanup:          weekly Sun 8:00 UTC (purge expired, hard-delete, orphan cleanup)
  *   - Lifecycle health:        every 12 hours (backlog/sanity checks)
  *   - Stuck recovery:          every 30 min (reset stuck events)
+ *   - Memory consolidation:    daily 8:30 UTC (merge near-duplicate memories)
+ *   - Niche aggregation:       daily 9:00 UTC (business → niche pattern promotion)
+ *   - Platform aggregation:    weekly Sun 7:00 UTC (niche → platform promotion)
+ *   - Daily analytics:         daily 6:00 UTC (pre-computed analytics snapshots)
  *   - Pattern detection:       every 6 hours (cross-conversation pattern accumulation)
  *   - Failure learning:        every 2 hours (failure analysis and prevention rule creation)
  *   - Quality monitor:         daily 07:00 UTC (memory quality snapshots)
@@ -73,6 +77,38 @@ crons.interval(
   'recover stuck processing events',
   { minutes: 30 },
   internal.memoryEvents.recoverStuckProcessingEvents,
+  {}
+)
+
+// ============================================
+// PHASE 8: Worker Architecture & Background Jobs
+// ============================================
+
+crons.daily(
+  'memory consolidation',
+  { hourUTC: 8, minuteUTC: 30 },
+  internal.memoryConsolidation.runConsolidation,
+  {}
+)
+
+crons.daily(
+  'niche pattern aggregation',
+  { hourUTC: 9, minuteUTC: 0 },
+  internal.nicheAggregation.runNicheAggregation,
+  {}
+)
+
+crons.weekly(
+  'platform pattern aggregation',
+  { dayOfWeek: 'sunday', hourUTC: 7, minuteUTC: 0 },
+  internal.platformAggregation.runPlatformAggregation,
+  {}
+)
+
+crons.daily(
+  'daily analytics snapshot',
+  { hourUTC: 6, minuteUTC: 0 },
+  internal.analyticsWorker.runDailyAnalytics,
   {}
 )
 

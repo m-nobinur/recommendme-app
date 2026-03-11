@@ -804,6 +804,50 @@ export default defineSchema({
     createdAt: v.number(),
   }).index('by_org_created', ['organizationId', 'createdAt']),
 
+  // ============================================
+  // ANALYTICS: Daily Pre-computed Snapshots (Phase 8.8)
+  // Stores daily org-level analytics for fast dashboard reads
+  // ============================================
+  dailyAnalytics: defineTable({
+    organizationId: v.id('organizations'),
+    date: v.string(), // YYYY-MM-DD
+    leads: v.object({
+      total: v.number(),
+      byStatus: v.any(),
+      totalValue: v.number(),
+    }),
+    appointments: v.object({
+      total: v.number(),
+      byStatus: v.any(),
+    }),
+    invoices: v.object({
+      total: v.number(),
+      byStatus: v.any(),
+      totalRevenue: v.number(),
+      paidRevenue: v.number(),
+    }),
+    memory: v.object({
+      totalActive: v.number(),
+      totalArchived: v.number(),
+      byType: v.any(),
+      avgDecayScore: v.number(),
+    }),
+    aiUsage: v.object({
+      callCount: v.number(),
+      totalTokens: v.number(),
+      totalCostUsd: v.float64(),
+      byPurpose: v.any(),
+    }),
+    agents: v.object({
+      totalExecutions: v.number(),
+      byAgent: v.any(),
+    }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_org_date', ['organizationId', 'date'])
+    .index('by_org_created', ['organizationId', 'createdAt']),
+
   memoryEventDeadLetters: defineTable({
     organizationId: v.id('organizations'),
     eventId: v.id('memoryEvents'),

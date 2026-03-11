@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 8 — Worker Architecture & Background Jobs)
+
+#### Memory Consolidation Worker (8.4) — `src/convex/memoryConsolidation.ts`
+- Near-duplicate business memory merging via pairwise cosine similarity (threshold: 0.85) with Union-Find clustering
+- LLM-powered summarization of merged clusters into consolidated memory entries
+- Source memories deactivated after merge; consolidated memory gets fresh embedding
+- Safeguards: max 20 merges/org, 50/run; per-cluster error isolation
+- Daily cron at 08:30 UTC (after archival + compression)
+
+#### Niche Aggregation Worker (8.5) — `src/convex/nicheAggregation.ts`
+- Cross-org pattern promotion: when ≥2 orgs in the same niche discover similar patterns, they become shared niche knowledge
+- LLM-powered anonymization strips business-specific names, amounts, dates before promotion
+- Embedding-based dedup against existing niche memories (threshold: 0.88) with upsert semantics
+- Promotion thresholds (MVP): ≥2 distinct orgs, average confidence ≥0.85
+- Daily cron at 09:00 UTC
+
+#### Platform Aggregation Worker (8.6) — `src/convex/platformAggregation.ts`
+- Cross-niche pattern promotion: recurring patterns across ≥2 industries become universal platform knowledge
+- Platform candidates created with `isActive: false` — requires human review via existing approval queue
+- LLM-powered generalization removes industry-specific language
+- Dedup against both active and pending platform memories (threshold: 0.90)
+- Weekly cron on Sunday at 07:00 UTC
+
+#### Analytics Worker (8.8) — `src/convex/analyticsWorker.ts`
+- Pre-computes daily analytics snapshots per organization for fast dashboard reads
+- 6 stat categories computed in parallel: leads, appointments, invoices, memory, AI usage, agent executions
+- Idempotent upsert: re-running for same org+date updates existing snapshot
+- New `dailyAnalytics` schema table with `by_org_date` and `by_org_created` indexes
+
+#### Shared Infrastructure — `src/convex/lib/vectorMath.ts`
+- Extracted `cosineSimilarity` utility shared across all 3 aggregation workers (DRY)
+
+#### Schema Changes
+- Added `dailyAnalytics` table to `src/convex/schema.ts` for pre-computed analytics
+
+#### Cron Additions (4 new entries in `src/convex/crons.ts`)
+- `memory consolidation` — daily 08:30 UTC
+- `niche pattern aggregation` — daily 09:00 UTC
+- `platform pattern aggregation` — weekly Sunday 07:00 UTC
+- `daily analytics snapshot` — daily 06:00 UTC
+
+#### Documentation
+- `docs/CRON_REFERENCE.md` — comprehensive cron schedule reference with configuration guide
+- `docs/DEVELOPMENT_PLAN.md` updated to v3.0 with Phase 8 completion, Phase 7/9 status fixes
+- `docs/PHASE_8_PLAN_AND_AUDIT.md` updated with implementation completion status
+
+### Changed (Phase 8)
+
+- `src/convex/crons.ts` header comment updated to document all 22 cron jobs
+- `docs/DEVELOPMENT_PLAN.md` Technology Decisions table updated: LangGraph → Convex-native agent pipeline
+- `docs/DEVELOPMENT_PLAN.md` Phase Overview markers fixed: Phase 7 `[ ]` → `[COMPLETE]`, Phase 8 → `[COMPLETE]`, Phase 9 → `[COMPLETE]`
+- `docs/DEVELOPMENT_PLAN.md` dependency schedule updated: LangGraph marked deferred, recharts marked installed
+
+### Fixed (Phase 8)
+
+- Cron interval inconsistency in Phase 4 docs: "2 minutes" corrected to "30 minutes" (matches actual implementation)
+
 ### Added (Phase 12.9 ContextInspector Live Wiring — Phase 12 COMPLETE)
 
 - `InspectorMemory` and `InspectorData` interfaces exported from `src/lib/ai/memory/retrieval.ts`
@@ -675,21 +732,23 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-**Phase 12 — Memory UI & Admin Dashboard: COMPLETE**
+**ALL PHASES COMPLETE (0–12)**
 
-Phase 12 deliverables shipped (12.1–12.9):
-- Memory viewer with filtering, search, and health indicators (`MemoryViewer`, `MemoryCard`, `MemoryFilters`)
-- Agent approval queue and execution log (`ApprovalQueue`, `ApprovalCard`, `ExecutionLog`)
-- Analytics dashboards for memory, agents, and cost (`MemoryAnalytics`, `AgentAnalytics`, `CostAnalytics`)
-- Context inspector for retrieval debugging (`ContextInspector` — live-wired in chat with persisted retrieval metadata)
-- Wired dashboard page at `/memory` combining all 11 components
-- Sidebar CRM tabs wired with live Convex data (leads, appointments, invoices)
-- Server-side memory stats aggregation replacing client-side 100-item cap
+All planned development phases are now implemented. Remaining work:
+
+**Deferred items:**
+- Communication worker (Phase 8.7): requires external service accounts (Resend/Twilio), CAN-SPAM compliance, opt-in management
+- Email verification: `requireEmailVerification: false` in `src/convex/auth.ts` (TODO for production)
+- GDPR cascade delete (right-to-be-forgotten)
+- Settings persistence: `SettingsForm.tsx` saves to Zustand only, not Convex
+- Next.js middleware for defense-in-depth auth checking
 
 **Planned features for future releases:**
+- Communication worker with email/SMS via Resend/Twilio
 - Email verification and 2FA for authentication
 - Calendar integrations (Google Calendar, Outlook)
 - Webhook support for external integrations
+- Dashboard migration to pre-computed analytics (dailyAnalytics table)
 
 ---
 
