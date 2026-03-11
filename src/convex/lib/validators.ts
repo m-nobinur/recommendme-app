@@ -16,9 +16,32 @@ export const approvalStatusValues = v.union(
   v.literal('expired')
 )
 
+export const spanTypeValues = v.union(
+  v.literal('api'),
+  v.literal('llm'),
+  v.literal('retrieval'),
+  v.literal('tool'),
+  v.literal('agent'),
+  v.literal('internal')
+)
+
+export const spanStatusValues = v.union(v.literal('ok'), v.literal('error'))
+
+export const llmPurposeValues = v.union(
+  v.literal('chat'),
+  v.literal('extraction'),
+  v.literal('embedding'),
+  v.literal('agent'),
+  v.literal('summary'),
+  v.literal('compression')
+)
+
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
 export type ActorType = 'system' | 'user' | 'agent'
 export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired'
+export type SpanType = 'api' | 'llm' | 'retrieval' | 'tool' | 'agent' | 'internal'
+export type SpanStatus = 'ok' | 'error'
+export type LLMPurpose = 'chat' | 'extraction' | 'embedding' | 'agent' | 'summary' | 'compression'
 
 export function boundedPageSize(
   limit: number | undefined,
