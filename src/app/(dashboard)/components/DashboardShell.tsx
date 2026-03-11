@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader'
 import { DashboardSidebarToggle } from '@/components/dashboard/DashboardSidebarToggle'
 import { DashboardView } from '@/components/dashboard/DashboardView'
@@ -33,6 +33,7 @@ export function DashboardShell({
   const [isSigningOut, setIsSigningOut] = useState(false)
   const [notifications, setNotifications] = useState<Notification[]>(initialNotifications)
   const { isHeaderVisible } = useHeader()
+  const approvalNotificationIdsRef = useRef<Set<string>>(new Set())
 
   const handleSignOut = useCallback(async () => {
     setIsSigningOut(true)
@@ -47,6 +48,60 @@ export function DashboardShell({
 
   const toggleSidebar = useCallback(() => {
     setSidebarOpen((prev) => !prev)
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    const pollApprovals = async () => {
+      try {
+        const res = await fetch('/api/approvals?limit=10')
+        if (!res.ok || !active) return
+        const data = await res.json()
+        if (!active || !Array.isArray(data.notifications)) return
+        const approvalNotifications: Notification[] = data.notifications.map(
+          (item: { _id: string; description?: string; riskLevel: string; createdAt: number }) => ({
+            id: item._id,
+            title: item.description ?? `Pending ${item.riskLevel}-risk approval`,
+            type: 'warning' as const,
+            read: false,
+            time: new Date(item.createdAt).toLocaleString(),
+          })
+        )
+        setNotifications((prev) => {
+          const latestApprovalIds = new Set(
+            approvalNotifications.map((notification) => notification.id)
+          )
+          const previousApprovalIds = approvalNotificationIdsRef.current
+          const byId = new Map(prev.map((notification) => [notification.id, notification]))
+          const syncedApprovalNotifications = approvalNotifications.map((notification) => {
+            const existing = byId.get(notification.id)
+            return existing ? { ...notification, read: existing.read } : notification
+          })
+          const retainedNonApprovalNotifications = prev.filter((notification) => {
+            if (!previousApprovalIds.has(notification.id)) {
+              return true
+            }
+            return latestApprovalIds.has(notification.id)
+          })
+          const retainedIds = new Set(
+            syncedApprovalNotifications.map((notification) => notification.id)
+          )
+          const passthroughNotifications = retainedNonApprovalNotifications.filter(
+            (notification) => !retainedIds.has(notification.id)
+          )
+          approvalNotificationIdsRef.current = latestApprovalIds
+          return [...syncedApprovalNotifications, ...passthroughNotifications]
+        })
+      } catch {
+        // Silently ignore polling failures
+      }
+    }
+    pollApprovals()
+    const interval = setInterval(pollApprovals, 60_000)
+    return () => {
+      active = false
+      clearInterval(interval)
+    }
   }, [])
 
   const handleMarkAllRead = useCallback(() => {

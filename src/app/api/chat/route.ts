@@ -21,6 +21,7 @@ import { getSystemPrompt } from '@/lib/ai/prompts/system'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers'
 import { createAIProvider, isValidProvider, isValidTier } from '@/lib/ai/providers'
 import {
+  createApprovalTools,
   createCRMTools,
   createInvoiceTools,
   createMemoryTools,
@@ -31,6 +32,7 @@ import { generateRequestId } from '@/lib/ai/utils/request-id'
 import { fetchAuthQuery } from '@/lib/auth'
 import { getServerSession } from '@/lib/auth/server'
 import { HTTP_STATUS, LIMITS } from '@/lib/constants'
+import { sanitizeForLogging, validateMessagesInput } from '@/lib/security/inputValidation'
 
 interface PersistedToolCall {
   id: string
@@ -152,6 +154,37 @@ export async function POST(req: Request) {
       }
     }
 
+    const userMessagesForValidation = messages
+      .filter((msg) => msg.role === 'user')
+      .map((msg) => ({
+        role: msg.role,
+        content: msg.parts
+          ? msg.parts
+              .filter((p): p is TextUIPart => p.type === 'text')
+              .map((p) => p.text)
+              .join('')
+          : '',
+      }))
+    const validation = validateMessagesInput(userMessagesForValidation)
+    if (!validation.safe) {
+      const sampleUnsafeContent = userMessagesForValidation.find(
+        (msg) => msg.content.trim().length > 0
+      )
+      console.warn('[Reme:Security] Input validation failed:', {
+        requestId,
+        threats: validation.threats,
+        content: sanitizeForLogging(sampleUnsafeContent?.content ?? '', 200),
+      })
+      return new Response(
+        JSON.stringify({
+          error: 'Your message was flagged by our safety system. Please rephrase your request.',
+          requestId,
+          threats: validation.threats,
+        }),
+        { status: HTTP_STATUS.BAD_REQUEST, headers: JSON_HEADERS }
+      )
+    }
+
     const resolvedProvider = provider ?? ''
     const resolvedTier = tier ?? ''
     const aiProvider: AIProvider = isValidProvider(resolvedProvider)
@@ -206,18 +239,28 @@ export async function POST(req: Request) {
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? ''
     const convexForMemory = getConvexClient()
 
-    const orgLookupPromise: Promise<{ nicheId?: string; timezone?: string }> =
-      organizationId && convexForMemory
+    const orgLookupPromise: Promise<{ nicheId?: string; timezone?: string }> = organizationId
+      ? isDevMode
         ? convexForMemory
-            .query(api.organizations.getOrganization, {
-              id: organizationId as Id<'organizations'>,
-            })
+          ? convexForMemory
+              .query(api.organizations.getOrganization, {
+                id: organizationId as Id<'organizations'>,
+              })
+              .then((org) => ({
+                nicheId: org?.settings?.nicheId ?? undefined,
+                timezone: org?.settings?.timezone ?? undefined,
+              }))
+              .catch(() => ({}))
+          : Promise.resolve({})
+        : fetchAuthQuery(api.organizations.getOrganization, {
+            id: organizationId as Id<'organizations'>,
+          })
             .then((org) => ({
               nicheId: org?.settings?.nicheId ?? undefined,
               timezone: org?.settings?.timezone ?? undefined,
             }))
             .catch(() => ({}))
-        : Promise.resolve({})
+      : Promise.resolve({})
 
     const orgSettingsPromise = Promise.race([
       orgLookupPromise,
@@ -259,11 +302,19 @@ export async function POST(req: Request) {
     const reminderTools = toolCtx ? createReminderTools(toolCtx) : undefined
     const invoiceTools = toolCtx ? createInvoiceTools(toolCtx) : undefined
     const salesFunnelTools = toolCtx ? createSalesFunnelTools(toolCtx) : undefined
+    const approvalTools = toolCtx ? createApprovalTools(toolCtx) : undefined
     const memoryTools =
       featureFlags.enableMemory && toolCtx ? createMemoryTools(toolCtx) : undefined
     const tools =
-      crmTools || reminderTools || invoiceTools || salesFunnelTools || memoryTools
-        ? { ...crmTools, ...reminderTools, ...invoiceTools, ...salesFunnelTools, ...memoryTools }
+      crmTools || reminderTools || invoiceTools || salesFunnelTools || approvalTools || memoryTools
+        ? {
+            ...crmTools,
+            ...reminderTools,
+            ...invoiceTools,
+            ...salesFunnelTools,
+            ...approvalTools,
+            ...memoryTools,
+          }
         : undefined
 
     const model = createAIProvider(aiProvider, modelTier)
