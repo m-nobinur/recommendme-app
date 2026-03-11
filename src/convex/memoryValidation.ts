@@ -4,6 +4,10 @@
  * These run inside Convex mutation handlers before insert/update.
  * Mirrors the rules from src/lib/memory/validation.ts but without
  * external imports (Convex has its own tsconfig).
+ *
+ * PII detection logic (PII_PATTERNS, redactPiiContent) is duplicated in
+ * src/lib/security/pii.ts for use in Next.js API routes.
+ * IMPORTANT: If you update PII patterns here, update pii.ts as well (and vice versa).
  */
 
 const MIN_CONTENT_LENGTH = 10

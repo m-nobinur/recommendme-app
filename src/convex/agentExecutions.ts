@@ -285,13 +285,6 @@ export const list = query({
   },
 })
 
-export const getById = internalQuery({
-  args: { id: v.id('agentExecutions') },
-  handler: async (ctx, args) => {
-    return await ctx.db.get(args.id)
-  },
-})
-
 export const getRecent = internalQuery({
   args: {
     organizationId: v.id('organizations'),
@@ -307,5 +300,14 @@ export const getRecent = internalQuery({
       )
       .order('desc')
       .take(pageSize)
+  },
+})
+
+export const getById = internalQuery({
+  args: {
+    id: v.id('agentExecutions'),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id)
   },
 })

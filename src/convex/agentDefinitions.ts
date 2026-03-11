@@ -157,7 +157,7 @@ export const listEnabledByType = internalQuery({
     return await ctx.db
       .query('agentDefinitions')
       .withIndex('by_agent_enabled', (q) => q.eq('agentType', args.agentType).eq('enabled', true))
-      .take(100)
+      .collect()
   },
 })
 

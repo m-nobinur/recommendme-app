@@ -103,6 +103,7 @@ describe('approvalQueue.review', () => {
   it('approves pending items for admins', async () => {
     const patches: Array<Record<string, unknown>> = []
     const auditLogs: Array<Record<string, unknown>> = []
+    const memoryEvents: Array<Record<string, unknown>> = []
     const scheduledPayloads: Array<Record<string, unknown>> = []
     const now = Date.now()
 
@@ -114,16 +115,29 @@ describe('approvalQueue.review', () => {
             return {
               _id: 'approval_1',
               organizationId: 'org_1',
+              agentType: 'invoice',
+              description: 'Approve high-risk invoice send',
+              riskLevel: 'high',
               status: 'pending',
               expiresAt: now + 60_000,
             }
           return null
         },
+        query: () => ({
+          withIndex: (_indexName: string, _builder: unknown) => ({
+            first: async () => null,
+          }),
+        }),
         patch: async (_id: string, patch: Record<string, unknown>) => {
           patches.push(patch)
         },
-        insert: async (_table: string, value: Record<string, unknown>) => {
-          auditLogs.push(value)
+        insert: async (table: string, value: Record<string, unknown>) => {
+          if (table === 'auditLogs') {
+            auditLogs.push(value)
+          }
+          if (table === 'memoryEvents') {
+            memoryEvents.push(value)
+          }
           return 'audit_1'
         },
       },
@@ -147,11 +161,16 @@ describe('approvalQueue.review', () => {
     assert.equal(patches[0].reviewedBy, 'user_1')
     assert.equal(auditLogs.length, 1)
     assert.equal(auditLogs[0].action, 'approval_review_approved')
+    assert.equal(memoryEvents.length, 1)
+    assert.equal(memoryEvents[0].eventType, 'approval_granted')
+    assert.equal((memoryEvents[0].data as Record<string, unknown>).agentType, 'invoice')
+    assert.equal((memoryEvents[0].data as Record<string, unknown>).approverUserId, 'user_1')
     assert.equal(scheduledPayloads.length, 1)
     assert.equal(scheduledPayloads[0].approvalId, 'approval_1')
   })
 
   it('reconciles execution after rejection', async () => {
+    const memoryEvents: Array<Record<string, unknown>> = []
     const scheduledPayloads: Array<Record<string, unknown>> = []
     const now = Date.now()
     const ctx = {
@@ -163,14 +182,26 @@ describe('approvalQueue.review', () => {
               _id: 'approval_1',
               organizationId: 'org_1',
               executionId: 'exec_1',
+              agentType: 'crm',
+              description: 'Reject risky bulk delete',
               status: 'pending',
               expiresAt: now + 60_000,
               riskLevel: 'high',
             }
           return null
         },
+        query: () => ({
+          withIndex: (_indexName: string, _builder: unknown) => ({
+            first: async () => null,
+          }),
+        }),
         patch: async () => {},
-        insert: async () => 'audit_1',
+        insert: async (table: string, value: Record<string, unknown>) => {
+          if (table === 'memoryEvents') {
+            memoryEvents.push(value)
+          }
+          return 'audit_1'
+        },
       },
       scheduler: {
         runAfter: async (_delay: number, _fnRef: unknown, payload: Record<string, unknown>) => {
@@ -188,6 +219,10 @@ describe('approvalQueue.review', () => {
     })
 
     assert.equal(result.status, 'rejected')
+    assert.equal(memoryEvents.length, 1)
+    assert.equal(memoryEvents[0].eventType, 'approval_rejected')
+    assert.equal((memoryEvents[0].data as Record<string, unknown>).agentType, 'crm')
+    assert.equal((memoryEvents[0].data as Record<string, unknown>).approverUserId, 'user_1')
     assert.equal(scheduledPayloads.length, 1)
     assert.equal(scheduledPayloads[0].executionId, 'exec_1')
   })

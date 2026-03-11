@@ -45,7 +45,7 @@ fi
 header "Unit Tests"
 
 info "Running agent framework unit tests..."
-TEST_OUTPUT=$(bun test src/lib/ai/agents/ src/convex/agentExecutions.test.ts src/convex/agentRunner.reminder.test.ts src/convex/appointments.test.ts src/convex/agentLogic/followup.test.ts src/convex/agentLogic/reminder.test.ts 2>&1)
+TEST_OUTPUT=$(bun test src/lib/ai/agents/ src/convex/agentExecutions.test.ts src/convex/agentRunner.reminder.test.ts src/convex/appointments.test.ts src/convex/agentLogic/followup.test.ts src/convex/agentLogic/reminder.test.ts src/convex/agentLogic/sales.test.ts 2>&1)
 TEST_EXIT=$?
 
 if [[ $TEST_EXIT -eq 0 ]]; then
@@ -87,6 +87,10 @@ header "Cron Wiring"
 
 assert_file_contains "src/convex/crons.ts" "runFollowupAgent" \
   "Followup agent cron triggers runFollowupAgent"
+assert_file_contains "src/convex/crons.ts" "runReminderAgent" \
+  "Reminder agent cron triggers runReminderAgent"
+assert_file_contains "src/convex/crons.ts" "runInvoiceAgent" \
+  "Invoice agent cron triggers runInvoiceAgent"
 assert_file_contains "src/convex/crons.ts" "runSalesAgent" \
   "Sales funnel cron triggers runSalesAgent"
 

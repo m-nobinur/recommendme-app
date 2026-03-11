@@ -52,7 +52,11 @@ export function assertMemoryApiToken(argsToken: string | undefined, surface: str
 export const consumeRateLimit = mutation({
   args: {
     authToken: v.optional(v.string()),
-    scope: v.union(v.literal('chat_request'), v.literal('approval_review')),
+    scope: v.union(
+      v.literal('chat_request'),
+      v.literal('approval_review'),
+      v.literal('feedback_submit')
+    ),
     key: v.string(),
     maxRequests: v.number(),
     windowMs: v.number(),
@@ -62,7 +66,11 @@ export const consumeRateLimit = mutation({
     nowMs: v.optional(v.number()),
   },
   returns: v.object({
-    scope: v.union(v.literal('chat_request'), v.literal('approval_review')),
+    scope: v.union(
+      v.literal('chat_request'),
+      v.literal('approval_review'),
+      v.literal('feedback_submit')
+    ),
     key: v.string(),
     allowed: v.boolean(),
     limit: v.number(),

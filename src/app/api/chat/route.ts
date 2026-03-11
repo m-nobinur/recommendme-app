@@ -41,6 +41,7 @@ import {
   trimMemoryContextForBudget,
 } from '@/lib/cost/manager'
 import { estimateCost } from '@/lib/cost/pricing'
+import { detectImplicitSignals } from '@/lib/learning/feedback'
 import { sanitizeForLogging, validateMessagesInput } from '@/lib/security/inputValidation'
 import { checkSecurityRateLimitDistributed } from '@/lib/security/rateLimiting'
 import { classifyTenantIsolationError } from '@/lib/security/tenantIsolation'
@@ -403,9 +404,43 @@ export async function POST(req: Request) {
       validConversationId
     )
     const inferredSignals = inferMemorySignalsFromMessage(lastUserMessage)
+
+    const implicitSignals: NormalizedMemorySignal[] = []
+    if (lastUserMessage && messages.length >= 2) {
+      const recentMessages = messages.slice(-6).map((m) => ({
+        role: m.role,
+        content: m.parts
+          ? m.parts
+              .filter((p): p is TextUIPart => p.type === 'text')
+              .map((p) => p.text)
+              .join('')
+          : '',
+        id: m.id,
+      }))
+      const currentMsg = recentMessages[recentMessages.length - 1]
+      const previousMsgs = recentMessages.slice(0, -1)
+      if (currentMsg && currentMsg.role === 'user') {
+        const detected = detectImplicitSignals(currentMsg, previousMsgs)
+        for (const sig of detected) {
+          implicitSignals.push({
+            eventType: 'feedback',
+            sourceType: 'message',
+            sourceId: sig.sourceMessageId ?? lastUserMessage.id,
+            data: {
+              type: 'feedback',
+              rating: sig.weight > 0 ? 5 : 1,
+              comment: `[implicit:${sig.type}] weight=${sig.weight}`,
+              messageId: sig.sourceMessageId,
+            },
+          })
+        }
+      }
+    }
+
     const memorySignalsToEmit = dedupeMemorySignals([
       ...normalizedMemorySignals,
       ...inferredSignals,
+      ...implicitSignals,
     ])
 
     const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? ''

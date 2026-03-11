@@ -1,5 +1,11 @@
 import { v } from 'convex/values'
 import { estimateCost } from '../lib/cost/pricing'
+import {
+  detectPatterns,
+  type PatternEvent,
+  patternToMemoryContent,
+  shouldAutoLearn,
+} from '../lib/learning/patternDetection'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
@@ -382,6 +388,12 @@ export const getExistingMemoryContents = internalQuery({
   },
 })
 
+// NOTE: This query fetches events globally (across all orgs) using the
+// by_created index. A high-volume tenant can temporarily dominate the batch,
+// causing other orgs to wait longer. The preferred path is to pass an
+// organizationId to the caller (processMemoryEventsBatch), which routes to
+// memoryEvents.listUnprocessedInternal (uses by_org_unprocessed index).
+// Task: implement per-org round-robin scheduling to fully resolve starvation.
 export const getNextUnprocessedBatch = internalQuery({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -1121,7 +1133,96 @@ async function processConversationEnd(
     }
   }
 
-  return createExtractedMemories(ctx, event.organizationId, llmResult.extraction, event.sourceId)
+  const extractionResult = await createExtractedMemories(
+    ctx,
+    event.organizationId,
+    llmResult.extraction,
+    event.sourceId
+  )
+
+  // Phase 11.2: Run pattern detection on user messages from this conversation.
+  // Auto-learnable patterns are stored as businessMemories so future retrievals
+  // surface them in system context without requiring another LLM extraction call.
+  try {
+    const userMessages = (messages as Doc<'messages'>[]).filter((m) => m.role === 'user')
+    if (userMessages.length >= 2) {
+      const patternEvents: PatternEvent[] = userMessages.map((m) => ({
+        type: 'user_message',
+        content: m.content,
+        timestamp: m.createdAt ?? Date.now(),
+      }))
+
+      // Fetch existing pattern memories (content only) to seed the accumulator.
+      const existingPatternContents: string[] = (existingMemories as string[]).filter((c) =>
+        c.startsWith('[Pattern:')
+      )
+      const existingPatterns = existingPatternContents.map((c) => {
+        // Reconstruct a minimal DetectedPattern from the stored content string so
+        // the accumulator can merge new events with prior observations.
+        const typeMatch = c.match(/\[Pattern:(\w+)\]/)
+        const occMatch = c.match(/occurrences: (\d+)/)
+        const confMatch = c.match(/confidence: ([\d.]+)/)
+        return {
+          type: (typeMatch?.[1] ?? 'time_preference') as PatternEvent['type'],
+          description: c,
+          occurrences: occMatch ? parseInt(occMatch[1], 10) : 1,
+          confidence: confMatch ? parseFloat(confMatch[1]) : 0,
+          firstSeen: Date.now(),
+          lastSeen: Date.now(),
+          autoLearned: false,
+          evidence: [],
+        }
+      })
+
+      const detectionResult = detectPatterns(patternEvents, existingPatterns as any)
+
+      for (const pattern of detectionResult.patterns) {
+        if (!shouldAutoLearn(pattern)) continue
+
+        const memContent = patternToMemoryContent(pattern)
+        const piiSafe = applyMemoryLayerPiiPolicy(memContent, 'business').content
+        const now = Date.now()
+        try {
+          const insertedId = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
+            organizationId: event.organizationId,
+            type: 'preference' as const,
+            content: piiSafe.slice(0, 500),
+            importance: Math.min(0.95, pattern.confidence),
+            confidence: pattern.confidence,
+            source: 'extraction' as const,
+            sourceMessageId: event.sourceId,
+          })
+          await ctx.runAction(internal.embedding.generateAndStore, {
+            tableName: 'businessMemories' as const,
+            documentId: insertedId,
+            content: piiSafe.slice(0, 500),
+            organizationId: event.organizationId,
+          })
+          extractionResult.memoriesCreated++
+        } catch {
+          // Non-critical: swallow individual pattern storage failures.
+        }
+      }
+
+      if (DEBUG && detectionResult.totalEventsAnalyzed > 0) {
+        console.log('[Extraction] Pattern detection complete:', {
+          eventsAnalyzed: detectionResult.totalEventsAnalyzed,
+          newPatterns: detectionResult.newPatterns,
+          reinforcedPatterns: detectionResult.reinforcedPatterns,
+          autoLearnedPatterns: detectionResult.patterns.filter((p) => p.autoLearned).length,
+          organizationId: String(event.organizationId),
+        })
+      }
+    }
+  } catch (patternError) {
+    // Non-critical: pattern detection failure must not block extraction results.
+    console.warn('[Extraction] Pattern detection failed (non-fatal):', {
+      error: patternError instanceof Error ? patternError.message : 'Unknown',
+      organizationId: String(event.organizationId),
+    })
+  }
+
+  return extractionResult
 }
 
 async function processToolOutcome(
@@ -1236,7 +1337,6 @@ async function processUserCorrectionEvent(
   }
 
   try {
-    // Attempt to find and supersede the old memory when the original is known.
     if (originalContent && originalContent.length >= 5) {
       const embedding: number[] = await ctx.runAction(internal.embedding.generateEmbedding, {
         text: originalContent,
@@ -1271,7 +1371,6 @@ async function processUserCorrectionEvent(
       }
     }
 
-    // Fallback: no matching memory found — insert as a new preference memory.
     const id = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
       organizationId: event.organizationId,
       type: 'preference' as const,
@@ -1352,9 +1451,14 @@ async function processFeedbackOrApprovalEvent(
   event: Doc<'memoryEvents'>
 ): Promise<{ memoriesCreated: number; relationsCreated: number }> {
   const eventData = event.data as Record<string, any>
+  const agentTypeFromEvent =
+    typeof eventData.agentType === 'string' && eventData.agentType.trim().length > 0
+      ? eventData.agentType.trim().slice(0, 50)
+      : 'chat'
 
   let content = ''
   let confidence = 0.75
+  let feedbackDirection: 'up' | 'down' | null = null
 
   if (event.eventType === 'feedback') {
     const rating = typeof eventData.rating === 'number' ? eventData.rating : undefined
@@ -1363,6 +1467,10 @@ async function processFeedbackOrApprovalEvent(
       ? `User feedback received (rating: ${rating}${comment ? `, comment: ${comment}` : ''})`
       : `User feedback received${comment ? `: ${comment}` : ''}`
     confidence = 0.7
+
+    if (rating !== undefined) {
+      feedbackDirection = rating >= 3 ? 'up' : 'down'
+    }
   } else {
     const approved = event.eventType === 'approval_granted'
     const actionDescription = (eventData.actionDescription as string | undefined) ?? 'agent action'
@@ -1371,6 +1479,8 @@ async function processFeedbackOrApprovalEvent(
       ? `Approval granted for ${actionDescription}${reason ? ` (${reason})` : ''}`
       : `Approval rejected for ${actionDescription}${reason ? ` (${reason})` : ''}`
     confidence = 0.85
+
+    feedbackDirection = approved ? 'up' : 'down'
   }
 
   const normalized = content.trim().slice(0, 500)
@@ -1381,7 +1491,7 @@ async function processFeedbackOrApprovalEvent(
   try {
     const inserted = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
       organizationId: event.organizationId,
-      agentType: 'chat',
+      agentType: agentTypeFromEvent,
       category: event.eventType === 'approval_rejected' ? 'failure' : 'pattern',
       content: normalized,
       confidence,
@@ -1394,6 +1504,21 @@ async function processFeedbackOrApprovalEvent(
       organizationId: event.organizationId,
     })
 
+    if (feedbackDirection) {
+      try {
+        await ctx.runMutation(internal.memoryExtraction.adjustFeedbackScores, {
+          organizationId: event.organizationId,
+          rating: feedbackDirection,
+        })
+      } catch (scoreError) {
+        console.warn('[Extraction] Score adjustment failed (non-fatal):', {
+          organizationId: String(event.organizationId),
+          eventId: event._id,
+          error: scoreError instanceof Error ? scoreError.message : 'Unknown',
+        })
+      }
+    }
+
     return { memoriesCreated: 1, relationsCreated: 0 }
   } catch (error) {
     console.error('[Extraction] Failed to process feedback/approval event:', {
@@ -1405,6 +1530,69 @@ async function processFeedbackOrApprovalEvent(
     return { memoriesCreated: 0, relationsCreated: 0 }
   }
 }
+
+// Keep in sync with CONFIDENCE_DELTA_PER_UNIT / DECAY_DELTA_PER_UNIT in
+// src/lib/learning/feedback.ts — shared via convention, not import, because
+// Convex functions cannot import from src/lib at runtime.
+const FEEDBACK_CONFIDENCE_DELTA = 0.05
+const FEEDBACK_DECAY_DELTA = 0.1
+// Narrow window: only memories accessed in the last 5 minutes are candidates.
+// This minimises blast radius when no specific memoryIds are supplied.
+// TODO(phase-12): pass explicit memoryIds from the retrieval trace so only
+// the memories that actually contributed to the response are adjusted.
+const FEEDBACK_WINDOW_MS = 5 * 60 * 1000
+const FEEDBACK_MAX_ADJUST = 10
+
+export const adjustFeedbackScores = internalMutation({
+  args: {
+    organizationId: v.id('organizations'),
+    rating: v.union(v.literal('up'), v.literal('down')),
+    // When provided, only these specific memories are adjusted.
+    // When absent, falls back to recently-accessed memories within the window.
+    memoryIds: v.optional(v.array(v.id('businessMemories'))),
+  },
+  handler: async (ctx, args) => {
+    const weight = args.rating === 'up' ? 1.0 : -1.0
+    const confDelta = weight * FEEDBACK_CONFIDENCE_DELTA
+    const decayDelta = weight * FEEDBACK_DECAY_DELTA
+
+    let memories: Doc<'businessMemories'>[]
+
+    if (args.memoryIds && args.memoryIds.length > 0) {
+      const fetched = await Promise.all(args.memoryIds.map((id) => ctx.db.get(id)))
+      memories = fetched.filter(
+        (m): m is Doc<'businessMemories'> =>
+          m !== null && m.organizationId === args.organizationId && m.isActive
+      )
+    } else {
+      const cutoff = Date.now() - FEEDBACK_WINDOW_MS
+      memories = await ctx.db
+        .query('businessMemories')
+        .withIndex('by_org_active', (q: any) =>
+          q.eq('organizationId', args.organizationId).eq('isActive', true)
+        )
+        .order('desc')
+        .filter((q: any) => q.gte(q.field('lastAccessedAt'), cutoff))
+        .take(FEEDBACK_MAX_ADJUST)
+    }
+
+    let adjusted = 0
+    for (const memory of memories) {
+      const newConf = Math.max(0.1, Math.min(1.0, memory.confidence + confDelta))
+      const newDecay = Math.max(0.0, Math.min(1.0, memory.decayScore + decayDelta))
+      if (newConf !== memory.confidence || newDecay !== memory.decayScore) {
+        await ctx.db.patch(memory._id, {
+          confidence: newConf,
+          decayScore: newDecay,
+          updatedAt: Date.now(),
+        })
+        adjusted++
+      }
+    }
+
+    return { adjusted, total: memories.length }
+  },
+})
 
 export const processExtractionBatch = internalAction({
   args: {

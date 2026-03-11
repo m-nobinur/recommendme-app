@@ -386,6 +386,130 @@ export {
   TRIGGER_TYPES,
 } from '@/lib/ai/agents/core/types'
 
+// ============================================
+// FEEDBACK & LEARNING TYPES
+// ============================================
+
+export type FeedbackRating = 'up' | 'down'
+
+export type ExplicitSignalType = 'thumbs_up' | 'thumbs_down' | 'correction' | 'instruction'
+
+export type ImplicitSignalType = 'follow_up_question' | 'rephrase' | 'task_complete' | 'tool_retry'
+
+export type FeedbackSignalType = ExplicitSignalType | ImplicitSignalType
+
+export interface FeedbackSignalWeight {
+  type: FeedbackSignalType
+  weight: number
+  action: 'reinforce' | 'penalize' | 'update' | 'create'
+}
+
+export interface ScoreAdjustment {
+  confidenceDelta: number
+  decayScoreDelta: number
+}
+
+// ============================================
+// PATTERN DETECTION TYPES
+// ============================================
+
+export type PatternType =
+  | 'time_preference'
+  | 'communication_style'
+  | 'decision_speed'
+  | 'price_sensitivity'
+  | 'channel_preference'
+
+export interface DetectedPattern {
+  type: PatternType
+  description: string
+  occurrences: number
+  confidence: number
+  firstSeen: number
+  lastSeen: number
+  autoLearned: boolean
+  evidence: string[]
+}
+
+export interface PatternDetectionConfig {
+  minOccurrences: number
+  timeWindowMs: number
+  confidenceThreshold: number
+  autoLearnConfidence: number
+  autoLearnMinOccurrences: number
+}
+
+export interface PatternDetectionResult {
+  patterns: DetectedPattern[]
+  newPatterns: number
+  reinforcedPatterns: number
+  totalEventsAnalyzed: number
+}
+
+// ============================================
+// FAILURE LEARNING TYPES
+// ============================================
+
+export type FailureCategory = 'tool_error' | 'misunderstanding' | 'wrong_action' | 'incomplete_info'
+
+export interface FailureRecord {
+  category: FailureCategory
+  description: string
+  context: string
+  correction?: string
+  timestamp: number
+  agentType: string
+  preventionRule?: string
+}
+
+export interface FailureLearningResult {
+  failuresRecorded: number
+  correctionsApplied: number
+  preventionRulesCreated: number
+}
+
+export interface FailureCheckResult {
+  hasRelevantFailures: boolean
+  failures: FailureRecord[]
+  preventionAdvice: string[]
+}
+
+// ============================================
+// QUALITY MONITORING TYPES
+// ============================================
+
+export type QualityMetricName =
+  | 'relevance'
+  | 'accuracy'
+  | 'freshness'
+  | 'retrieval_precision'
+  | 'recall'
+
+export interface QualityMetric {
+  name: QualityMetricName
+  value: number
+  previousValue: number
+  delta: number
+  timestamp: number
+}
+
+export interface QualitySnapshot {
+  organizationId: string
+  metrics: QualityMetric[]
+  overallScore: number
+  alertTriggered: boolean
+  alertReason?: string
+  timestamp: number
+}
+
+export interface QualityAlert {
+  metric: QualityMetricName
+  currentValue: number
+  previousValue: number
+  dropPercent: number
+  timestamp: number
+}
+
 export interface Notification {
   id: string
   title: string

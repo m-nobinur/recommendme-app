@@ -141,4 +141,15 @@ crons.daily(
   {}
 )
 
+// ============================================
+// LEARNING: Memory Quality Monitoring
+// ============================================
+
+crons.daily(
+  'memory quality monitor',
+  { hourUTC: 7, minuteUTC: 0 },
+  internal.qualityMonitor.runQualityMonitorCheck,
+  {}
+)
+
 export default crons

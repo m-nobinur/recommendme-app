@@ -82,6 +82,71 @@ async function appendDecisionAuditLog(
   })
 }
 
+async function emitApprovalLearningEvent(
+  ctx: {
+    db: {
+      query: (...args: any[]) => {
+        withIndex: (...indexArgs: any[]) => {
+          first: () => Promise<unknown>
+        }
+      }
+      insert: (...args: any[]) => Promise<unknown>
+    }
+  },
+  args: {
+    organizationId: Id<'organizations'>
+    approvalId: Id<'approvalQueue'>
+    decision: 'approved' | 'rejected'
+    agentType: string
+    approverUserId: Id<'appUsers'>
+    actionDescription: string
+    reason?: string
+    now: number
+  }
+) {
+  const eventType = args.decision === 'approved' ? 'approval_granted' : 'approval_rejected'
+  const idempotencyKey = `approval_learning:${String(args.approvalId)}:${args.decision}`
+
+  try {
+    const existing = await ctx.db
+      .query('memoryEvents')
+      .withIndex('by_org_idempotency', (q: any) =>
+        q.eq('organizationId', args.organizationId).eq('idempotencyKey', idempotencyKey)
+      )
+      .first()
+
+    if (existing) {
+      return
+    }
+
+    await ctx.db.insert('memoryEvents', {
+      organizationId: args.organizationId,
+      eventType,
+      sourceType: 'agent_action' as const,
+      sourceId: String(args.approvalId),
+      idempotencyKey,
+      data: {
+        type: 'approval' as const,
+        actionDescription: args.actionDescription.slice(0, 500),
+        approved: args.decision === 'approved',
+        agentType: args.agentType,
+        approverUserId: String(args.approverUserId),
+        reason: args.reason?.slice(0, 500),
+      },
+      processed: false,
+      status: 'pending' as const,
+      retryCount: 0,
+      createdAt: args.now,
+    })
+  } catch (error) {
+    console.warn('[ApprovalLearning] Failed to emit learning event (non-fatal):', {
+      approvalId: String(args.approvalId),
+      decision: args.decision,
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+  }
+}
+
 async function resolveApprovalCaller(
   ctx: {
     db: {
@@ -301,17 +366,27 @@ export const review = mutation({
         decision: 'approved',
         now,
       })
+      await emitApprovalLearningEvent(ctx, {
+        organizationId: user.organizationId,
+        approvalId: args.id,
+        decision: 'approved',
+        agentType: existing.agentType,
+        approverUserId: args.userId,
+        actionDescription: existing.description,
+        now,
+      })
       await ctx.scheduler.runAfter(0, internal.agentRunner.executeApprovedQueueItem, {
         approvalId: args.id,
       })
       return { status: 'approved' as const }
     }
 
+    const rejectionText = args.rejectionReason?.trim() || 'Rejected by reviewer'
     await ctx.db.patch(args.id, {
       status: 'rejected',
       reviewedBy: args.userId,
       reviewedAt: now,
-      rejectionReason: args.rejectionReason?.trim() || 'Rejected by reviewer',
+      rejectionReason: rejectionText,
       executionClaimedAt: undefined,
       executionProcessedAt: undefined,
       executionRetryCount: 0,
@@ -324,7 +399,17 @@ export const review = mutation({
       executionId: existing.executionId,
       riskLevel: existing.riskLevel,
       decision: 'rejected',
-      rejectionReason: args.rejectionReason?.trim() || 'Rejected by reviewer',
+      rejectionReason: rejectionText,
+      now,
+    })
+    await emitApprovalLearningEvent(ctx, {
+      organizationId: user.organizationId,
+      approvalId: args.id,
+      decision: 'rejected',
+      agentType: existing.agentType,
+      approverUserId: args.userId,
+      actionDescription: existing.description,
+      reason: rejectionText,
       now,
     })
     if (existing.executionId) {
@@ -540,6 +625,35 @@ export const getById = internalQuery({
   },
   handler: async (ctx, args) => {
     return await ctx.db.get(args.id)
+  },
+})
+
+/**
+ * Get approval item by ID — alias used by executeApprovedQueueItem.
+ */
+export const getApproval = internalQuery({
+  args: {
+    id: v.id('approvalQueue'),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id)
+  },
+})
+
+/**
+ * Get all approval items for a given execution (all statuses).
+ * Used by reconcileExecutionAfterApprovalDecision to determine
+ * whether all approvals are resolved.
+ */
+export const getByExecution = internalQuery({
+  args: {
+    executionId: v.id('agentExecutions'),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('approvalQueue')
+      .withIndex('by_execution', (q) => q.eq('executionId', args.executionId))
+      .collect()
   },
 })
 

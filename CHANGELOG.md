@@ -7,7 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (Review Pass 2 — production readiness)
+
+- **HIGH** `agentDefinitions.list`: Changed unbounded `.collect()` to `.take(100)` on the user-facing `list` query to prevent full-table scans as agent definition count grows.
+- **HIGH** `memoryExtraction.adjustFeedbackScores`: Fixed semantic incorrectness where a thumbs-down/up would adjust all memories accessed in the last 30 minutes. Now accepts an optional `memoryIds` array for targeted adjustment; fallback time-window reduced from 30 min → 5 min and batch cap reduced from 20 → 10 to minimise blast radius. Added `TODO(phase-12)` to wire explicit memory IDs from the retrieval trace.
+- **HIGH** `memoryArchival`: Restored four missing `isCronDisabled()` early-exit guards in `archiveDecayedMemories`, `compressArchivedMemories`, `purgeExpiredMemories`, and `lifecycleHealthCheck` — these were present in commit `7de242b` and were inadvertently dropped in a subsequent rebase. Without the guards, all four cron jobs run in local dev environments, consuming LLM credits and producing noise.
+- **MEDIUM** `memoryExtraction`: Added cross-reference comment above `FEEDBACK_CONFIDENCE_DELTA` and `FEEDBACK_DECAY_DELTA` constants pointing to the canonical values in `src/lib/learning/feedback.ts` — the two files must be kept in sync because Convex functions cannot import from `src/lib` at runtime.
+
+### Fixed (Hardening Pass — feat/feedback-collection-11a)
+
+- **HIGH** `ChatContainer.handleFeedback`: Added in-flight submission guard using ref-tracked message locks to prevent duplicate concurrent feedback requests for the same assistant message.
+- **HIGH** `approvalQueue.emitApprovalLearningEvent` + `memoryExtraction.processFeedbackOrApprovalEvent`: Approval learning events now include `agentType` and `approverUserId`, and extraction routes resulting agent memories to the correct `agentType` instead of hardcoding `chat`.
+- **MEDIUM** `api/feedback/route`: Added defensive conversation consistency validation (`message.conversationId` must match request `conversationId`) before mutation.
+- **LOW** `scripts/test-feedback-collection.sh`: Fixed optional live-probe env hint to reference `ORG_ID` (the variable actually consumed by the script).
+- **BLOCKER** `agentRunner.recordAgentLearning`: PII redaction was not applied before inserting into `agentMemories`. Now calls `applyMemoryLayerPiiPolicy(content, 'agent')` (redact policy) prior to write. Deduplication also added: patches existing same-category entry (updates content, takes max confidence, increments useCount) instead of inserting a duplicate.
+- **HIGH** `agentRunner.executeApprovedQueueItem`: Function was a logging stub — no side effects were executed. Replaced with full implementation: idempotency guard, claim-ownership check, action dispatch (`update_lead_status` / `update_lead_notes` / `log_recommendation`), retry scheduling on transient failures, finalize bookkeeping (`recordApprovalExecutionResult` + `markApprovedProcessed`), and post-execution reconciliation call. Nine previously-failing tests now pass.
+- **HIGH** `agentRunner.reconcileExecutionAfterApprovalDecision`: Function was a logging stub. Replaced with full implementation: fetches all approvals for the execution, checks whether all items are resolved, then either completes or fails the execution based on `approvalExecutionResults`.
+- **HIGH** `auditLogs.list`: Any org member could query `high`/`critical` risk-level audit entries. Added role guard — requests with `riskLevel: 'high'` or `riskLevel: 'critical'` now throw `Insufficient permissions` for `member`-role users; only `owner` and `admin` roles may view these entries.
+- **MEDIUM** `feedback.ts normalizeFeedbackArgs`: User-supplied `comment` field was stored without PII redaction. Now applies `redactPiiContent()` before the memoryEvent insert.
+- **LOW** `memoryValidation.ts`: Added cross-reference comment pointing to `src/lib/security/pii.ts` — both files must be updated together when PII patterns change.
+- Added supporting internal queries: `agentExecutions.getById`, `approvalQueue.getApproval`, `approvalQueue.getByExecution`.
+- Added `agentRunner.recordApprovalExecutionResult` internalMutation to track per-approval execution outcomes.
+
 ### Added
+
+#### Feedback Signal Collection (Phase 11.1)
+- Thumbs up/down feedback buttons on assistant messages in `src/components/chat/MessageBubble.tsx` — hidden by default, revealed on hover, amber/red selection state, disabled after rating
+- Feedback API endpoint at `src/app/api/feedback/route.ts` with session auth, dev mode bypass, and distributed `feedback_submit` rate limiting
+- Feedback endpoint now validates message ownership + assistant-only target before accepting a signal
+- Feedback state management in `ChatContainer` with optimistic update and rollback on API failure
+- Learning module at `src/lib/learning/feedback.ts` with:
+  - 8 signal weights (4 explicit: thumbs_up/down, correction, instruction; 4 implicit: follow_up_question, rephrase, task_complete, tool_retry)
+  - `detectImplicitSignals()` — analyzes conversation flow to detect satisfaction, confusion, or retry patterns
+  - `computeScoreAdjustment()` — clamped confidence/decay delta calculation
+- Convex feedback module at `src/convex/feedback.ts` with deduplicated `recordFeedback` + `recordFeedbackFromApi` event creation
+- Enhanced `processFeedbackOrApprovalEvent` in `src/convex/memoryExtraction.ts` to trigger `adjustFeedbackScores` after storing agent memory (single adjustment path per event)
+- Implicit signal detection in chat route — `detectImplicitSignals` merged into `memorySignalsToEmit` via `after()` pipeline
+- Feedback types: `FeedbackRating`, `ExplicitSignalType`, `ImplicitSignalType`, `FeedbackSignalWeight`, `ScoreAdjustment` in `src/types/index.ts`
+- Validation script `scripts/test-feedback-collection.sh` with static gates + targeted tests + optional live probe
+- Automated API edge-case tests for feedback ingress in `src/app/api/feedback/route.test.ts` (401/429/404/403/400/success paths)
+- Cursor pagination regression tests for chat history in `src/convex/messages.test.ts`
+- Package scripts for reproducible validation:
+  - `test:feedback-collection`
+  - `test:phase11`
+
+#### Approval Learning Integration (Phase 11.5 slice)
+- `src/convex/approvalQueue.ts` now emits idempotent `approval_granted` / `approval_rejected` learning events from the review decision path
+- Approval learning emission is non-blocking and does not interrupt approval review completion when event insertion fails
+- Score adjustment remains centralized in extraction event handling to avoid duplicate confidence/decay updates
+
+#### Pattern Detection Runtime Wiring (Phase 11.2)
+- `src/convex/memoryExtraction.ts` (`processConversationEnd`): `detectPatterns`, `shouldAutoLearn`, and `patternToMemoryContent` imported and called after each conversation ends — auto-learning fires when confidence ≥ 0.85 and occurrence count ≥ 10
+- Utility module: `src/lib/learning/patternDetection.ts` — 5 pattern types (time_preference, communication_style, decision_speed, price_sensitivity, channel_preference), configurable confidence scoring, evidence collection
+
+#### Failure Learning Runtime Wiring (Phase 11.3)
+- `src/convex/agentRunner.ts` (`runAgentForOrg`): `checkForRelevantFailures` runs pre-action to inject prevention context into the system prompt; `createFailureRecord` + `failureToMemoryContent` called on agent failure to persist the failure as an agent memory
+- `formatPreventionContext` formats past failures into human-readable prevention hints for agent system prompts
+- Utility module: `src/lib/learning/failureLearning.ts` — 4 failure categories, automatic prevention-rule derivation, keyword-similarity pre-check (threshold 0.5), batch deduplication (0.8 threshold)
+
+#### Memory Quality Monitor (Phase 11.4)
+- Created `src/convex/qualityMonitor.ts` with `getMemoryStatsForOrg` (internalQuery), `listActiveOrganizationIds` (internalQuery), and `runQualityMonitorCheck` (internalAction) — computes quality snapshot per org and writes alerts to `auditLogs`
+- Daily cron registered in `src/convex/crons.ts` as `'memory quality monitor'` running at 07:00 UTC via `runQualityMonitorCheck`
+- Utility module: `src/lib/learning/qualityMonitor.ts` — 5 weighted quality metrics (relevance 0.3, accuracy 0.25, freshness 0.2, retrieval_precision 0.15, recall 0.1); alerts on >10% quality drop within 24 h
+- Companion types in `src/types/index.ts`: `QualityMetricName`, `QualityMetric`, `QualitySnapshot`, `QualityAlert`, `PatternType`, `DetectedPattern`, `PatternDetectionConfig`, `PatternDetectionResult`, `FailureCategory`, `FailureRecord`, `FailureLearningResult`, `FailureCheckResult`
+- Added `scripts/test-phase11-complete.sh` for static verification of all 11.2–11.4 modules
 
 #### Security Hardening (Phase 9b)
 - Added server-side security rate limiting in `src/lib/security/rateLimiting.ts` with distributed Convex-backed enforcement in `src/convex/security.ts` and route-level enforcement in `src/app/api/chat/route.ts` and `src/app/api/approvals/route.ts` (returns HTTP `429` + `Retry-After`)
@@ -30,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `src/convex/security.test.ts`
   - updates to `src/convex/auditLogs.test.ts`
   - `scripts/test-security-hardening.sh`
-- Hardened agent-memory PII enforcement on internal write paths (`memoryExtraction.insertAgentMemory`, `agentRunner.recordAgentLearning`) so redaction is consistently applied before persistence and embedding
+- Hardened agent-memory PII enforcement on `memoryExtraction.insertAgentMemory` so redaction is consistently applied before persistence and embedding. (`agentRunner.recordAgentLearning` PII enforcement was completed in the hardening pass above.)
 - Made security-event audit writes non-blocking on rejection/error paths in chat and approval APIs to reduce tail latency impact under incident load
 - Tenant-isolation error classification now supports structured error codes in addition to message matching
 
@@ -113,6 +176,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit tests: 22 tests in `src/convex/agentLogic/sales.test.ts` (prompt builder, plan validator, settings sanitizer), 17 tests in `src/lib/ai/tools/salesFunnel.test.ts` (engagement scoring, chat tool wiring, error handling)
 
 ### Fixed
+- Chat history pagination now correctly applies `cursor` filtering in `src/convex/messages.ts`, preventing duplicate pages when loading older messages.
 - Approval queue execution now performs real side effects for approved actions in `executeApprovedQueueItem` (was metadata-only), then records execution outcome in `agentExecutions.results.approvalExecutionResults`
 - Approval-gated actions now preserve original `actionParams` and assessed `riskLevel` when enqueued (no longer dropped/hardcoded)
 - Approval processing lifecycle now uses explicit execution fields (`executionClaimedAt`, `executionProcessedAt`) instead of overloading `rejectionReason`
@@ -528,16 +592,12 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-**Phase 7 — Agent Framework with LangGraph:**
-- Background agent execution (followup, reminder, invoice agents)
-- Multi-step reasoning workflows with state machines
-- Human-in-the-loop approval patterns
+**Phase 12 — Memory UI & Admin Dashboard:**
+- Memory viewer component with filtering, search, and health indicators
+- Quality monitoring infrastructure from Phase 11 (note: Phase 11.4 library foundations exist; Convex runtime integration is deferred to Phase 12)
+- Admin controls for memory management and system monitoring
 
 **Planned features for future releases:**
-- Worker architecture and background jobs (Phase 8)
-- Phase 9 hardening: rate limiting, anomaly controls, and PII/compliance workflows
-- Observability and cost tracking (Phase 10)
-- Continuous improvement and learning system (Phase 11)
 - Memory UI and admin dashboard (Phase 12)
 - Email verification and 2FA for authentication
 - Calendar integrations (Google Calendar, Outlook)

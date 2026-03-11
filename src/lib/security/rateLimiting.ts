@@ -8,7 +8,7 @@ interface RateLimitEntry {
   resetAt: number
 }
 
-export type SecurityRateLimitScope = 'chat_request' | 'approval_review'
+export type SecurityRateLimitScope = 'chat_request' | 'approval_review' | 'feedback_submit'
 
 export interface RateLimitIdentity {
   userId?: string
@@ -63,6 +63,13 @@ const DEFAULT_SCOPE_CONFIG: Record<
       SECURITY_RATE_LIMIT.APPROVAL_REVIEWS_PER_MINUTE
     ),
     windowMs: RATE_LIMIT.AUTH_WINDOW_SECONDS * 1000,
+  },
+  feedback_submit: {
+    maxRequests: parsePositiveIntEnv(
+      process.env.AI_SECURITY_FEEDBACK_RATE_LIMIT_PER_MINUTE,
+      SECURITY_RATE_LIMIT.FEEDBACK_SUBMISSIONS_PER_MINUTE
+    ),
+    windowMs: RATE_LIMIT.WINDOW_SECONDS * 1000,
   },
 }
 

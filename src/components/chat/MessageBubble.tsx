@@ -1,10 +1,11 @@
 'use client'
 
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { ThumbsDown, ThumbsUp } from 'lucide-react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { generateSuggestions } from '@/app/actions/suggestions'
 import { Logo } from '@/components/ui/Logo'
 import { TIMING } from '@/lib/constants'
-import type { ChatMessage } from '@/types'
+import type { ChatMessage, FeedbackRating } from '@/types'
 import MarkdownRenderer from './MarkdownRenderer'
 
 const EMPTY_ARRAY: string[] = []
@@ -22,7 +23,7 @@ const SuggestionSkeleton = memo(function SuggestionSkeleton() {
       {SKELETON_WIDTHS.map((item, i) => (
         <div
           key={i}
-          className={`relative ${item.width} h-[30px] rounded-full overflow-hidden border border-surface-muted shrink-0`}
+          className={`relative ${item.width} h-7.5 rounded-full overflow-hidden border border-surface-muted shrink-0`}
         >
           <div className="absolute inset-0 bg-surface-tertiary" />
           <div
@@ -41,6 +42,8 @@ interface Props {
   onSuggestionClick?: (suggestion: string) => void
   isLastAssistantMessage?: boolean
   animate?: boolean
+  onFeedback?: (messageId: string, rating: FeedbackRating) => void
+  feedbackState?: FeedbackRating | null
 }
 
 function MessageBubbleComponent({
@@ -49,6 +52,8 @@ function MessageBubbleComponent({
   onSuggestionClick,
   isLastAssistantMessage = false,
   animate = true,
+  onFeedback,
+  feedbackState,
 }: Props) {
   const isAi = message.role === 'assistant'
   const timestamp = message.createdAt || new Date()
@@ -56,6 +61,18 @@ function MessageBubbleComponent({
   const [suggestions, setSuggestions] = useState<string[]>(message.suggestions || EMPTY_ARRAY)
   const [isLoadingSuggestions, setIsLoadingSuggestions] = useState(false)
   const hasGeneratedRef = useRef(false)
+
+  const handleThumbsUp = useCallback(() => {
+    if (!feedbackState && onFeedback) {
+      onFeedback(message.id, 'up')
+    }
+  }, [feedbackState, onFeedback, message.id])
+
+  const handleThumbsDown = useCallback(() => {
+    if (!feedbackState && onFeedback) {
+      onFeedback(message.id, 'down')
+    }
+  }, [feedbackState, onFeedback, message.id])
 
   const content = useMemo(() => {
     if (message.parts && message.parts.length > 0) {
@@ -154,6 +171,15 @@ function MessageBubbleComponent({
           </div>
         </div>
 
+        {/* Feedback buttons */}
+        {isAi && onFeedback && (
+          <FeedbackButtons
+            feedbackState={feedbackState ?? null}
+            onThumbsUp={handleThumbsUp}
+            onThumbsDown={handleThumbsDown}
+          />
+        )}
+
         {/* Follow-up suggestions */}
         {isAi && (isLastAssistantMessage || suggestions.length > 0) && (
           <SuggestionsArea
@@ -176,6 +202,56 @@ function MessageBubbleComponent({
   )
 }
 
+interface FeedbackButtonsProps {
+  feedbackState: FeedbackRating | null
+  onThumbsUp: () => void
+  onThumbsDown: () => void
+}
+
+const FeedbackButtons = memo(function FeedbackButtons({
+  feedbackState,
+  onThumbsUp,
+  onThumbsDown,
+}: FeedbackButtonsProps) {
+  const hasRated = feedbackState !== null
+  return (
+    <div
+      className={`mt-1.5 ml-1 flex items-center gap-1 transition-opacity duration-200 ${hasRated ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+    >
+      <button
+        type="button"
+        onClick={onThumbsUp}
+        disabled={hasRated}
+        aria-label="Good response"
+        className={`inline-flex items-center justify-center rounded-md p-1.5 transition-all duration-150 ${
+          feedbackState === 'up'
+            ? 'text-amber-500 scale-110'
+            : hasRated
+              ? 'text-text-disabled cursor-default'
+              : 'text-text-muted hover:text-amber-500 hover:bg-surface-tertiary cursor-pointer'
+        }`}
+      >
+        <ThumbsUp size={14} strokeWidth={feedbackState === 'up' ? 2.5 : 1.5} />
+      </button>
+      <button
+        type="button"
+        onClick={onThumbsDown}
+        disabled={hasRated}
+        aria-label="Poor response"
+        className={`inline-flex items-center justify-center rounded-md p-1.5 transition-all duration-150 ${
+          feedbackState === 'down'
+            ? 'text-red-400 scale-110'
+            : hasRated
+              ? 'text-text-disabled cursor-default'
+              : 'text-text-muted hover:text-red-400 hover:bg-surface-tertiary cursor-pointer'
+        }`}
+      >
+        <ThumbsDown size={14} strokeWidth={feedbackState === 'down' ? 2.5 : 1.5} />
+      </button>
+    </div>
+  )
+})
+
 interface SuggestionsAreaProps {
   suggestions: string[]
   isLoading: boolean
@@ -190,7 +266,7 @@ const SuggestionsArea = memo(function SuggestionsArea({
   onSuggestionClick,
 }: SuggestionsAreaProps) {
   return (
-    <div className="mt-3 min-h-[36px] relative">
+    <div className="mt-3 min-h-9 relative">
       <div
         className={`flex gap-2 overflow-hidden ml-1 transition-opacity duration-300 ${
           isLoading ? 'opacity-100' : 'opacity-0 absolute inset-0 pointer-events-none'
@@ -212,7 +288,7 @@ const SuggestionsArea = memo(function SuggestionsArea({
             key={`${suggestion}-${idx}`}
             type="button"
             onClick={() => onSuggestionClick?.(suggestion)}
-            className="h-[30px] px-3 py-1.5 text-xs text-text-secondary bg-surface-tertiary border border-border rounded-full brand-hover cursor-pointer whitespace-nowrap shrink-0 focus-ring"
+            className="h-7.5 px-3 py-1.5 text-xs text-text-secondary bg-surface-tertiary border border-border rounded-full brand-hover cursor-pointer whitespace-nowrap shrink-0 focus-ring"
             style={{
               animation: showSuggestions
                 ? `fadeSlideUp 0.3s ease-out ${idx * 50}ms backwards`

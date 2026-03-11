@@ -42,6 +42,8 @@
     "setup:dev": "./scripts/dev-setup.sh",
     "validate:memory": "./scripts/validate-memory.sh",
     "test:memory-tools": "./scripts/test-memory-tools.sh",
+    "test:feedback-collection": "bash ./scripts/test-feedback-collection.sh",
+    "test:phase11": "bash ./scripts/test-phase11-complete.sh",
     "test:memory:smoke": "bash ./scripts/memory-smoke.sh",
     "test:memory:load": "bash ./scripts/load-test-memory.sh",
     "test:memory:all": "run-s test:memory:smoke validate:memory test:memory-tools",

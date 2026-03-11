@@ -110,7 +110,17 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+    const user = await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    // Only owners/admins may query high-risk or critical audit entries.
+    if (args.riskLevel === 'high' || args.riskLevel === 'critical') {
+      if (user.role === 'member') {
+        throw new Error(
+          'Insufficient permissions: only owners and admins can view high-risk audit logs'
+        )
+      }
+    }
+
     const pageSize = boundedPageSize(args.limit, DEFAULT_LIMIT, MAX_LIMIT)
 
     if (args.action) {

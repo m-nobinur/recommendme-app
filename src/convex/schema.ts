@@ -223,7 +223,8 @@ export default defineSchema({
     .index('by_conversation', ['conversationId', 'createdAt'])
     .index('by_user', ['userId', 'createdAt'])
     .index('by_org', ['organizationId', 'createdAt'])
-    .index('by_org_conversation', ['organizationId', 'conversationId']),
+    .index('by_org_conversation', ['organizationId', 'conversationId'])
+    .index('by_org_conversation_message', ['organizationId', 'conversationId', 'messageId']),
 
   // ============================================
   // MEMORY LAYER 1: Platform Memory
@@ -462,6 +463,8 @@ export default defineSchema({
         type: v.literal('approval'),
         actionDescription: v.string(),
         approved: v.boolean(),
+        agentType: v.optional(v.string()),
+        approverUserId: v.optional(v.string()),
         reason: v.optional(v.string()),
       }),
       v.object({
@@ -642,7 +645,11 @@ export default defineSchema({
 
   securityRateLimits: defineTable({
     key: v.string(),
-    scope: v.union(v.literal('chat_request'), v.literal('approval_review')),
+    scope: v.union(
+      v.literal('chat_request'),
+      v.literal('approval_review'),
+      v.literal('feedback_submit')
+    ),
     organizationId: v.optional(v.id('organizations')),
     userId: v.optional(v.id('appUsers')),
     ipAddress: v.optional(v.string()),

@@ -1,4 +1,10 @@
 import { v } from 'convex/values'
+import {
+  checkForRelevantFailures,
+  createFailureRecord,
+  failureToMemoryContent,
+  formatPreventionContext,
+} from '../lib/learning/failureLearning'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
@@ -990,6 +996,44 @@ export const runAgentForOrg = internalAction({
       let skippedInExecution = 0
       const results: Array<{ type: string; target: string; success: boolean; message: string }> = []
 
+      // Phase 11.3: Failure Learning — pre-action check.
+      // Fetch past failure memories and surface prevention advice before executing.
+      // This is non-blocking: failures here must not prevent action execution.
+      let _failurePreventionContext = ''
+      try {
+        const pastFailureMemories = await ctx.runQuery(internal.agentRunner.getAgentMemories, {
+          organizationId: args.organizationId,
+          agentType: args.agentType,
+          limit: 20,
+        })
+        const pastFailures = pastFailureMemories
+          .filter((m: { category: string }) => m.category === 'failure')
+          .map(
+            (m: { content: string; agentType?: string }) =>
+              createFailureRecord(m.content, plan.summary, args.agentType) ?? {
+                category: 'tool_error' as const,
+                description: m.content.slice(0, 200),
+                context: plan.summary.slice(0, 200),
+                timestamp: Date.now(),
+                agentType: args.agentType,
+                preventionRule: undefined,
+                correction: undefined,
+              }
+          )
+        const failureCheck = checkForRelevantFailures(plan.summary, pastFailures)
+        _failurePreventionContext = formatPreventionContext(failureCheck)
+        if (_failurePreventionContext.length > 0) {
+          console.log('[AgentRunner] Failure prevention context applied:', {
+            organizationId: String(args.organizationId),
+            agentType: args.agentType,
+            relevantFailures: failureCheck.failures.length,
+            preventionRules: failureCheck.preventionAdvice.length,
+          })
+        }
+      } catch {
+        // Non-critical: failure learning check must not block action execution.
+      }
+
       for (const action of reviewedActions.approved) {
         try {
           const executionResult = await executeApprovedQueueAction(ctx, {
@@ -1043,6 +1087,30 @@ export const runAgentForOrg = internalAction({
           content: `Failed ${failures.length} ${args.agentType} actions: ${errorSummary}`,
           confidence: 0.6,
         })
+
+        // Phase 11.3: Classify each failure and store as a 'pattern' agent memory
+        // so future runs have richer, deduplicated prevention rules.
+        try {
+          for (const failure of failures) {
+            const record = createFailureRecord(
+              failure.message,
+              `${args.agentType}: ${failure.type} on ${failure.target}`,
+              args.agentType
+            )
+            if (!record) continue
+            const memContent = failureToMemoryContent(record)
+            const piiSafe = applyMemoryLayerPiiPolicy(memContent, 'agent').content
+            await ctx.runMutation(internal.agentRunner.recordAgentLearning, {
+              organizationId: args.organizationId,
+              agentType: args.agentType,
+              category: 'pattern',
+              content: piiSafe.slice(0, 500),
+              confidence: 0.65,
+            })
+          }
+        } catch {
+          // Non-critical: failure classification must not affect execution status.
+        }
       }
 
       let approvalQueueItemIds: string[] | undefined
@@ -1424,9 +1492,10 @@ async function executeApprovedQueueAction(
     }
 
     return {
-      success: true,
-      skipped: true,
-      message: `Skipped: unsupported action type (${args.action})`,
+      success: false,
+      skipped: false,
+      retryable: false,
+      message: `Unsupported action type (${args.action})`,
     }
   } catch (error) {
     return {

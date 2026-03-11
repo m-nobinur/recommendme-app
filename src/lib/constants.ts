@@ -202,6 +202,7 @@ export const RATE_LIMIT = {
 export const SECURITY_RATE_LIMIT = {
   CHAT_REQUESTS_PER_MINUTE: 60,
   APPROVAL_REVIEWS_PER_MINUTE: 20,
+  FEEDBACK_SUBMISSIONS_PER_MINUTE: 20,
 } as const
 
 // === Session & Auth (seconds) ===

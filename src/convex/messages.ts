@@ -66,12 +66,17 @@ export const getByConversation = query({
   handler: async (ctx, args) => {
     const pageSize = Math.min(args.limit ?? 50, 100)
 
-    const q = ctx.db
+    const baseQuery = ctx.db
       .query('messages')
       .withIndex('by_org_conversation', (q) =>
         q.eq('organizationId', args.organizationId).eq('conversationId', args.conversationId)
       )
       .order('desc')
+
+    const q =
+      typeof args.cursor === 'number'
+        ? baseQuery.filter((query) => query.lt(query.field('createdAt'), args.cursor as number))
+        : baseQuery
 
     const batch = await q.take(pageSize + 1)
     const hasMore = batch.length > pageSize
@@ -82,6 +87,38 @@ export const getByConversation = query({
     return {
       messages: page,
       nextCursor: hasMore ? page[0].createdAt : null,
+    }
+  },
+})
+
+/**
+ * Fetch minimal metadata for a specific messageId within an organization conversation.
+ * Used by feedback ingestion to validate ownership and message role.
+ */
+export const getByMessageId = query({
+  args: {
+    conversationId: v.string(),
+    organizationId: v.id('organizations'),
+    messageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query('messages')
+      .withIndex('by_org_conversation_message', (q) =>
+        q
+          .eq('organizationId', args.organizationId)
+          .eq('conversationId', args.conversationId)
+          .eq('messageId', args.messageId)
+      )
+      .first()
+
+    if (!row) return null
+
+    return {
+      userId: row.userId,
+      role: row.role,
+      messageId: row.messageId,
+      conversationId: row.conversationId,
     }
   },
 })

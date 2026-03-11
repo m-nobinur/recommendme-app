@@ -13,7 +13,7 @@ import { Logo } from '@/components/ui/Logo'
 import { useHeader } from '@/contexts/HeaderContext'
 import { API, UI, Z_INDEX } from '@/lib/constants'
 import { useChatStore, useModelStore } from '@/stores'
-import type { MessagePart } from '@/types'
+import type { FeedbackRating, MessagePart } from '@/types'
 import { ChatHistorySkeleton } from './ChatSkeleton'
 
 const TIME_FORMAT: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' }
@@ -165,6 +165,63 @@ export function ChatContainer() {
 
   const isLoading = status === 'submitted' || status === 'streaming'
   const showTypingIndicator = status === 'submitted'
+
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({})
+  const feedbackMapRef = useRef<Record<string, FeedbackRating>>({})
+  const feedbackInFlightRef = useRef<Set<string>>(new Set())
+
+  const updateFeedbackMap = useCallback((next: Record<string, FeedbackRating>) => {
+    feedbackMapRef.current = next
+    setFeedbackMap(next)
+  }, [])
+
+  const handleFeedback = useCallback(
+    async (messageId: string, rating: FeedbackRating) => {
+      if (!activeConversationId) {
+        return
+      }
+
+      if (feedbackInFlightRef.current.has(messageId)) {
+        return
+      }
+
+      if (feedbackMapRef.current[messageId]) {
+        return
+      }
+
+      feedbackInFlightRef.current.add(messageId)
+
+      const nextMap = {
+        ...feedbackMapRef.current,
+        [messageId]: rating,
+      }
+      updateFeedbackMap(nextMap)
+
+      try {
+        const res = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messageId,
+            conversationId: activeConversationId,
+            rating,
+          }),
+        })
+        if (!res.ok) {
+          const rollbackMap = { ...feedbackMapRef.current }
+          delete rollbackMap[messageId]
+          updateFeedbackMap(rollbackMap)
+        }
+      } catch {
+        const rollbackMap = { ...feedbackMapRef.current }
+        delete rollbackMap[messageId]
+        updateFeedbackMap(rollbackMap)
+      } finally {
+        feedbackInFlightRef.current.delete(messageId)
+      }
+    },
+    [activeConversationId, updateFeedbackMap]
+  )
 
   const [historyCursor, setHistoryCursor] = useState<number | null>(null)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
@@ -427,6 +484,8 @@ export function ChatContainer() {
                 messages={messages}
                 historyCount={historyMessageCount.current}
                 onSuggestionClick={handleSend}
+                onFeedback={handleFeedback}
+                feedbackMap={feedbackMap}
               />
 
               {showTypingIndicator && <TypingIndicator />}
@@ -477,12 +536,16 @@ interface MessageListProps {
   messages: UIMessage[]
   historyCount: number
   onSuggestionClick: (suggestion: string) => void
+  onFeedback: (messageId: string, rating: FeedbackRating) => void
+  feedbackMap: Record<string, FeedbackRating>
 }
 
 const MessageList = memo(function MessageList({
   messages,
   historyCount,
   onSuggestionClick,
+  onFeedback,
+  feedbackMap,
 }: MessageListProps) {
   const { deduped, lastAssistantIdx } = useMemo(() => {
     const seen = new Set<string>()
@@ -545,6 +608,8 @@ const MessageList = memo(function MessageList({
             onSuggestionClick={onSuggestionClick}
             isLastAssistantMessage={index === lastAssistantIdx}
             animate={!isFromHistory}
+            onFeedback={onFeedback}
+            feedbackState={feedbackMap[message.id] ?? null}
           />
         )
       })}
