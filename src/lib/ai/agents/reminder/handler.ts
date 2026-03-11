@@ -1,5 +1,6 @@
 import { validateReminderPlan } from '@convex/agentLogic/reminder'
 import type { ConvexHttpClient } from 'convex/browser'
+import { fetchAuthQuery } from '@/lib/auth'
 import { asAppUserId, asOrganizationId, getApi } from '../../shared/convex'
 import { appointmentToEpoch, resolveTimezone, todayInTimezone } from '../../shared/timezone'
 import type { AgentConfig } from '../core/config'
@@ -55,7 +56,7 @@ export class ReminderHandler implements AgentHandler {
         userId: asAppUserId(userId),
         organizationId: orgId,
       }),
-      convex.query(api.organizations.getOrganization, { id: orgId }).catch(() => null),
+      fetchAuthQuery(api.organizations.getOrganization, { id: orgId }).catch(() => null),
     ])
 
     const tz = resolveTimezone(org?.settings?.timezone)

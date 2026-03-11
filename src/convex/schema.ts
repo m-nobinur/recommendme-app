@@ -565,6 +565,73 @@ export default defineSchema({
     .index('by_org_agent', ['organizationId', 'agentType'])
     .index('by_expires', ['expiresAt']),
 
+  // ============================================
+  // GUARDRAILS: Approval Queue
+  // Human-in-the-loop review for high-risk agent actions
+  // ============================================
+  approvalQueue: defineTable({
+    organizationId: v.id('organizations'),
+    executionId: v.optional(v.id('agentExecutions')),
+    agentType: v.string(),
+    action: v.string(),
+    target: v.optional(v.string()),
+    actionParams: v.any(),
+    riskLevel: v.union(
+      v.literal('low'),
+      v.literal('medium'),
+      v.literal('high'),
+      v.literal('critical')
+    ),
+    context: v.optional(v.string()),
+    description: v.string(),
+    expiresAt: v.number(),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('approved'),
+      v.literal('rejected'),
+      v.literal('expired')
+    ),
+    reviewedBy: v.optional(v.id('appUsers')),
+    reviewedAt: v.optional(v.number()),
+    rejectionReason: v.optional(v.string()),
+    executionClaimedAt: v.optional(v.number()),
+    executionProcessedAt: v.optional(v.number()),
+    executionRetryCount: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index('by_org_status_expires', ['organizationId', 'status', 'expiresAt'])
+    .index('by_org_status_created', ['organizationId', 'status', 'createdAt'])
+    .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_execution', ['executionId'])
+    .index('by_status_expires', ['status', 'expiresAt']),
+
+  // ============================================
+  // GUARDRAILS: Audit Logs
+  // Append-only log of all agent/system/user actions
+  // ============================================
+  auditLogs: defineTable({
+    organizationId: v.id('organizations'),
+    userId: v.optional(v.id('appUsers')),
+    actorType: v.union(v.literal('system'), v.literal('user'), v.literal('agent')),
+    action: v.string(),
+    resourceType: v.string(),
+    resourceId: v.optional(v.string()),
+    details: v.any(),
+    riskLevel: v.union(
+      v.literal('low'),
+      v.literal('medium'),
+      v.literal('high'),
+      v.literal('critical')
+    ),
+    traceId: v.optional(v.string()),
+    ipAddress: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_org_action_created', ['organizationId', 'action', 'createdAt'])
+    .index('by_org_risk_created', ['organizationId', 'riskLevel', 'createdAt']),
+
   memoryEventDeadLetters: defineTable({
     organizationId: v.id('organizations'),
     eventId: v.id('memoryEvents'),
