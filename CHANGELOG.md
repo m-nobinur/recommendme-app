@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 11 Runtime Wiring — Learning Pipeline)
+
+#### Dedicated Learning Pipeline (`src/convex/learningPipeline.ts`)
+- New `runPatternDetectionBatch` internalAction: cron-triggered cross-organisation pattern detection over 30-day message windows, persisting to new `detectedPatterns` table with upsert semantics
+- New `runFailureLearningBatch` internalAction: cron-triggered batch processing of `tool_failure` events, classifying failures and creating enriched agent memory entries with prevention rules
+- New `scheduleLearningAfterExtraction` internalMutation: bridges extraction pipeline to learning pipeline via `ctx.scheduler.runAfter(0, ...)` for fresh-data processing
+- Supporting queries: `getExistingPatterns`, `getRecentMessages`, `getRecentToolFailureEvents`, `getExistingFailureMemories`, `getPreviousQualitySnapshot`
+- Supporting mutations: `upsertDetectedPattern`, `insertQualitySnapshot`
+
+#### Schema Additions
+- `detectedPatterns` table with `patternType` enum (5 values), confidence/occurrence tracking, evidence array, and `by_org_type` + `by_org_active` indexes
+- `qualitySnapshots` table with `overallScore`, structured metrics/alerts arrays, and `by_org_created` index for time-series trending
+
+#### Cron Entries
+- `pattern detection pipeline` — every 6 hours
+- `failure learning pipeline` — every 2 hours
+- Existing `memory quality monitor` (daily 07:00 UTC) enhanced with snapshot persistence
+
+#### Agent System Prompt Injection
+- `buildFailurePreventionPrompt()` in `agentRunner.ts`: extracts failure memories for the current agent type, formats prevention context, and appends "Known Issues to Avoid" section to all 4 agent system prompts (reminder, invoice, sales, followup)
+
+#### Quality Monitor Enhancement
+- `qualityMonitor.ts` now loads previous `qualitySnapshots` for delta comparison (was previously baseline-only)
+- Snapshots persisted to `qualitySnapshots` table for Phase 12 dashboard trending
+- `checkForAlerts` imported and used to populate structured alert arrays in snapshots
+
+#### Extraction Pipeline Hook
+- `processExtractionBatch` in `memoryExtraction.ts` now schedules learning pipeline actions after successful batch completion
+
+#### Validation
+- New `scripts/test-phase11-runtime.sh` — 58 static checks covering schema tables, cron entries, pipeline actions, extraction hooks, and agent prompt injection
+
 ### Fixed (Review Pass 2 — production readiness)
 
 - **BLOCKER** `memoryExtraction.ts` (cross-conversation pattern accumulation): Fixed 3 broken regex literals in the stored-pattern parser — `[Pattern:(w+)]` → `/\[Pattern:(\w+)\]/`, `(d+)` → `/(\d+)/`, `([d.]+)` → `/([\d.]+)/`. Without this fix, every previously-stored pattern was reconstructed with `type: 'time_preference'`, `occurrences: 1`, `confidence: 0`, causing `shouldAutoLearn()` to always return false for accumulated patterns (Phase 11.2 cross-conversation learning was silently non-functional).
@@ -597,10 +629,14 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-**Phase 12 — Memory UI & Admin Dashboard:**
-- Memory viewer component with filtering, search, and health indicators
-- Quality monitoring dashboard surfacing metrics from the Phase 11.4 quality monitor (cron-driven, already wired in `crons.ts`)
-- Admin controls for memory management and system monitoring
+**Phase 12 — Memory UI & Admin Dashboard: COMPLETE**
+
+All Phase 12 deliverables have shipped:
+- Memory viewer with filtering, search, and health indicators (`MemoryViewer`, `MemoryCard`, `MemoryFilters`)
+- Agent approval queue and execution log (`ApprovalQueue`, `ApprovalCard`, `ExecutionLog`)
+- Analytics dashboards for memory, agents, and cost (`MemoryAnalytics`, `AgentAnalytics`, `CostAnalytics`)
+- Context inspector for retrieval debugging (`ContextInspector`)
+- Wired dashboard page at `/memory` combining all 11 components
 
 **Planned features for future releases:**
 - Memory UI and admin dashboard (Phase 12)
