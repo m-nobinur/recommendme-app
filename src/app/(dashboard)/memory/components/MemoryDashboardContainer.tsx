@@ -8,7 +8,6 @@ import { ExecutionLog } from '@/components/agents/ExecutionLog'
 import { AgentAnalytics } from '@/components/analytics/AgentAnalytics'
 import { CostAnalytics } from '@/components/analytics/CostAnalytics'
 import { MemoryAnalytics } from '@/components/analytics/MemoryAnalytics'
-import { ContextInspector } from '@/components/memory/ContextInspector'
 import { MemoryViewer } from '@/components/memory/MemoryViewer'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { cn } from '@/lib/utils/cn'
@@ -45,8 +44,12 @@ export const MemoryDashboardContainer = memo(function MemoryDashboardContainer()
     api.appUsers.getAppUserByAuthId,
     authUser?._id ? { authUserId: authUser._id } : 'skip'
   )
+  const organization = useQuery(
+    api.organizations.getOrganization,
+    appUser ? { id: appUser.organizationId } : 'skip'
+  )
 
-  if (authUser === undefined || appUser === undefined) {
+  if (authUser === undefined || appUser === undefined || organization === undefined) {
     return <DashboardSkeleton />
   }
 
@@ -61,6 +64,7 @@ export const MemoryDashboardContainer = memo(function MemoryDashboardContainer()
   }
 
   const { _id: userId, organizationId } = appUser
+  const budgetTier = organization?.settings?.budgetTier ?? 'starter'
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -90,8 +94,6 @@ export const MemoryDashboardContainer = memo(function MemoryDashboardContainer()
         {activeTab === 'memory' && (
           <div className="space-y-6">
             <MemoryViewer organizationId={organizationId} userId={userId} />
-            {/* ContextInspector is shown only when env flag is set */}
-            <ContextInspector memories={[]} tokenBudget={4096} tokensUsed={0} />
           </div>
         )}
 
@@ -106,7 +108,7 @@ export const MemoryDashboardContainer = memo(function MemoryDashboardContainer()
           <div className="space-y-6">
             <MemoryAnalytics userId={userId} organizationId={organizationId} />
             <AgentAnalytics userId={userId} organizationId={organizationId} />
-            <CostAnalytics organizationId={organizationId} />
+            <CostAnalytics organizationId={organizationId} budgetTier={budgetTier} />
           </div>
         )}
       </div>

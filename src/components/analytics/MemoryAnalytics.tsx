@@ -17,6 +17,7 @@ import {
   YAxis,
 } from 'recharts'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { StatCard } from '@/components/ui/StatCard'
 
 interface MemoryAnalyticsProps {
   userId: Id<'appUsers'>
@@ -41,27 +42,12 @@ const DECAY_BANDS = [
   { range: '80–100%', min: 0.8, max: 1.01, color: '#22c55e' },
 ]
 
-function StatCard({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-xl border border-border bg-surface-secondary p-4 text-center">
-      <p className="mb-1 text-2xl font-bold text-white">{value}</p>
-      <p className="text-xs text-text-muted">{label}</p>
-    </div>
-  )
-}
-
 export const MemoryAnalytics = memo(function MemoryAnalytics({
   organizationId,
 }: MemoryAnalyticsProps) {
-  // Fetch all memories to compute stats client-side
-  const memories = useQuery(api.businessMemories.list, {
-    organizationId,
-    activeOnly: false,
-    includeArchived: true,
-    limit: 100,
-  })
+  const stats = useQuery(api.businessMemories.getStats, { organizationId })
 
-  if (memories === undefined) {
+  if (stats === undefined) {
     return (
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -75,33 +61,9 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
     )
   }
 
-  // Aggregate by type
-  const byType: Record<string, number> = {}
-  const decayCounts: Record<string, number> = Object.fromEntries(
-    DECAY_BANDS.map((b) => [b.range, 0])
-  )
-  let activeCount = 0
-  let archivedCount = 0
-  let avgDecay = 0
+  const { total, totalActive, totalArchived, avgDecay, typeCounts, decayBands } = stats
 
-  for (const m of memories) {
-    byType[m.type] = (byType[m.type] ?? 0) + 1
-    if (m.isArchived) archivedCount++
-    else activeCount++
-    avgDecay += m.decayScore ?? 0
-
-    for (const band of DECAY_BANDS) {
-      if ((m.decayScore ?? 0) >= band.min && (m.decayScore ?? 0) < band.max) {
-        decayCounts[band.range]++
-        break
-      }
-    }
-  }
-
-  const total = memories.length
-  avgDecay = total > 0 ? Math.round((avgDecay / total) * 100) : 0
-
-  const typeChartData = Object.entries(byType).map(([type, count]) => ({
+  const typeChartData = Object.entries(typeCounts).map(([type, count]) => ({
     name: type,
     value: count,
     color: TYPE_COLORS[type] ?? '#6b7280',
@@ -109,7 +71,7 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
 
   const decayChartData = DECAY_BANDS.map((b) => ({
     name: b.range,
-    count: decayCounts[b.range],
+    count: decayBands[b.range] ?? 0,
     color: b.color,
   }))
 
@@ -123,15 +85,14 @@ export const MemoryAnalytics = memo(function MemoryAnalytics({
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Total Memories" value={total} />
-        <StatCard label="Active" value={activeCount} />
-        <StatCard label="Archived" value={archivedCount} />
-        <StatCard label="Avg Decay" value={`${avgDecay}%`} />
+        <StatCard label="Total Memories" value={total} centered />
+        <StatCard label="Active" value={totalActive} centered />
+        <StatCard label="Archived" value={totalArchived} centered />
+        <StatCard label="Avg Decay" value={`${avgDecay}%`} centered />
       </div>
-      {total >= 100 && (
+      {stats.capped && (
         <p className="text-xs text-text-secondary">
-          Showing stats for the most recent 100 memories. Results may be a subset of your full
-          memory store.
+          Stats aggregated from the most recent 500 active + 200 archived memories.
         </p>
       )}
 

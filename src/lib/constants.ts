@@ -114,6 +114,7 @@ export const ROUTES = {
   LOGIN: '/login',
   REGISTER: '/register',
   CHAT: '/chat',
+  MEMORY: '/memory',
   SETTINGS: '/settings',
   API_AUTH: '/api/auth',
   API_CHAT: '/api/chat',

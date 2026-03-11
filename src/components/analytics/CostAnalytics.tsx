@@ -17,6 +17,7 @@ import {
   YAxis,
 } from 'recharts'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { StatCard } from '@/components/ui/StatCard'
 import { cn } from '@/lib/utils/cn'
 
 interface CostAnalyticsProps {
@@ -67,16 +68,6 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
   return String(n)
-}
-
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-surface-secondary p-4">
-      <p className="mb-1 text-xl font-bold text-white">{value}</p>
-      {sub && <p className="mb-1 text-xs text-text-muted">{sub}</p>}
-      <p className="text-xs text-text-muted">{label}</p>
-    </div>
-  )
 }
 
 function BudgetBar({ label, used, limit }: { label: string; used: number; limit: number }) {

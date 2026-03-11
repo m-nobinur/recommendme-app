@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Phase 12.8 Sidebar CRM Wiring & Memory Stats)
+
+- Sidebar CRM tabs (Leads/Schedule/Invoices) now display live Convex data via `useQuery` in `DashboardShell`
+- New `businessMemories.getStats` public query for server-side memory stats aggregation (type counts, decay bands, active/archived totals)
+- New validation script: `scripts/test-phase12-crm-wiring.sh` (15 static checks)
+
+### Changed (Phase 12.8)
+
+- `MemoryAnalytics` now uses `api.businessMemories.getStats` instead of client-side aggregation over a capped 100-item list
+- `DashboardShellProps` no longer accepts `leads`/`appointments`/`invoices` as props — data is fetched internally via Convex subscriptions
+
+### Added (Phase 12.7 Dashboard Navigation & Realtime Polish)
+
+- Header-level dashboard navigation links in `src/components/dashboard/DashboardHeader.tsx`:
+  - Chat link (`MessageSquare`) to `ROUTES.CHAT`
+  - Memory link (`Brain`) to `ROUTES.MEMORY`
+  - Active route highlighting via `usePathname()`
+- New centralized route constant in `src/lib/constants.ts`: `ROUTES.MEMORY = '/memory'`
+- New validation script: `scripts/test-dashboard-nav-polish.sh` covering route wiring, realtime approval wiring, budget-tier wiring, and compatibility guardrails
+
+### Changed
+
+- `src/app/(dashboard)/components/DashboardShell.tsx` now uses pure Convex realtime subscription (`api.approvalQueue.listPending`) for approval notifications instead of 60-second REST polling
+- `src/app/(dashboard)/memory/components/MemoryDashboardContainer.tsx` now fetches organization settings via `api.organizations.getOrganization` and passes real `budgetTier` to `CostAnalytics` (fallback: `'starter'`)
+
+### Compatibility
+
+- Preserved `src/app/api/approvals/route.ts` for external callers/tests while dashboard notifications migrate to Convex realtime
+
 ### Added (Phase 11 Runtime Wiring — Learning Pipeline)
 
 #### Dedicated Learning Pipeline (`src/convex/learningPipeline.ts`)
@@ -629,17 +658,18 @@ This is a major version with breaking changes:
 
 ### What's Next?
 
-**Phase 12 — Memory UI & Admin Dashboard: COMPLETE**
+**Phase 12 — Memory UI & Admin Dashboard: NEAR-COMPLETE**
 
-All Phase 12 deliverables have shipped:
+Phase 12 deliverables shipped (12.1–12.8):
 - Memory viewer with filtering, search, and health indicators (`MemoryViewer`, `MemoryCard`, `MemoryFilters`)
 - Agent approval queue and execution log (`ApprovalQueue`, `ApprovalCard`, `ExecutionLog`)
 - Analytics dashboards for memory, agents, and cost (`MemoryAnalytics`, `AgentAnalytics`, `CostAnalytics`)
-- Context inspector for retrieval debugging (`ContextInspector`)
+- Context inspector for retrieval debugging (`ContextInspector` — component built, not yet mounted)
 - Wired dashboard page at `/memory` combining all 11 components
+- Sidebar CRM tabs wired with live Convex data (leads, appointments, invoices)
+- Server-side memory stats aggregation replacing client-side 100-item cap
 
 **Planned features for future releases:**
-- Memory UI and admin dashboard (Phase 12)
 - Email verification and 2FA for authentication
 - Calendar integrations (Google Calendar, Outlook)
 - Webhook support for external integrations

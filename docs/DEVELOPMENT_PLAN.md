@@ -3,7 +3,7 @@
 > **Comprehensive phased implementation plan for the Unified Memory Architecture**
 > Document Version: 2.0 | Created: February 8, 2026 | Updated: March 11, 2026
 > Branch: `feat/feedback-collection-11a`
-> **Current Status: Phase 11 COMPLETE**
+> **Current Status: Phase 12 PARTIAL (12.8 sidebar CRM wiring + memory stats complete; ContextInspector gap remaining)**
 
 ---
 
@@ -66,7 +66,7 @@
 | **Guardrails** | **PARTIAL (Phase 9a core done)** | Risk assessment + action guardrails + approval queue/audit logging implemented; remaining Phase 9 work includes input validation/rate limiting/PII workflows |
 | **Tracing** | **DONE (Phase 10a+10b)** | TraceContext + span helpers, Convex `traces`/`llmUsage`, budget-aware chat routing, cache-friendly prompt/context ordering, optional Langfuse sync |
 | **Feedback Collection** | **DONE (Phase 11.1)** | Thumbs up/down UI, feedback API with auth/rate-limiting, implicit signal detection (rephrase/completion/follow-up/tool-retry), memory score adjustment via extraction pipeline |
-| **Memory UI** | Missing | No memory viewer or admin dashboard |
+| **Memory UI** | PARTIAL | Core memory/admin dashboards implemented; sidebar CRM wired (12.8), memory stats server-side (12.8); ContextInspector not yet mounted |
 
 ### Blocking Dependencies
 
@@ -178,7 +178,7 @@ Phase 8: Worker Architecture ────────── (4-5 days)   ── 
 Phase 9: Guardrails & Security ──────── (4-5 days)   ── SECURITY      [~]
 Phase 10a: Observability Foundation ──── (4-5 days)   ── OPERATIONS    [COMPLETE]
 Phase 11: Improvement & Learning ────── (3-4 days)   ── INTELLIGENCE  [COMPLETE]
-Phase 12: Memory UI & Dashboard ─────── (4-5 days)   ── UI/UX         [COMPLETE]
+Phase 12: Memory UI & Dashboard ─────── (4-5 days)   ── UI/UX         [PARTIAL]
                                          ─────────
                                          ~48-57 days total
 ```
@@ -1919,10 +1919,16 @@ Implement the feedback loop, pattern detection, and self-improvement system.
 
 > Runtime note: current score adjustment applies a binary direction (`up` / `down`) per event. Per-signal weight magnitudes are captured as metadata and reserved for a future weighted adjustment rollout.
 
-#### 11.2 Pattern Detection [COMPLETE]
+#### 11.2 Pattern Detection [COMPLETE — RUNTIME WIRED]
 **Files created:**
 - `src/lib/learning/patternDetection.ts` — `classifyEvent()`, `detectPatterns()`, `shouldAutoLearn()`, `patternToMemoryContent()`
 - `src/types/index.ts` — `PatternType`, `DetectedPattern`, `PatternDetectionConfig`, `PatternDetectionResult`
+
+**Runtime wiring (files modified):**
+- `src/convex/schema.ts` — `detectedPatterns` table with `by_org_type` and `by_org_active` indexes
+- `src/convex/learningPipeline.ts` — `runPatternDetectionBatch` (cron action), `upsertDetectedPattern`, `getExistingPatterns`, `getRecentMessages`
+- `src/convex/memoryExtraction.ts` — inline pattern detection in `processConversationEnd`, plus post-extraction scheduling via `scheduleLearningAfterExtraction`
+- `src/convex/crons.ts` — pattern detection cron every 6 hours
 
 **Implementation:**
 - 5 pattern types with keyword-based classifiers: time_preference, communication_style, decision_speed, price_sensitivity, channel_preference
@@ -1930,11 +1936,18 @@ Implement the feedback loop, pattern detection, and self-improvement system.
 - Confidence scoring uses occurrence count (60%), recency (30%), and frequency bonus (10%)
 - Evidence collection (up to 5 samples per pattern)
 - Pattern accumulator merges new events with existing patterns and tracks reinforcement
+- **Dual trigger**: inline during extraction (per-conversation) + standalone cron every 6h (cross-conversation accumulation)
+- Patterns persisted to dedicated `detectedPatterns` table; auto-learned patterns also create `agentMemories` entries with embeddings
 
-#### 11.3 Failure Learning [COMPLETE]
+#### 11.3 Failure Learning [COMPLETE — RUNTIME WIRED]
 **Files created:**
 - `src/lib/learning/failureLearning.ts` — `classifyFailure()`, `createFailureRecord()`, `checkForRelevantFailures()`, `failureToMemoryContent()`, `processFailureBatch()`, `formatPreventionContext()`
 - `src/types/index.ts` — `FailureCategory`, `FailureRecord`, `FailureLearningResult`, `FailureCheckResult`
+
+**Runtime wiring (files modified):**
+- `src/convex/learningPipeline.ts` — `runFailureLearningBatch` (cron action), `getRecentToolFailureEvents`, `getExistingFailureMemories`
+- `src/convex/agentRunner.ts` — `buildFailurePreventionPrompt()` helper injects failure prevention context into all 4 agent system prompts (reminder, invoice, sales, followup)
+- `src/convex/crons.ts` — failure learning cron every 2 hours
 
 **Implementation:**
 - 4 failure categories with keyword-based classification: tool_error, misunderstanding, wrong_action, incomplete_info
@@ -1942,11 +1955,19 @@ Implement the feedback loop, pattern detection, and self-improvement system.
 - Pre-action failure check via keyword similarity (threshold: 0.5) against past failures
 - Batch processing with deduplication (0.8 similarity threshold)
 - Prevention context formatting for agent system prompts
+- **System prompt injection**: failure prevention context appended to all 4 agent LLM system prompts as "Known Issues to Avoid" section
+- **Dual trigger**: per-execution in `runAgentForOrg` (post-failure recording) + standalone cron every 2h (batch processing of `tool_failure` events)
 
-#### 11.4 Memory Quality Monitoring [COMPLETE]
+#### 11.4 Memory Quality Monitoring [COMPLETE — RUNTIME WIRED]
 **Files created:**
 - `src/lib/learning/qualityMonitor.ts` — `computeRelevanceScore()`, `computeAccuracyScore()`, `computeFreshnessScore()`, `computeRetrievalPrecisionScore()`, `computeRecallScore()`, `computeQualityMetrics()`, `computeOverallScore()`, `checkForAlerts()`, `createQualitySnapshot()`, `formatQualityReport()`
 - `src/types/index.ts` — `QualityMetricName`, `QualityMetric`, `QualitySnapshot`, `QualityAlert`
+
+**Runtime wiring (files modified):**
+- `src/convex/schema.ts` — `qualitySnapshots` table with `by_org_created` index
+- `src/convex/learningPipeline.ts` — `insertQualitySnapshot` mutation, `getPreviousQualitySnapshot` query
+- `src/convex/qualityMonitor.ts` — enhanced to load previous snapshot for delta comparison, persist snapshots to `qualitySnapshots` table
+- `src/convex/crons.ts` — quality monitor cron daily at 07:00 UTC
 
 **Implementation:**
 - 5 weighted metrics: relevance (0.3), accuracy (0.25), freshness (0.2), retrieval_precision (0.15), recall (0.1)
@@ -1954,6 +1975,8 @@ Implement the feedback loop, pattern detection, and self-improvement system.
 - Alert threshold: quality score drop >10% within 24 hours
 - Snapshot includes overall score, per-metric deltas, and alert status
 - Dashboard-ready `formatQualityReport()` for Phase 12 integration
+- **Snapshot persistence**: quality snapshots stored in `qualitySnapshots` table for time-series trending in Phase 12 dashboard
+- **Delta comparison**: each run loads previous snapshot to compute metric deltas and detect regressions
 
 #### 11.5 Approval Learning [INTEGRATED]
 **Files modified:**
@@ -1987,6 +2010,7 @@ Implement the feedback loop, pattern detection, and self-improvement system.
 ### Validation
 - `scripts/test-feedback-collection.sh` — feedback learning slice validation (static + targeted tests + optional live probe)
 - `scripts/test-phase11-complete.sh` — utility-level static checks for 11.2–11.4 foundations
+- `scripts/test-phase11-runtime.sh` — runtime wiring validation (schema tables, cron entries, extraction hooks, agent prompt injection, 58 checks)
 
 ---
 
@@ -2086,6 +2110,45 @@ Build the frontend components for memory inspection, management, and system heal
 5. Use context inspector during chat, verify retrieval details shown
 6. Test real-time updates: create memory in another tab, verify list updates
 
+### 12.7 Dashboard Navigation & Realtime Polish - COMPLETE (March 11, 2026)
+
+**Objective:** Close high-impact UX/realtime gaps without schema changes.
+
+**Completed:**
+- Added top-level header navigation links between `'/chat'` and `'/memory'` with active-route highlighting in `DashboardHeader`
+- Added `ROUTES.MEMORY` constant in `src/lib/constants.ts` to centralize routing
+- Replaced `DashboardShell` 60s REST polling (`/api/approvals`) with pure Convex realtime subscription (`approvalQueue.listPending`)
+- Wired organization `settings.budgetTier` from Convex into `CostAnalytics` (fallback: `'starter'`)
+- Preserved `src/app/api/approvals/route.ts` for compatibility with external callers/tests
+
+**Validation:**
+- `bun run check:all` passes
+- Added script: `scripts/test-dashboard-nav-polish.sh`
+
+**Remaining Phase 12 gaps (tracked):**
+- `ContextInspector` still receives hardcoded empty props (env-gated)
+- ~~`MemoryAnalytics` still aggregates a capped 100-item client sample~~ — resolved in 12.8
+- ~~Sidebar CRM tabs (Leads/Schedule/Invoices) are not yet wired with live data~~ — resolved in 12.8
+
+### 12.8 Sidebar CRM Wiring & Memory Stats - COMPLETE (March 11, 2026)
+
+**Objective:** Wire the always-empty sidebar CRM tabs with live Convex data and replace client-side memory stats aggregation with a server-side query.
+
+**Completed:**
+- `DashboardShell` now fetches leads, appointments, and invoices via `useQuery` against existing Convex APIs (`api.leads.list`, `api.appointments.list`, `api.invoices.list`)
+- Results are mapped to `LeadDisplay`, `AppointmentDisplay`, and `InvoiceDisplay` types and passed to `DashboardView`
+- Removed `leads`, `appointments`, `invoices` from `DashboardShellProps` (data is fetched internally)
+- Added `businessMemories.getStats` public query with server-side aggregation (up to 500 active + 200 archived memories, computes type counts, decay bands, averages)
+- Refactored `MemoryAnalytics` to use `getStats` instead of client-side 100-item aggregation
+- Removed "Showing stats for the most recent 100 memories" disclaimer; replaced with `capped` flag indicator
+
+**Validation:**
+- `bun run check:all` passes
+- Added script: `scripts/test-phase12-crm-wiring.sh` (15 checks)
+
+**Remaining Phase 12 gap:**
+- `ContextInspector` is not mounted in any view (requires chat route integration and shared retrieval state)
+
 ---
 
 ## 17. Dependency Installation Schedule
@@ -2163,4 +2226,4 @@ bun add recharts  # For analytics charts (if not present)
 *Created: February 8, 2026*
 *Last Updated: March 11, 2026*
 *Author: RecommendMe AI Team*
-*Status: Phase 12 COMPLETE — all sub-phases (12.1–12.6) implemented; Memory Viewer, Editor, Approval Queue, Execution Log, Analytics Dashboard (Memory/Cost/Agent), and Context Inspector all complete*
+*Status: Phase 12 PARTIAL — sub-phases 12.1–12.8 are implemented; only ContextInspector wiring remains*

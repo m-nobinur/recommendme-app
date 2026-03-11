@@ -1,8 +1,10 @@
 'use client'
 
+import { api } from '@convex/_generated/api'
+import { useQuery } from 'convex/react'
 import { useRouter } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader'
 import { DashboardSidebarToggle } from '@/components/dashboard/DashboardSidebarToggle'
 import { DashboardView } from '@/components/dashboard/DashboardView'
@@ -14,18 +16,12 @@ import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, Notification, Use
 interface DashboardShellProps {
   children: ReactNode
   user: User
-  leads?: LeadDisplay[]
-  appointments?: AppointmentDisplay[]
-  invoices?: InvoiceDisplay[]
   notifications?: Notification[]
 }
 
 export function DashboardShell({
   children,
   user,
-  leads = [],
-  appointments = [],
-  invoices = [],
   notifications: initialNotifications = [],
 }: DashboardShellProps) {
   const router = useRouter()
@@ -34,6 +30,98 @@ export function DashboardShell({
   const [notifications, setNotifications] = useState<Notification[]>(initialNotifications)
   const { isHeaderVisible } = useHeader()
   const approvalNotificationIdsRef = useRef<Set<string>>(new Set())
+  const [now, setNow] = useState(Date.now)
+
+  const authUser = useQuery(api.auth.getCurrentUser)
+  const appUser = useQuery(
+    api.appUsers.getAppUserByAuthId,
+    authUser?._id ? { authUserId: authUser._id } : 'skip'
+  )
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  const pendingApprovals = useQuery(
+    api.approvalQueue.listPending,
+    appUser
+      ? {
+          userId: appUser._id,
+          organizationId: appUser.organizationId,
+          now,
+          limit: 10,
+        }
+      : 'skip'
+  )
+
+  const leadsData = useQuery(
+    api.leads.list,
+    appUser ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 50 } : 'skip'
+  )
+
+  const appointmentsData = useQuery(
+    api.appointments.list,
+    appUser ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 } : 'skip'
+  )
+
+  const invoicesData = useQuery(
+    api.invoices.list,
+    appUser ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 } : 'skip'
+  )
+
+  const leads: LeadDisplay[] = useMemo(
+    () =>
+      (leadsData ?? []).map((lead) => ({
+        id: lead._id,
+        name: lead.name,
+        phone: lead.phone,
+        email: lead.email,
+        status: lead.status,
+        value: lead.value,
+        tags: lead.tags,
+        notes: lead.notes,
+      })),
+    [leadsData]
+  )
+
+  const appointments: AppointmentDisplay[] = useMemo(
+    () =>
+      (appointmentsData ?? []).map((appt) => ({
+        id: appt._id,
+        title: appt.title ?? 'Appointment',
+        date: appt.date,
+        time: appt.time,
+        leadName: appt.leadName,
+        status: appt.status,
+      })),
+    [appointmentsData]
+  )
+
+  const invoices: InvoiceDisplay[] = useMemo(
+    () =>
+      (invoicesData ?? []).map((inv) => ({
+        id: inv._id,
+        leadName: inv.leadName,
+        amount: inv.amount,
+        status: inv.status,
+      })),
+    [invoicesData]
+  )
+
+  const approvalNotifications = useMemo(
+    () =>
+      (pendingApprovals ?? []).map(
+        (item: { _id: string; description?: string; riskLevel: string; createdAt: number }) => ({
+          id: item._id,
+          title: item.description ?? `Pending ${item.riskLevel}-risk approval`,
+          type: 'warning' as const,
+          read: false,
+          time: new Date(item.createdAt).toLocaleString(),
+        })
+      ),
+    [pendingApprovals]
+  )
 
   const handleSignOut = useCallback(async () => {
     setIsSigningOut(true)
@@ -51,58 +139,32 @@ export function DashboardShell({
   }, [])
 
   useEffect(() => {
-    let active = true
-    const pollApprovals = async () => {
-      try {
-        const res = await fetch('/api/approvals?limit=10')
-        if (!res.ok || !active) return
-        const data = await res.json()
-        if (!active || !Array.isArray(data.notifications)) return
-        const approvalNotifications: Notification[] = data.notifications.map(
-          (item: { _id: string; description?: string; riskLevel: string; createdAt: number }) => ({
-            id: item._id,
-            title: item.description ?? `Pending ${item.riskLevel}-risk approval`,
-            type: 'warning' as const,
-            read: false,
-            time: new Date(item.createdAt).toLocaleString(),
-          })
-        )
-        setNotifications((prev) => {
-          const latestApprovalIds = new Set(
-            approvalNotifications.map((notification) => notification.id)
-          )
-          const previousApprovalIds = approvalNotificationIdsRef.current
-          const byId = new Map(prev.map((notification) => [notification.id, notification]))
-          const syncedApprovalNotifications = approvalNotifications.map((notification) => {
-            const existing = byId.get(notification.id)
-            return existing ? { ...notification, read: existing.read } : notification
-          })
-          const retainedNonApprovalNotifications = prev.filter((notification) => {
-            if (!previousApprovalIds.has(notification.id)) {
-              return true
-            }
-            return latestApprovalIds.has(notification.id)
-          })
-          const retainedIds = new Set(
-            syncedApprovalNotifications.map((notification) => notification.id)
-          )
-          const passthroughNotifications = retainedNonApprovalNotifications.filter(
-            (notification) => !retainedIds.has(notification.id)
-          )
-          approvalNotificationIdsRef.current = latestApprovalIds
-          return [...syncedApprovalNotifications, ...passthroughNotifications]
-        })
-      } catch {
-        // Silently ignore polling failures
-      }
-    }
-    pollApprovals()
-    const interval = setInterval(pollApprovals, 60_000)
-    return () => {
-      active = false
-      clearInterval(interval)
-    }
-  }, [])
+    setNotifications((prev) => {
+      const latestApprovalIds = new Set(
+        approvalNotifications.map((notification) => notification.id)
+      )
+      const previousApprovalIds = approvalNotificationIdsRef.current
+      const byId = new Map(prev.map((notification) => [notification.id, notification]))
+      const syncedApprovalNotifications = approvalNotifications.map((notification) => {
+        const existing = byId.get(notification.id)
+        return existing ? { ...notification, read: existing.read } : notification
+      })
+      const retainedNonApprovalNotifications = prev.filter((notification) => {
+        if (!previousApprovalIds.has(notification.id)) {
+          return true
+        }
+        return latestApprovalIds.has(notification.id)
+      })
+      const retainedIds = new Set(
+        syncedApprovalNotifications.map((notification) => notification.id)
+      )
+      const passthroughNotifications = retainedNonApprovalNotifications.filter(
+        (notification) => !retainedIds.has(notification.id)
+      )
+      approvalNotificationIdsRef.current = latestApprovalIds
+      return [...syncedApprovalNotifications, ...passthroughNotifications]
+    })
+  }, [approvalNotifications])
 
   const handleMarkAllRead = useCallback(() => {
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))

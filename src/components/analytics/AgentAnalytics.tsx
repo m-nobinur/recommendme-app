@@ -7,6 +7,7 @@ import { Activity } from 'lucide-react'
 import { memo } from 'react'
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { StatCard } from '@/components/ui/StatCard'
 import { cn } from '@/lib/utils/cn'
 
 interface AgentAnalyticsProps {
@@ -33,16 +34,6 @@ function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
   return `${(ms / 60_000).toFixed(1)}m`
-}
-
-function StatCard({ label, value, sub }: { label: string; value: string; sub?: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-surface-secondary p-4">
-      <p className="mb-1 text-xl font-bold text-white">{value}</p>
-      {sub && <p className="mb-1 text-xs text-text-muted">{sub}</p>}
-      <p className="text-xs text-text-muted">{label}</p>
-    </div>
-  )
 }
 
 export const AgentAnalytics = memo(function AgentAnalytics({

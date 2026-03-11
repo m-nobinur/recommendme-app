@@ -1,11 +1,15 @@
 'use client'
 
-import { Bell } from 'lucide-react'
+import { Bell, Brain, MessageSquare } from 'lucide-react'
+import type { Route } from 'next'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import NotificationDropdown from '@/components/layout/NotificationDropdown'
 import { Logo } from '@/components/ui/Logo'
 import { useClickOutside } from '@/hooks'
-import { Z_INDEX } from '@/lib/constants'
+import { ROUTES, Z_INDEX } from '@/lib/constants'
+import { cn } from '@/lib/utils/cn'
 import type { Notification } from '@/types'
 
 interface DashboardHeaderProps {
@@ -15,6 +19,7 @@ interface DashboardHeaderProps {
 }
 
 export function DashboardHeader({ isVisible, notifications, onMarkAllRead }: DashboardHeaderProps) {
+  const pathname = usePathname()
   const [showNotifications, setShowNotifications] = useState(false)
   const notificationRef = useClickOutside<HTMLDivElement>(() => setShowNotifications(false))
 
@@ -48,8 +53,34 @@ export function DashboardHeader({ isVisible, notifications, onMarkAllRead }: Das
           </div>
         </div>
 
-        {/* Right: Notification Bell */}
+        {/* Right: Navigation + Notification Bell */}
         <div className="flex items-center gap-3 relative" ref={notificationRef}>
+          <Link
+            href={ROUTES.CHAT as Route}
+            className={cn(
+              'w-9 h-9 flex items-center justify-center rounded-full transition-all duration-300',
+              pathname === ROUTES.CHAT
+                ? 'bg-surface-muted text-white'
+                : 'text-text-muted hover:text-brand hover:bg-surface-elevated'
+            )}
+            aria-label="Go to chat"
+          >
+            <MessageSquare className="w-5 h-5" />
+          </Link>
+
+          <Link
+            href={ROUTES.MEMORY as Route}
+            className={cn(
+              'w-9 h-9 flex items-center justify-center rounded-full transition-all duration-300',
+              pathname === ROUTES.MEMORY
+                ? 'bg-surface-muted text-white'
+                : 'text-text-muted hover:text-brand hover:bg-surface-elevated'
+            )}
+            aria-label="Go to memory dashboard"
+          >
+            <Brain className="w-5 h-5" />
+          </Link>
+
           <div className="relative">
             <button
               type="button"

@@ -240,6 +240,72 @@ export const list = query({
 })
 
 /**
+ * Server-side aggregated memory statistics for the analytics dashboard.
+ * Replaces client-side aggregation over a capped list.
+ */
+export const getStats = query({
+  args: {
+    organizationId: v.id('organizations'),
+  },
+  handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
+    const activeMemories = await ctx.db
+      .query('businessMemories')
+      .withIndex('by_org_active', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isActive', true)
+      )
+      .take(500)
+
+    const archivedMemories = await ctx.db
+      .query('businessMemories')
+      .withIndex('by_org_archived', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isArchived', true)
+      )
+      .take(200)
+
+    const allMemories = [...activeMemories, ...archivedMemories]
+    const total = allMemories.length
+    const totalActive = activeMemories.length
+    const totalArchived = archivedMemories.length
+
+    const typeCounts: Record<string, number> = {}
+    const decayBands: Record<string, number> = {
+      '0–20%': 0,
+      '20–40%': 0,
+      '40–60%': 0,
+      '60–80%': 0,
+      '80–100%': 0,
+    }
+
+    let sumDecay = 0
+    for (const m of allMemories) {
+      typeCounts[m.type] = (typeCounts[m.type] ?? 0) + 1
+      const decay = m.decayScore ?? 0
+      sumDecay += decay
+
+      if (decay < 0.2) decayBands['0–20%']++
+      else if (decay < 0.4) decayBands['20–40%']++
+      else if (decay < 0.6) decayBands['40–60%']++
+      else if (decay < 0.8) decayBands['60–80%']++
+      else decayBands['80–100%']++
+    }
+
+    const avgDecay = total > 0 ? Math.round((sumDecay / total) * 100) : 0
+
+    return {
+      total,
+      totalActive,
+      totalArchived,
+      avgDecay,
+      typeCounts,
+      decayBands,
+      capped: activeMemories.length >= 500 || archivedMemories.length >= 200,
+    }
+  },
+})
+
+/**
  * List active business memories sorted by importance (for context retrieval).
  */
 export const listByImportance = query({
@@ -248,6 +314,7 @@ export const listByImportance = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
     const pageSize = Math.min(args.limit ?? 20, 100)
 
     const candidates = await ctx.db
