@@ -36,7 +36,9 @@ export interface Organization {
 export interface OrganizationSettings {
   defaultAiProvider?: string
   modelTier?: string
+  budgetTier?: 'free' | 'starter' | 'pro' | 'enterprise'
   nicheId?: string
+  timezone?: string
 }
 
 export type LeadStatus = 'New' | 'Contacted' | 'Qualified' | 'Proposal' | 'Booked' | 'Closed'
