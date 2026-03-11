@@ -73,6 +73,14 @@ export default defineSchema({
       v.object({
         defaultAiProvider: v.optional(v.string()),
         modelTier: v.optional(v.string()),
+        budgetTier: v.optional(
+          v.union(
+            v.literal('free'),
+            v.literal('starter'),
+            v.literal('pro'),
+            v.literal('enterprise')
+          )
+        ),
         nicheId: v.optional(v.string()),
         timezone: v.optional(v.string()),
       })
@@ -631,6 +639,69 @@ export default defineSchema({
     .index('by_org_created', ['organizationId', 'createdAt'])
     .index('by_org_action_created', ['organizationId', 'action', 'createdAt'])
     .index('by_org_risk_created', ['organizationId', 'riskLevel', 'createdAt']),
+
+  // ============================================
+  // OBSERVABILITY: Distributed Traces
+  // Span-level data for request lifecycle tracking
+  // ============================================
+  traces: defineTable({
+    traceId: v.string(),
+    spanId: v.string(),
+    parentSpanId: v.optional(v.string()),
+    organizationId: v.optional(v.id('organizations')),
+    operationName: v.string(),
+    spanType: v.union(
+      v.literal('api'),
+      v.literal('llm'),
+      v.literal('retrieval'),
+      v.literal('tool'),
+      v.literal('agent'),
+      v.literal('internal')
+    ),
+    status: v.union(v.literal('ok'), v.literal('error')),
+    startTime: v.number(),
+    endTime: v.optional(v.number()),
+    durationMs: v.optional(v.number()),
+    attributes: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index('by_trace', ['traceId'])
+    .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_org_trace_created', ['organizationId', 'traceId', 'createdAt'])
+    .index('by_org_trace_start', ['organizationId', 'traceId', 'startTime'])
+    .index('by_org_span_type_created', ['organizationId', 'spanType', 'createdAt'])
+    .index('by_span_type_created', ['spanType', 'createdAt'])
+    .index('by_created', ['createdAt']),
+
+  // ============================================
+  // OBSERVABILITY: LLM Usage Tracking
+  // Per-call cost and token accounting
+  // ============================================
+  llmUsage: defineTable({
+    organizationId: v.id('organizations'),
+    traceId: v.optional(v.string()),
+    model: v.string(),
+    provider: v.string(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    totalTokens: v.number(),
+    estimatedCostUsd: v.float64(),
+    purpose: v.union(
+      v.literal('chat'),
+      v.literal('extraction'),
+      v.literal('embedding'),
+      v.literal('agent'),
+      v.literal('summary'),
+      v.literal('compression')
+    ),
+    cached: v.boolean(),
+    latencyMs: v.number(),
+    createdAt: v.number(),
+  })
+    .index('by_org_created', ['organizationId', 'createdAt'])
+    .index('by_org_purpose_created', ['organizationId', 'purpose', 'createdAt'])
+    .index('by_org_model_created', ['organizationId', 'model', 'createdAt'])
+    .index('by_created', ['createdAt']),
 
   memoryEventDeadLetters: defineTable({
     organizationId: v.id('organizations'),

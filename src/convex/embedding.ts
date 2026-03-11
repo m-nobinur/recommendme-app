@@ -1,4 +1,5 @@
 import { ConvexError, v } from 'convex/values'
+import { estimateEmbeddingCost } from '../lib/cost/pricing'
 import { internal } from './_generated/api'
 import { internalAction, internalMutation } from './_generated/server'
 
@@ -117,7 +118,13 @@ const PROVIDERS = {
 } as const
 
 type ProviderKey = keyof typeof PROVIDERS
-type ResolvedProvider = { url: string; apiKey: string; model: string; name: string }
+type ResolvedProvider = {
+  url: string
+  apiKey: string
+  model: string
+  providerId: 'openrouter' | 'openai'
+  name: string
+}
 
 /**
  * Valid memory table names that support embeddings.
@@ -154,7 +161,13 @@ function resolveProvider(): ResolvedProvider {
     const provider = PROVIDERS[key]
     const apiKey = process.env[provider.envVar]
     if (apiKey && apiKey.trim().length > 0) {
-      return { url: provider.url, apiKey, model: provider.model, name: provider.name }
+      return {
+        url: provider.url,
+        apiKey,
+        model: provider.model,
+        providerId: key,
+        name: provider.name,
+      }
     }
   }
 
@@ -241,10 +254,19 @@ async function callEmbeddingsAPI(
   throw lastError ?? new Error('Embedding generation failed after retries')
 }
 
+interface EmbeddingResult {
+  embedding: number[]
+  totalTokens: number
+  model: string
+  provider: string
+  cached: boolean
+  latencyMs: number
+}
+
 /**
  * Generate embedding(s) from text using the resolved provider.
  */
-async function generateEmbeddingVector(text: string): Promise<number[]> {
+async function generateEmbeddingWithMeta(text: string): Promise<EmbeddingResult> {
   const provider = resolveProvider()
   const trimmedText = text.trim()
 
@@ -259,11 +281,20 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
   if (isEmbeddingCacheEnabled()) {
     const cached = getCachedEmbedding(cacheKey)
     if (cached) {
-      return cached
+      return {
+        embedding: cached,
+        totalTokens: 0,
+        model: provider.model,
+        provider: provider.providerId,
+        cached: true,
+        latencyMs: 0,
+      }
     }
   }
 
+  const startMs = Date.now()
   const { embeddings, totalTokens } = await callEmbeddingsAPI(provider, trimmedText)
+  const latencyMs = Date.now() - startMs
 
   if (process.env.DEBUG_MEMORY === 'true') {
     console.log(`[Embedding] Generated via ${provider.name}:`, {
@@ -278,7 +309,19 @@ async function generateEmbeddingVector(text: string): Promise<number[]> {
     setCachedEmbedding(cacheKey, embedding)
   }
 
-  return embedding
+  return {
+    embedding,
+    totalTokens,
+    model: provider.model,
+    provider: provider.providerId,
+    cached: false,
+    latencyMs,
+  }
+}
+
+async function generateEmbeddingVector(text: string): Promise<number[]> {
+  const result = await generateEmbeddingWithMeta(text)
+  return result.embedding
 }
 
 /**
@@ -352,16 +395,37 @@ export const generateAndStore = internalAction({
     tableName: memoryTableNames,
     documentId: v.string(),
     content: v.string(),
+    organizationId: v.optional(v.id('organizations')),
   },
   handler: async (ctx, args): Promise<void> => {
     try {
-      const embedding = await generateEmbeddingVector(args.content)
+      const result = await generateEmbeddingWithMeta(args.content)
 
       await ctx.runMutation(internal.embedding.patchEmbedding, {
         tableName: args.tableName,
         documentId: args.documentId,
-        embedding,
+        embedding: result.embedding,
       })
+
+      if (!result.cached && args.organizationId && result.totalTokens > 0) {
+        const costUsd = estimateEmbeddingCost(result.model, result.totalTokens)
+        try {
+          await ctx.runMutation(internal.llmUsage.record, {
+            organizationId: args.organizationId,
+            model: result.model,
+            provider: result.provider,
+            inputTokens: result.totalTokens,
+            outputTokens: 0,
+            totalTokens: result.totalTokens,
+            estimatedCostUsd: costUsd,
+            purpose: 'embedding' as const,
+            cached: false,
+            latencyMs: result.latencyMs,
+          })
+        } catch {
+          // Non-critical: swallow usage recording failures
+        }
+      }
 
       if (process.env.DEBUG_MEMORY === 'true') {
         console.log('[Embedding] Stored:', {

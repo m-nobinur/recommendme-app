@@ -208,6 +208,7 @@ export const seedAllMemories = mutation({
         tableName: 'businessMemories' as const,
         documentId: id,
         content: mem.content,
+        organizationId: orgId,
       })
       counts.business++
     }
@@ -263,6 +264,7 @@ export const seedAllMemories = mutation({
         tableName: 'agentMemories' as const,
         documentId: id,
         content: mem.content,
+        organizationId: orgId,
       })
       counts.agent++
     }

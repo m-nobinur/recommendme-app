@@ -138,6 +138,7 @@ export const create = mutation({
       tableName: 'businessMemories' as const,
       documentId: id,
       content: args.content,
+      organizationId: args.organizationId,
     })
 
     return id
@@ -300,6 +301,7 @@ export const update = mutation({
         tableName: 'businessMemories' as const,
         documentId: id,
         content: updates.content,
+        organizationId,
       })
     }
 

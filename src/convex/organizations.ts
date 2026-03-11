@@ -3,6 +3,13 @@ import type { Doc, Id } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
 import { authComponent } from './auth'
 
+const budgetTierValues = v.union(
+  v.literal('free'),
+  v.literal('starter'),
+  v.literal('pro'),
+  v.literal('enterprise')
+)
+
 function isAuthBypassEnabled(): boolean {
   return (
     process.env.NODE_ENV === 'test' ||
@@ -89,6 +96,7 @@ export const createOrganization = mutation({
       settings: {
         defaultAiProvider: 'openrouter',
         modelTier: 'smart',
+        budgetTier: 'starter',
       },
     })
 
@@ -132,6 +140,7 @@ export const updateOrganizationSettings = mutation({
     settings: v.object({
       defaultAiProvider: v.optional(v.string()),
       modelTier: v.optional(v.string()),
+      budgetTier: v.optional(budgetTierValues),
       nicheId: v.optional(v.string()),
       timezone: v.optional(v.string()),
     }),
@@ -212,6 +221,7 @@ export async function createOrganizationForSignup(
     settings: {
       defaultAiProvider: 'openrouter',
       modelTier: 'smart',
+      budgetTier: 'starter',
     },
   })
 

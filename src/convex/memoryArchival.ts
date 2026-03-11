@@ -384,6 +384,7 @@ export const insertConsolidatedMemory = internalMutation({
       tableName: 'businessMemories' as const,
       documentId: id,
       content: args.content,
+      organizationId: args.organizationId,
     })
 
     return id

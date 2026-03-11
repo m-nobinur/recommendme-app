@@ -85,6 +85,24 @@ crons.interval(
 )
 
 // ============================================
+// OBSERVABILITY: Trace & Usage Cleanup
+// ============================================
+
+crons.weekly(
+  'purge old traces',
+  { dayOfWeek: 'sunday', hourUTC: 6, minuteUTC: 0 },
+  internal.traces.purgeOldTraces,
+  {}
+)
+
+crons.monthly(
+  'purge old LLM usage',
+  { day: 1, hourUTC: 6, minuteUTC: 30 },
+  internal.llmUsage.purgeOldUsage,
+  {}
+)
+
+// ============================================
 // AGENT FRAMEWORK: Scheduled Agent Runs
 // ============================================
 

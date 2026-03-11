@@ -24,7 +24,23 @@ export interface ResolvedLLMProvider {
   url: string
   apiKey: string
   model: string
+  providerId: 'openrouter' | 'openai'
   name: string
+}
+
+export interface LLMUsageInfo {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  model: string
+  provider: string
+  latencyMs: number
+  exactCostUsd?: number
+}
+
+export interface LLMCallResult {
+  content: unknown
+  usage: LLMUsageInfo
 }
 
 /**
@@ -46,7 +62,13 @@ export function resolveLLMProvider(options?: {
     const provider = LLM_PROVIDERS[key]
     const apiKey = process.env[provider.envVar]
     if (apiKey?.trim()) {
-      return { url: provider.url, apiKey, model: provider.model, name: provider.name }
+      return {
+        url: provider.url,
+        apiKey,
+        model: provider.model,
+        providerId: key,
+        name: provider.name,
+      }
     }
   }
 
@@ -60,20 +82,48 @@ export function resolveLLMProvider(options?: {
   return null
 }
 
+function extractUsageFromResponse(
+  data: any,
+  provider: ResolvedLLMProvider,
+  latencyMs: number
+): LLMUsageInfo {
+  const usage = data?.usage
+  const inputTokens = usage?.prompt_tokens ?? 0
+  const outputTokens = usage?.completion_tokens ?? 0
+
+  let exactCostUsd: number | undefined
+  const rawCost = data?.usage?.total_cost ?? data?.total_cost
+  if (typeof rawCost === 'number' && rawCost > 0) {
+    exactCostUsd = rawCost
+  }
+
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: usage?.total_tokens ?? inputTokens + outputTokens,
+    model: provider.model,
+    provider: provider.providerId,
+    latencyMs,
+    exactCostUsd,
+  }
+}
+
 /**
  * Call an LLM provider with JSON response format and retry logic.
+ * Returns both the parsed content and usage metadata.
  */
-export async function callLLM(
+export async function callLLMWithUsage(
   provider: ResolvedLLMProvider,
   systemPrompt: string,
   userPrompt: string,
   temperature: number = 0,
   maxTokens: number = 2500
-): Promise<unknown> {
+): Promise<LLMCallResult> {
   let lastError: Error | null = null
 
   for (let attempt = 0; attempt <= MAX_LLM_RETRIES; attempt++) {
     let timeout: ReturnType<typeof setTimeout> | null = null
+    const attemptStart = Date.now()
     try {
       const controller = new AbortController()
       timeout = setTimeout(() => controller.abort(), LLM_REQUEST_TIMEOUT_MS)
@@ -113,7 +163,11 @@ export async function callLLM(
       const content = data.choices?.[0]?.message?.content
       if (!content) throw new Error('Empty response from LLM')
 
-      return JSON.parse(content)
+      const latencyMs = Date.now() - attemptStart
+      return {
+        content: JSON.parse(content),
+        usage: extractUsageFromResponse(data, provider, latencyMs),
+      }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         lastError = new Error(
@@ -133,4 +187,19 @@ export async function callLLM(
   }
 
   throw lastError ?? new Error('LLM call failed after retries')
+}
+
+/**
+ * Call an LLM provider with JSON response format and retry logic.
+ * Backward-compatible wrapper that discards usage info.
+ */
+export async function callLLM(
+  provider: ResolvedLLMProvider,
+  systemPrompt: string,
+  userPrompt: string,
+  temperature: number = 0,
+  maxTokens: number = 2500
+): Promise<unknown> {
+  const result = await callLLMWithUsage(provider, systemPrompt, userPrompt, temperature, maxTokens)
+  return result.content
 }

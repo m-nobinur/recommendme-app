@@ -1,4 +1,5 @@
 import { v } from 'convex/values'
+import { estimateCost } from '../lib/cost/pricing'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
@@ -153,11 +154,20 @@ interface ExtractionResult {
   }>
 }
 
+interface ExtractionLLMResult {
+  extraction: ExtractionResult
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  latencyMs: number
+  exactCostUsd?: number
+}
+
 async function callExtractionLLM(
   provider: ResolvedLLMProvider,
   conversationText: string,
   existingMemories: string[]
-): Promise<ExtractionResult> {
+): Promise<ExtractionLLMResult> {
   let userPrompt = `## Conversation Transcript\n\n${conversationText}`
 
   if (existingMemories.length > 0) {
@@ -170,8 +180,10 @@ async function callExtractionLLM(
   userPrompt += '\nExtract all relevant memories from the conversation above. Return JSON only.'
 
   let lastError: Error | null = null
+  const callStartMs = Date.now()
 
   for (let attempt = 0; attempt <= MAX_LLM_RETRIES; attempt++) {
+    const attemptStartMs = Date.now()
     try {
       const response = await fetch(provider.url, {
         method: 'POST',
@@ -210,12 +222,26 @@ async function callExtractionLLM(
         throw new Error('Empty response from extraction LLM')
       }
 
+      const usage = data.usage ?? {}
+      const inputTokens = usage.prompt_tokens ?? 0
+      const outputTokens = usage.completion_tokens ?? 0
+      const latencyMs = Date.now() - attemptStartMs
+      const rawCost = usage.total_cost ?? data.total_cost
+      const exactCostUsd = typeof rawCost === 'number' && rawCost > 0 ? rawCost : undefined
+
       const parsed = JSON.parse(content) as ExtractionResult
       return {
-        businessMemories: Array.isArray(parsed.businessMemories) ? parsed.businessMemories : [],
-        agentMemories: Array.isArray(parsed.agentMemories) ? parsed.agentMemories : [],
-        relations: Array.isArray(parsed.relations) ? parsed.relations : [],
-        corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
+        extraction: {
+          businessMemories: Array.isArray(parsed.businessMemories) ? parsed.businessMemories : [],
+          agentMemories: Array.isArray(parsed.agentMemories) ? parsed.agentMemories : [],
+          relations: Array.isArray(parsed.relations) ? parsed.relations : [],
+          corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
+        },
+        inputTokens,
+        outputTokens,
+        totalTokens: usage.total_tokens ?? inputTokens + outputTokens,
+        latencyMs,
+        exactCostUsd,
       }
     } catch (error) {
       if (error instanceof SyntaxError) {
@@ -235,7 +261,21 @@ async function callExtractionLLM(
     provider: provider.name,
     error: lastError?.message,
   })
-  return { businessMemories: [], agentMemories: [], relations: [], corrections: [] }
+  return {
+    extraction: { businessMemories: [], agentMemories: [], relations: [], corrections: [] },
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    latencyMs: Date.now() - callStartMs,
+  }
+}
+
+interface ToolSummaryUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  latencyMs: number
+  exactCostUsd?: number
 }
 
 async function summarizeToolOutcome(
@@ -244,10 +284,11 @@ async function summarizeToolOutcome(
   isSuccess: boolean,
   argsStr: string,
   resultStr: string
-): Promise<string> {
+): Promise<{ summary: string; usage?: ToolSummaryUsage }> {
   const fallback = isSuccess
     ? `Tool "${toolName}" succeeded: ${argsStr.slice(0, 100)}`
     : `Tool "${toolName}" failed: ${resultStr.slice(0, 100)}`
+  const startMs = Date.now()
 
   try {
     const response = await fetch(provider.url, {
@@ -277,15 +318,31 @@ async function summarizeToolOutcome(
     if (response.ok) {
       const data = await response.json()
       const content = data.choices?.[0]?.message?.content?.trim()
+      const usage = data.usage ?? {}
+      const inputTokens = usage.prompt_tokens ?? 0
+      const outputTokens = usage.completion_tokens ?? 0
+      const totalTokens = usage.total_tokens ?? inputTokens + outputTokens
+      const rawCost = usage.total_cost ?? data.total_cost
+      const exactCostUsd = typeof rawCost === 'number' && rawCost > 0 ? rawCost : undefined
+      const usageData: ToolSummaryUsage | undefined =
+        totalTokens > 0
+          ? {
+              inputTokens,
+              outputTokens,
+              totalTokens,
+              latencyMs: Date.now() - startMs,
+              exactCostUsd,
+            }
+          : undefined
       if (content && content.length >= 10 && content.length <= 500) {
-        return content
+        return { summary: content, usage: usageData }
       }
     }
   } catch {
     // Use fallback
   }
 
-  return fallback.slice(0, 500)
+  return { summary: fallback.slice(0, 500) }
 }
 
 export const getConversationMessages = internalQuery({
@@ -816,6 +873,7 @@ async function createExtractedMemories(
           tableName: 'businessMemories' as const,
           documentId: newId,
           content: mem.content,
+          organizationId,
         })
 
         correctionMatches = correctionMatches.filter((c) => c !== correctionForThisMem)
@@ -860,6 +918,7 @@ async function createExtractedMemories(
             tableName: 'businessMemories' as const,
             documentId: newId,
             content: mem.content,
+            organizationId,
           })
 
           memoriesCreated++
@@ -897,6 +956,7 @@ async function createExtractedMemories(
         tableName: 'businessMemories' as const,
         documentId: id,
         content: mem.content,
+        organizationId,
       })
 
       memoriesCreated++
@@ -948,6 +1008,7 @@ async function createExtractedMemories(
         tableName: 'agentMemories' as const,
         documentId: id,
         content: mem.content,
+        organizationId,
       })
 
       memoriesCreated++
@@ -1031,9 +1092,30 @@ async function processConversationEnd(
   }
 
   const conversationText = formatConversation(messages)
-  const extraction = await callExtractionLLM(provider, conversationText, existingMemories)
+  const llmResult = await callExtractionLLM(provider, conversationText, existingMemories)
+  if (llmResult.totalTokens > 0) {
+    try {
+      await ctx.runMutation(internal.llmUsage.record, {
+        organizationId: event.organizationId,
+        traceId: conversationId,
+        model: provider.model,
+        provider: provider.providerId,
+        inputTokens: llmResult.inputTokens,
+        outputTokens: llmResult.outputTokens,
+        totalTokens: llmResult.totalTokens,
+        estimatedCostUsd:
+          llmResult.exactCostUsd ??
+          estimateCost(provider.model, llmResult.inputTokens, llmResult.outputTokens),
+        purpose: 'extraction' as const,
+        cached: false,
+        latencyMs: llmResult.latencyMs,
+      })
+    } catch {
+      // Non-critical: swallow usage recording failures.
+    }
+  }
 
-  return createExtractedMemories(ctx, event.organizationId, extraction, event.sourceId)
+  return createExtractedMemories(ctx, event.organizationId, llmResult.extraction, event.sourceId)
 }
 
 async function processToolOutcome(
@@ -1056,10 +1138,43 @@ async function processToolOutcome(
   const argsStr = (eventData.args as string) ?? ''
   const resultStr = (eventData.result as string) ?? (eventData.error as string) ?? ''
 
-  const summary = await summarizeToolOutcome(provider, toolName, isSuccess, argsStr, resultStr)
+  const summaryResult = await summarizeToolOutcome(
+    provider,
+    toolName,
+    isSuccess,
+    argsStr,
+    resultStr
+  )
+  const summary = summaryResult.summary
 
   if (summary.length < 10) {
     return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+
+  if (summaryResult.usage && summaryResult.usage.totalTokens > 0) {
+    try {
+      await ctx.runMutation(internal.llmUsage.record, {
+        organizationId: event.organizationId,
+        traceId: event.sourceId,
+        model: provider.model,
+        provider: provider.providerId,
+        inputTokens: summaryResult.usage.inputTokens,
+        outputTokens: summaryResult.usage.outputTokens,
+        totalTokens: summaryResult.usage.totalTokens,
+        estimatedCostUsd:
+          summaryResult.usage.exactCostUsd ??
+          estimateCost(
+            provider.model,
+            summaryResult.usage.inputTokens,
+            summaryResult.usage.outputTokens
+          ),
+        purpose: 'summary' as const,
+        cached: false,
+        latencyMs: summaryResult.usage.latencyMs,
+      })
+    } catch {
+      // Non-critical: swallow usage recording failures.
+    }
   }
 
   try {
@@ -1075,6 +1190,7 @@ async function processToolOutcome(
       tableName: 'agentMemories' as const,
       documentId: id,
       content: summary.slice(0, 500),
+      organizationId: event.organizationId,
     })
 
     return { memoriesCreated: 1, relationsCreated: 0 }
@@ -1143,6 +1259,7 @@ async function processUserCorrectionEvent(
           tableName: 'businessMemories' as const,
           documentId: newId,
           content: newContent.slice(0, 500),
+          organizationId: event.organizationId,
         })
         return { memoriesCreated: 1, relationsCreated: 0 }
       }
@@ -1162,6 +1279,7 @@ async function processUserCorrectionEvent(
       tableName: 'businessMemories' as const,
       documentId: id,
       content: newContent.slice(0, 500),
+      organizationId: event.organizationId,
     })
     return { memoriesCreated: 1, relationsCreated: 0 }
   } catch (error) {
@@ -1205,6 +1323,7 @@ async function processUserInputEvent(
       tableName: 'businessMemories' as const,
       documentId: id,
       content: content.slice(0, 500),
+      organizationId: event.organizationId,
     })
 
     return { memoriesCreated: 1, relationsCreated: 0 }
@@ -1266,6 +1385,7 @@ async function processFeedbackOrApprovalEvent(
       tableName: 'agentMemories' as const,
       documentId: id,
       content: normalized,
+      organizationId: event.organizationId,
     })
 
     return { memoriesCreated: 1, relationsCreated: 0 }
@@ -1576,23 +1696,44 @@ export const reExtractConversation = internalAction({
     }
 
     const conversationText = formatConversation(messages)
-    const extraction = await callExtractionLLM(provider, conversationText, existingMemories)
+    const llmResult = await callExtractionLLM(provider, conversationText, existingMemories)
 
     if (DEBUG) {
       console.log('[Extraction] reExtractConversation LLM result:', {
         conversationId: args.conversationId,
-        businessMemories: extraction.businessMemories.length,
-        agentMemories: extraction.agentMemories.length,
-        relations: extraction.relations.length,
+        businessMemories: llmResult.extraction.businessMemories.length,
+        agentMemories: llmResult.extraction.agentMemories.length,
+        relations: llmResult.extraction.relations.length,
       })
     }
 
     const result = await createExtractedMemories(
       ctx,
       args.organizationId,
-      extraction,
+      llmResult.extraction,
       args.conversationId
     )
+
+    if (llmResult.totalTokens > 0) {
+      try {
+        await ctx.runMutation(internal.llmUsage.record, {
+          organizationId: args.organizationId,
+          model: provider.model,
+          provider: provider.providerId,
+          inputTokens: llmResult.inputTokens,
+          outputTokens: llmResult.outputTokens,
+          totalTokens: llmResult.totalTokens,
+          estimatedCostUsd:
+            llmResult.exactCostUsd ??
+            estimateCost(provider.model, llmResult.inputTokens, llmResult.outputTokens),
+          purpose: 'extraction' as const,
+          cached: false,
+          latencyMs: llmResult.latencyMs,
+        })
+      } catch {
+        // Non-critical: swallow usage recording failures
+      }
+    }
 
     return { ...result, messageCount: messages.length }
   },

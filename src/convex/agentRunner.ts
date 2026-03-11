@@ -40,7 +40,8 @@ import {
   resolveTimezone,
   todayInTimezone,
 } from './lib/timezone'
-import { callLLM, resolveLLMProvider } from './llmProvider'
+import type { LLMUsageInfo } from './llmProvider'
+import { callLLMWithUsage, resolveLLMProvider } from './llmProvider'
 
 const ORG_EXECUTION_BATCH_SIZE = 10
 const MIN_REMINDER_WINDOW_HOURS = 1
@@ -59,6 +60,8 @@ const MIN_SALES_BATCH_SIZE = 1
 const MAX_SALES_BATCH_SIZE = 200
 const MIN_SALES_HIGH_VALUE = 0
 const MAX_SALES_HIGH_VALUE = 1_000_000
+
+import { estimateCost } from '../lib/cost/pricing'
 
 type PlannedAction = {
   type: string
@@ -583,6 +586,7 @@ export const runAgentForOrg = internalAction({
         reasoning: string
       }
       let agentConfig: typeof FOLLOWUP_CONFIG
+      let llmUsage: LLMUsageInfo | undefined
 
       if (args.agentType === 'reminder') {
         const tz = resolveTimezone(args.timezone)
@@ -647,8 +651,15 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
-        const rawPlan = await callLLM(provider, REMINDER_SYSTEM_PROMPT, userPrompt, 0.1, 2500)
-        plan = validateReminderPlan(rawPlan)
+        const llmResult = await callLLMWithUsage(
+          provider,
+          REMINDER_SYSTEM_PROMPT,
+          userPrompt,
+          0.1,
+          2500
+        )
+        llmUsage = llmResult.usage
+        plan = validateReminderPlan(llmResult.content)
         agentConfig = REMINDER_CONFIG
       } else if (args.agentType === 'invoice') {
         const now = Date.now()
@@ -750,8 +761,15 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
-        const rawPlan = await callLLM(provider, INVOICE_SYSTEM_PROMPT, userPrompt, 0.1, 2500)
-        plan = validateInvoicePlan(rawPlan)
+        const llmResult = await callLLMWithUsage(
+          provider,
+          INVOICE_SYSTEM_PROMPT,
+          userPrompt,
+          0.1,
+          2500
+        )
+        llmUsage = llmResult.usage
+        plan = validateInvoicePlan(llmResult.content)
         agentConfig = INVOICE_CONFIG
       } else if (args.agentType === 'sales') {
         const salesSettings = sanitizeSalesSettings(args.salesSettings)
@@ -869,8 +887,15 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
-        const rawPlan = await callLLM(provider, SALES_SYSTEM_PROMPT, userPrompt, 0.1, 3000)
-        plan = validateSalesPlan(rawPlan)
+        const llmResult = await callLLMWithUsage(
+          provider,
+          SALES_SYSTEM_PROMPT,
+          userPrompt,
+          0.1,
+          3000
+        )
+        llmUsage = llmResult.usage
+        plan = validateSalesPlan(llmResult.content)
         agentConfig = SALES_CONFIG
       } else {
         const leads = await ctx.runQuery(internal.agentRunner.getStaleLeads, {
@@ -926,8 +951,15 @@ export const runAgentForOrg = internalAction({
         )
 
         const provider = resolveLLMProvider()
-        const rawPlan = await callLLM(provider, FOLLOWUP_SYSTEM_PROMPT, userPrompt, 0.1, 2500)
-        plan = validateFollowupPlan(rawPlan)
+        const llmResult = await callLLMWithUsage(
+          provider,
+          FOLLOWUP_SYSTEM_PROMPT,
+          userPrompt,
+          0.1,
+          2500
+        )
+        llmUsage = llmResult.usage
+        plan = validateFollowupPlan(llmResult.content)
         agentConfig = FOLLOWUP_CONFIG
       }
 
@@ -1097,6 +1129,25 @@ export const runAgentForOrg = internalAction({
         failureCount: failures.length,
         rejectedForApprovalCount: rejectedForApproval,
       })
+
+      if (llmUsage) {
+        const cost =
+          llmUsage.exactCostUsd ??
+          estimateCost(llmUsage.model, llmUsage.inputTokens, llmUsage.outputTokens)
+        await ctx.scheduler.runAfter(0, internal.llmUsage.record, {
+          organizationId: args.organizationId,
+          traceId: String(executionId),
+          model: llmUsage.model,
+          provider: llmUsage.provider,
+          inputTokens: llmUsage.inputTokens,
+          outputTokens: llmUsage.outputTokens,
+          totalTokens: llmUsage.totalTokens,
+          estimatedCostUsd: cost,
+          purpose: 'agent' as const,
+          cached: false,
+          latencyMs: llmUsage.latencyMs,
+        })
+      }
 
       await ctx.runMutation(internal.agentExecutions.complete, {
         id: executionId,

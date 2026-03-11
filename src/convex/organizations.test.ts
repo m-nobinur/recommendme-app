@@ -158,6 +158,7 @@ describe('createOrganizationForSignup', () => {
     const settings = inserted[0].settings as Record<string, string>
     assert.equal(settings.defaultAiProvider, 'openrouter')
     assert.equal(settings.modelTier, 'smart')
+    assert.equal(settings.budgetTier, 'starter')
   })
 
   it('uses slug hint to reduce signup slug collisions', async () => {
