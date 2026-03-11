@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Security Hardening (Phase 9b)
+- Added server-side security rate limiting in `src/lib/security/rateLimiting.ts` with distributed Convex-backed enforcement in `src/convex/security.ts` and route-level enforcement in `src/app/api/chat/route.ts` and `src/app/api/approvals/route.ts` (returns HTTP `429` + `Retry-After`)
+- Added tenant-isolation error classification helper `src/lib/security/tenantIsolation.ts` and structured security-event logging through new Convex mutation `auditLogs.recordSecurityEvent`
+- Added layer-aware PII policy helpers:
+  - `src/lib/security/pii.ts` for shared detection/redaction policy
+  - `src/convex/memoryValidation.ts` for Convex-runtime enforcement (`platform` block, `niche/agent` redact, `business` allow)
+- Applied PII policy across memory write paths:
+  - `src/convex/platformMemories.ts`
+  - `src/convex/nicheMemories.ts`
+  - `src/convex/agentMemories.ts`
+  - `src/convex/businessMemories.ts`
+- Added security-focused tests and validation artifacts:
+  - `src/lib/security/rateLimiting.test.ts`
+  - `src/lib/security/pii.test.ts`
+  - `src/lib/security/tenantIsolation.test.ts`
+  - `src/convex/memoryValidation.test.ts`
+  - `src/convex/memoryExtraction.test.ts`
+  - `src/convex/agentRunner.security.test.ts`
+  - `src/convex/security.test.ts`
+  - updates to `src/convex/auditLogs.test.ts`
+  - `scripts/test-security-hardening.sh`
+- Hardened agent-memory PII enforcement on internal write paths (`memoryExtraction.insertAgentMemory`, `agentRunner.recordAgentLearning`) so redaction is consistently applied before persistence and embedding
+- Made security-event audit writes non-blocking on rejection/error paths in chat and approval APIs to reduce tail latency impact under incident load
+- Tenant-isolation error classification now supports structured error codes in addition to message matching
+
 #### Observability, Tracing & Cost Management (Phase 10a)
 - Trace context infrastructure (`src/lib/tracing/`) with `TraceContext` class, `withSpan`/`withSpanSync` helpers, and typed span attributes for LLM, retrieval, and tool spans
 - Convex `traces` table with indexes (`by_trace`, `by_org_created`, `by_span_type_created`, `by_created`) and CRUD mutations (`record`, `recordBatch`, `recordSpans`, `listByTrace`, `listByOrg`, `purgeOldTraces`)
