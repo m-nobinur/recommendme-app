@@ -164,10 +164,10 @@ function formatPlatformMemories(
  * Format selected memories into natural-language context text for the system prompt.
  *
  * Ordering priority:
- * 1. Business memories (instructions first, then facts/prefs, relationships, episodic)
- * 2. Agent memories (learned patterns)
- * 3. Niche memories (industry knowledge)
- * 4. Platform memories (best practices)
+ * 1. Platform memories (stable global guidance; cache-friendly)
+ * 2. Niche memories (shared industry guidance; cache-friendly)
+ * 3. Business memories (tenant-specific dynamic knowledge)
+ * 4. Agent memories (execution-learned dynamic patterns)
  */
 export function formatContext(selected: {
   platform: Array<ScoredMemory<unknown>>
@@ -188,10 +188,10 @@ export function formatContext(selected: {
   const parts: string[] = ['---', '## What You Know', '']
   const allIds: string[] = []
 
+  formatPlatformMemories(selected.platform, parts, allIds)
+  formatNicheMemories(selected.niche, parts, allIds)
   formatBusinessMemories(selected.business, parts, allIds)
   formatAgentMemories(selected.agent, parts, allIds)
-  formatNicheMemories(selected.niche, parts, allIds)
-  formatPlatformMemories(selected.platform, parts, allIds)
 
   parts.push('---')
 
