@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### Observability, Tracing & Cost Management (Phase 10a)
+- Trace context infrastructure (`src/lib/tracing/`) with `TraceContext` class, `withSpan`/`withSpanSync` helpers, and typed span attributes for LLM, retrieval, and tool spans
+- Convex `traces` table with indexes (`by_trace`, `by_org_created`, `by_span_type_created`, `by_created`) and CRUD mutations (`record`, `recordBatch`, `recordSpans`, `listByTrace`, `listByOrg`, `purgeOldTraces`)
+- Convex `llmUsage` table with indexes (`by_org_created`, `by_org_purpose_created`, `by_org_model_created`, `by_created`) and functions (`record`, `recordBatch`, `getOrgUsage`, `getOrgBudgetStatus`, `purgeOldUsage`)
+- Model pricing engine (`src/lib/cost/pricing.ts`) with static pricing table for gpt-4o-mini, gpt-4o, text-embedding-3-large/small, gemini-2.0-flash, gemini-1.5-pro; `estimateCost()` and `estimateEmbeddingCost()` functions
+- Budget tier system (`src/lib/cost/budgets.ts`) with Free/Starter/Pro/Enterprise tiers, daily+monthly token limits, and `checkBudget()` function returning ok/warning/exceeded status
+- `callLLMWithUsage()` in `src/convex/llmProvider.ts` -- new instrumented variant of `callLLM` that extracts `prompt_tokens`, `completion_tokens`, `total_tokens` from OpenAI-compatible API responses; backward-compatible `callLLM` wrapper preserved
+- Chat route (`src/app/api/chat/route.ts`) instrumented with `TraceContext` root span and `withSpan` around memory retrieval; completed trace spans are persisted to Convex asynchronously via `after()`
+- Agent runner (`src/convex/agentRunner.ts`) instrumented: all 4 agent types (followup, reminder, invoice, sales) now use `callLLMWithUsage` and record per-execution LLM usage to `llmUsage` table
+- Memory extraction pipeline (`src/convex/memoryExtraction.ts`) updated to return per-call token usage from `callExtractionLLM`; `reExtractConversation` action records usage to `llmUsage` table
+- Embedding service (`src/convex/embedding.ts`) updated: `generateAndStore` records per-embedding token usage to `llmUsage` table with model-aware cost estimation
+- Shared validators (`src/convex/lib/validators.ts`) extended with `spanTypeValues`, `spanStatusValues`, `llmPurposeValues` and corresponding TypeScript types
+- Cleanup crons added: weekly `traces.purgeOldTraces` (30-day retention, Sundays 06:00 UTC), monthly `llmUsage.purgeOldUsage` (90-day retention, 1st of month 06:30 UTC)
+- Validation script `scripts/test-observability.sh` with expanded automated checks covering file existence, schema tables/indexes, module exports, instrumentation wiring, and cron registration
+- AI SDK native `onFinish` usage tracking on `streamText` in chat route -- captures real token counts from the SDK, recorded non-blocking via `after()`
+- OpenRouter `total_cost` extraction in `callLLMWithUsage` -- reads exact cost from API responses when available, falls back to estimation
+- Unified pricing source (`src/lib/cost/pricing.ts`) now powers both Next.js chat usage tracking and Convex server cost estimation (agentRunner, embedding, memoryExtraction)
+- Public mutations `recordSpans` and `recordUsage` secured with `assertMemoryApiToken` auth check
+- Agent runner usage recording converted from blocking `await` to fire-and-forget `ctx.scheduler.runAfter(0, ...)`
+- Trace query hardening: `traces.listByTrace` now requires authenticated org context and reads through an org-scoped index (`by_org_trace_created`) to prevent cross-tenant trace lookup by raw `traceId`
+- Extraction usage coverage hardening: main `conversation_end` extraction path now records `llmUsage` (not only manual re-extraction), and tool-outcome summarization records `llmUsage` as `purpose: 'summary'`
+- Budget query hardening: `llmUsage.getOrgBudgetStatus` now takes caller-provided `nowMs` (no `Date.now()` in query), uses month-bounded index scans, and returns a `truncated` flag for visibility when scan limits are hit
+- Retention reliability hardening: `traces.purgeOldTraces` and `llmUsage.purgeOldUsage` now self-schedule follow-up batches when backlog exceeds a single run
+
+#### Observability, Tracing & Cost Management (Phase 10b)
+- Added `src/lib/cost/manager.ts` for budget-aware model routing (`ok`/`warning`/`exceeded`) with tier downgrade logic and reduced-context behavior
+- Added organization-level `budgetTier` settings (`free|starter|pro|enterprise`) in `src/convex/schema.ts` and `src/convex/organizations.ts` with default `starter`
+- Chat route now enforces real-time budget guardrails:
+  - warning threshold (`>=80%`) downgrades model tier and reduces context load
+  - exceeded threshold (`>=100%`) returns graceful HTTP `429` with `Retry-After`
+- Added optional Langfuse ingestion sync (`src/lib/tracing/langfuse.ts`) and wired chat trace persistence to send trace/span/generation data when enabled by env vars
+- Context formatting updated for cache-friendly ordering: platform/niche memory sections are emitted before business/agent sections
+- System prompt v2 now places static instructions before dynamic memory blocks to improve prompt prefix cache potential
+- Added focused tests:
+  - `src/lib/cost/manager.test.ts`
+  - `src/lib/ai/memory/contextFormatter.test.ts`
+  - `src/lib/tracing/langfuse.test.ts`
+- Expanded `scripts/test-observability.sh` with Phase 10b checks and new test gates
+- Budget enforcement fail-closed hardening: truncated budget scans now return graceful HTTP `429` (no warning-mode pass-through when usage visibility is incomplete)
+- Budget check load hardening: short-lived org-level budget snapshot caching added on the API runtime path to reduce repeated hot-path scans
+- Trace ordering hardening: `traces.listByTrace` now reads via `by_org_trace_start` for deterministic span chronology
+- Provider analytics normalization: Convex-side usage tracking now records provider IDs as canonical lowercase values (`openrouter` / `openai`)
+- Manual re-extraction usage now preserves provider exact-cost metadata when available (fallback remains estimation)
+
 #### Approval Workflow Core (Phase 9a)
 - Approval queue persistence with `approvalQueue` table + APIs in `src/convex/approvalQueue.ts`
 - Append-only audit logging with `auditLogs` table + APIs in `src/convex/auditLogs.ts`
