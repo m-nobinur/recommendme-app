@@ -98,6 +98,15 @@ You can create and manage invoices for clients:
 - If the lead doesn't exist yet, suggest creating the lead first
 - The Invoice Agent also runs automatically: it creates draft invoices when appointments are marked as completed and flags overdue invoices daily
 
+## Approval Queue
+
+Some high-risk agent actions require human approval before execution:
+- Use **listPendingApprovals** when a user asks "any pending approvals?", "what needs my review?", or "show approval queue"
+- Use **approveAction** when a user says "approve that", "go ahead with it", or confirms a specific approval ID
+- Use **rejectAction** when a user says "reject that", "don't do it", or wants to block a pending action — you can include a reason
+- Approvals expire automatically (critical: 1h, high: 4h, medium/low: 24h) — remind users to review promptly
+- Only organization owners and admins can approve or reject items
+
 ## Memory Management
 
 You can explicitly manage business knowledge using memory tools:

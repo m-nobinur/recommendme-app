@@ -331,6 +331,7 @@ export function createCRMTools(ctx: ToolContext) {
  */
 export type CRMTools = ReturnType<typeof createCRMTools>
 
+export { type ApprovalTools, createApprovalTools } from './approval'
 export { createInvoiceTools, type InvoiceTools } from './invoice'
 export { createMemoryTools, type MemoryTools } from './memory'
 export { createReminderTools, type ReminderTools } from './reminder'
