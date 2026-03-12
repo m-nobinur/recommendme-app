@@ -3,6 +3,7 @@ import { isValid, parseISO } from 'date-fns'
 import type { Id } from './_generated/dataModel'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
+import { createNotification } from './lib/notify'
 
 const invoiceStatusValues = v.union(v.literal('draft'), v.literal('sent'), v.literal('paid'))
 const PROPOSAL_TRANSITION_STATUSES = new Set(['New', 'Contacted', 'Qualified'])
@@ -224,6 +225,20 @@ export const update = mutation({
     }
 
     await ctx.db.patch(id, filteredUpdates)
+
+    if (args.status === 'paid' && invoice.status !== 'paid') {
+      await createNotification(ctx, {
+        organizationId: args.organizationId,
+        userId: args.userId,
+        category: 'crm',
+        severity: 'success',
+        title: `Invoice for ${invoice.leadName} marked as paid`,
+        body: `$${invoice.amount.toFixed(2)}`,
+        referenceType: 'invoice',
+        referenceId: String(id),
+      })
+    }
+
     return { success: true }
   },
 })

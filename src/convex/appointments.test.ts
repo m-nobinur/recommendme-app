@@ -126,8 +126,8 @@ describe('appointments.create', () => {
           if (id === 'lead_1') return { _id: 'lead_1', organizationId: 'org_1', name: 'Real Name' }
           return null
         },
-        insert: async (_table: string, doc: Record<string, unknown>) => {
-          insertedDoc = doc
+        insert: async (table: string, doc: Record<string, unknown>) => {
+          if (table === 'appointments') insertedDoc = doc
           return 'appt_new'
         },
       },

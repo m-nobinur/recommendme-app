@@ -7,6 +7,7 @@ import { X } from 'lucide-react'
 import { memo, useCallback, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils/cn'
+import { showToast } from '@/lib/utils/toast'
 import type { MemoryType } from '@/types'
 import type { MemoryCardData } from './MemoryCard'
 
@@ -71,9 +72,11 @@ const MemoryEditor = memo(function MemoryEditor({
           source: 'explicit',
         })
       }
+      showToast('success', isEditing ? 'Memory updated' : 'Memory created')
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Save failed.')
+      showToast('error', isEditing ? 'Failed to update memory' : 'Failed to create memory')
     } finally {
       setIsSaving(false)
     }

@@ -7,6 +7,7 @@ import { AlertTriangle, Check, Clock, X } from 'lucide-react'
 import { memo, useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils/cn'
+import { showToast } from '@/lib/utils/toast'
 
 type RiskLevel = 'low' | 'medium' | 'high' | 'critical'
 
@@ -98,8 +99,13 @@ export const ApprovalCard = memo(function ApprovalCard({
         })
         setLocalStatus(result.status)
         setShowRejectInput(false)
+        showToast(
+          decision === 'approve' ? 'success' : 'info',
+          decision === 'approve' ? 'Action approved' : 'Action rejected'
+        )
       } catch (err) {
         console.error('Review error:', err)
+        showToast('error', 'Failed to submit review')
       } finally {
         setIsSubmitting(false)
       }

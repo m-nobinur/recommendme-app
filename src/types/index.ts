@@ -433,11 +433,32 @@ export type {
   QualitySnapshot,
 } from './learning'
 
+export type NotificationCategory =
+  | 'approval'
+  | 'agent'
+  | 'crm'
+  | 'memory'
+  | 'budget'
+  | 'communication'
+  | 'system'
+
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error'
+
 export interface Notification {
-  id: string
+  _id: string
+  organizationId: string
+  userId?: string
+  category: NotificationCategory
+  severity: NotificationSeverity
   title: string
-  time: string
-  read: boolean
-  type?: 'info' | 'success' | 'warning' | 'error'
-  link?: string
+  body?: string
+  actionUrl?: string
+  actionLabel?: string
+  referenceType?: string
+  referenceId?: string
+  isRead: boolean
+  isDismissed: boolean
+  readAt?: number
+  expiresAt?: number
+  createdAt: number
 }

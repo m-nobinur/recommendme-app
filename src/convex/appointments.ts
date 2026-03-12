@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
+import { createNotification } from './lib/notify'
 import { resolveTimezone, todayInTimezone } from './lib/timezone'
 
 const appointmentStatusValues = v.union(
@@ -46,6 +47,17 @@ export const create = mutation({
       createdAt: now,
       createdBy: args.userId,
       updatedAt: now,
+    })
+
+    await createNotification(ctx, {
+      organizationId: args.organizationId,
+      userId: args.userId,
+      category: 'crm',
+      severity: 'success',
+      title: `Appointment scheduled with ${lead.name}`,
+      body: `${args.date} at ${args.time}`,
+      referenceType: 'appointment',
+      referenceId: String(appointmentId),
     })
 
     return appointmentId
@@ -153,6 +165,16 @@ export const update = mutation({
       await ctx.scheduler.runAfter(0, internal.agentRunner.runInvoiceAgentForAppointment, {
         organizationId: args.organizationId,
         appointmentId: args.id,
+      })
+
+      await createNotification(ctx, {
+        organizationId: args.organizationId,
+        userId: args.userId,
+        category: 'crm',
+        severity: 'success',
+        title: `Appointment with ${appointment.leadName} completed`,
+        referenceType: 'appointment',
+        referenceId: String(args.id),
       })
     }
 

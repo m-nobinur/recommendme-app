@@ -1279,6 +1279,27 @@ export const runAgentForOrg = internalAction({
         error: executionOutcome.error,
       })
 
+      if (executionOutcome.status === 'completed' && executed > 0) {
+        await ctx.runMutation(internal.notifications.create, {
+          organizationId: args.organizationId,
+          category: 'agent',
+          severity: 'success',
+          title: `${args.agentType} agent completed`,
+          body: `Executed ${executed} action${executed > 1 ? 's' : ''} successfully`,
+          referenceType: 'agentExecution',
+          referenceId: String(executionId),
+        })
+      } else if (executionOutcome.status === 'failed') {
+        await ctx.runMutation(internal.notifications.create, {
+          organizationId: args.organizationId,
+          category: 'agent',
+          severity: 'error',
+          title: `${args.agentType} agent failed`,
+          body: executionOutcome.error?.slice(0, 200),
+          referenceType: 'agentExecution',
+          referenceId: String(executionId),
+        })
+      }
       return {
         status: executionOutcome.status,
         error: executionOutcome.error,
@@ -1293,6 +1314,15 @@ export const runAgentForOrg = internalAction({
       await ctx.runMutation(internal.agentExecutions.fail, {
         id: executionId,
         error: message,
+      })
+      await ctx.runMutation(internal.notifications.create, {
+        organizationId: args.organizationId,
+        category: 'agent',
+        severity: 'error',
+        title: `${args.agentType} agent error`,
+        body: message.slice(0, 200),
+        referenceType: 'agentExecution',
+        referenceId: String(executionId),
       })
       console.error('[AgentRunner] Execution failed:', {
         organizationId: String(args.organizationId),

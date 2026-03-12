@@ -230,6 +230,18 @@ export const runQualityMonitorCheck = internalAction({
             },
             riskLevel: 'medium' as const,
           })
+
+          await ctx.runMutation(internal.notifications.create, {
+            organizationId: orgId as any,
+            category: 'memory' as const,
+            severity: 'warning' as const,
+            title: 'Memory quality alert',
+            body:
+              snapshot.alertReason ??
+              `Quality score dropped to ${(snapshot.overallScore * 100).toFixed(0)}%`,
+            actionUrl: '/memory',
+            actionLabel: 'View',
+          })
         } else if (memoryStats.totalActive > 0) {
           await ctx.runMutation(internal.auditLogs.append, {
             organizationId: orgId as any,

@@ -213,4 +213,15 @@ crons.daily(
   {}
 )
 
+// ============================================
+// NOTIFICATIONS: Cleanup
+// ============================================
+
+crons.daily(
+  'notification cleanup',
+  { hourUTC: 5, minuteUTC: 0 },
+  internal.notifications.cleanup,
+  {}
+)
+
 export default crons

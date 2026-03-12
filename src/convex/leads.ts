@@ -3,6 +3,7 @@ import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
 import { assertUserInOrganization } from './lib/auth'
+import { createNotification } from './lib/notify'
 
 const leadStatusValues = v.union(
   v.literal('New'),
@@ -90,6 +91,18 @@ export const update = mutation({
         organizationId,
         leadId: id,
       })
+
+      if (args.status === 'Booked' || args.status === 'Closed') {
+        await createNotification(ctx, {
+          organizationId,
+          userId: args.userId,
+          category: 'crm',
+          severity: args.status === 'Booked' ? 'success' : 'info',
+          title: `Lead "${existing.name}" moved to ${args.status}`,
+          referenceType: 'lead',
+          referenceId: String(id),
+        })
+      }
     }
 
     return { success: true }

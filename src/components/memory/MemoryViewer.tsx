@@ -6,6 +6,7 @@ import { useMutation, useQuery } from 'convex/react'
 import { Brain } from 'lucide-react'
 import { memo, useCallback, useMemo, useState } from 'react'
 import { Skeleton } from '@/components/ui/Skeleton'
+import { showToast } from '@/lib/utils/toast'
 import type { MemoryCardData } from './MemoryCard'
 import { MemoryCard } from './MemoryCard'
 import { MemoryEditor } from './MemoryEditor'
@@ -94,8 +95,10 @@ const MemoryViewer = memo(function MemoryViewer({
     async (id: Id<'businessMemories'>) => {
       try {
         await archiveMutation({ id, organizationId })
+        showToast('success', 'Memory archived')
       } catch (err) {
         console.error('Archive error:', err)
+        showToast('error', 'Failed to archive memory')
       }
     },
     [archiveMutation, organizationId]
@@ -106,8 +109,10 @@ const MemoryViewer = memo(function MemoryViewer({
       if (!confirm('Delete this memory? This cannot be undone.')) return
       try {
         await deleteMutation({ id, organizationId })
+        showToast('success', 'Memory deleted')
       } catch (err) {
         console.error('Delete error:', err)
+        showToast('error', 'Failed to delete memory')
       }
     },
     [deleteMutation, organizationId]

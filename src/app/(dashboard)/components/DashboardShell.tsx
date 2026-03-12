@@ -4,7 +4,7 @@ import { api } from '@convex/_generated/api'
 import { useQuery } from 'convex/react'
 import { useRouter } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader'
 import { DashboardSidebarToggle } from '@/components/dashboard/DashboardSidebarToggle'
 import { DashboardView } from '@/components/dashboard/DashboardView'
@@ -12,27 +12,19 @@ import { useHeader } from '@/contexts'
 import { signOut } from '@/lib/auth/client'
 import { ROUTES, UI, Z_INDEX } from '@/lib/constants'
 import { useDevModeStore } from '@/stores'
-import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, Notification, User } from '@/types'
+import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, User } from '@/types'
 
 interface DashboardShellProps {
   children: ReactNode
   user: User
-  notifications?: Notification[]
 }
 
-export function DashboardShell({
-  children,
-  user,
-  notifications: initialNotifications = [],
-}: DashboardShellProps) {
+export function DashboardShell({ children, user }: DashboardShellProps) {
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [sidebarDataActivated, setSidebarDataActivated] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const [notifications, setNotifications] = useState<Notification[]>(initialNotifications)
   const { isHeaderVisible } = useHeader()
-  const approvalNotificationIdsRef = useRef<Set<string>>(new Set())
-  const [nowMs, setNowMs] = useState(() => Date.now())
 
   const isDev = process.env.NODE_ENV === 'development'
   const { authMode } = useDevModeStore()
@@ -54,22 +46,7 @@ export function DashboardShell({
     resolvedAuthId ? { authUserId: resolvedAuthId } : 'skip'
   )
 
-  useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 30_000)
-    return () => clearInterval(id)
-  }, [])
-
-  const pendingApprovals = useQuery(
-    api.approvalQueue.listPending,
-    appUser
-      ? {
-          userId: appUser._id,
-          organizationId: appUser.organizationId,
-          now: nowMs,
-          limit: 10,
-        }
-      : 'skip'
-  )
+  const organizationId = appUser?.organizationId
 
   const leadsData = useQuery(
     api.leads.list,
@@ -131,50 +108,6 @@ export function DashboardShell({
     [invoicesData]
   )
 
-  const approvalNotifications = useMemo(
-    () =>
-      (pendingApprovals ?? []).map(
-        (item: { _id: string; description?: string; riskLevel: string; createdAt: number }) => ({
-          id: item._id,
-          title: item.description ?? `Pending ${item.riskLevel}-risk approval`,
-          type: 'warning' as const,
-          read: false,
-          time: new Date(item.createdAt).toLocaleString(),
-        })
-      ),
-    [pendingApprovals]
-  )
-
-  const mergedNotifications = useMemo(() => {
-    const latestApprovalIds = new Set(approvalNotifications.map((notification) => notification.id))
-    const previousApprovalIds = approvalNotificationIdsRef.current
-    const previousById = new Map(
-      notifications.map((notification) => [notification.id, notification])
-    )
-
-    const syncedApprovalNotifications = approvalNotifications.map((notification) => {
-      const existing = previousById.get(notification.id)
-      return existing ? { ...notification, read: existing.read } : notification
-    })
-
-    const retainedNonApprovalNotifications = notifications.filter((notification) => {
-      if (!previousApprovalIds.has(notification.id)) {
-        return true
-      }
-      return latestApprovalIds.has(notification.id)
-    })
-
-    const retainedIds = new Set(syncedApprovalNotifications.map((notification) => notification.id))
-    const passthroughNotifications = retainedNonApprovalNotifications.filter(
-      (notification) => !retainedIds.has(notification.id)
-    )
-
-    return {
-      list: [...syncedApprovalNotifications, ...passthroughNotifications],
-      latestApprovalIds,
-    }
-  }, [approvalNotifications, notifications])
-
   const handleSignOut = useCallback(async () => {
     setIsSigningOut(true)
     try {
@@ -190,37 +123,10 @@ export function DashboardShell({
     setSidebarOpen((prev) => !prev)
   }, [])
 
-  useEffect(() => {
-    const prevIds = notifications.map((n) => n.id).join('|')
-    const nextIds = mergedNotifications.list.map((n) => n.id).join('|')
-    const prevRead = notifications.map((n) => Number(n.read)).join('')
-    const nextRead = mergedNotifications.list.map((n) => Number(n.read)).join('')
-
-    approvalNotificationIdsRef.current = mergedNotifications.latestApprovalIds
-
-    if (
-      prevIds === nextIds &&
-      prevRead === nextRead &&
-      notifications.length === mergedNotifications.list.length
-    ) {
-      return
-    }
-
-    setNotifications(mergedNotifications.list)
-  }, [mergedNotifications, notifications])
-
-  const handleMarkAllRead = useCallback(() => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-  }, [])
-
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-surface-primary text-text-primary font-sans selection:bg-brand/30 relative">
       {/* Header */}
-      <DashboardHeader
-        isVisible={isHeaderVisible}
-        notifications={notifications}
-        onMarkAllRead={handleMarkAllRead}
-      />
+      <DashboardHeader isVisible={isHeaderVisible} organizationId={organizationId} />
 
       {/* Sidebar */}
       <div

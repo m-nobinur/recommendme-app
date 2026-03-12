@@ -4,6 +4,7 @@ import type { Doc, Id } from './_generated/dataModel'
 import { internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { authComponent } from './auth'
 import { assertUserInOrganization } from './lib/auth'
+import { createNotification } from './lib/notify'
 import { approvalStatusValues, boundedPageSize, riskLevelValues } from './lib/validators'
 
 const reviewDecisionValues = v.union(v.literal('approve'), v.literal('reject'))
@@ -466,6 +467,27 @@ export const enqueueBatch = internalMutation({
         updatedAt: now,
       })
       ids.push(id)
+    }
+
+    if (ids.length > 0) {
+      const highestRisk = args.actions.reduce(
+        (max, a) => {
+          const order = { low: 0, medium: 1, high: 2, critical: 3 }
+          return order[a.riskLevel] > order[max] ? a.riskLevel : max
+        },
+        'low' as 'low' | 'medium' | 'high' | 'critical'
+      )
+      const severity = highestRisk === 'critical' || highestRisk === 'high' ? 'warning' : 'info'
+      await createNotification(ctx, {
+        organizationId: args.organizationId,
+        category: 'approval',
+        severity,
+        title: `${ids.length} action${ids.length > 1 ? 's' : ''} pending approval`,
+        body: `${args.agentType} agent submitted ${ids.length} ${highestRisk}-risk action${ids.length > 1 ? 's' : ''} for review`,
+        actionUrl: '/chat',
+        actionLabel: 'Review',
+        referenceType: 'approvalQueue',
+      })
     }
 
     return ids
