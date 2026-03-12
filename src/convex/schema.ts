@@ -908,6 +908,40 @@ export default defineSchema({
   // Persistent, per-user or org-wide notifications
   // Created by backend functions (agents, CRM, approvals, etc.)
   // ============================================
+  notifications: defineTable({
+    organizationId: v.id('organizations'),
+    userId: v.optional(v.id('appUsers')),
+    category: v.union(
+      v.literal('approval'),
+      v.literal('agent'),
+      v.literal('crm'),
+      v.literal('memory'),
+      v.literal('budget'),
+      v.literal('communication'),
+      v.literal('system')
+    ),
+    severity: v.union(
+      v.literal('info'),
+      v.literal('success'),
+      v.literal('warning'),
+      v.literal('error')
+    ),
+    title: v.string(),
+    body: v.optional(v.string()),
+    actionUrl: v.optional(v.string()),
+    actionLabel: v.optional(v.string()),
+    referenceType: v.optional(v.string()),
+    referenceId: v.optional(v.string()),
+    isRead: v.boolean(),
+    isDismissed: v.boolean(),
+    readAt: v.optional(v.number()),
+    expiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index('by_org_user_read_created', ['organizationId', 'userId', 'isRead', 'createdAt'])
+    .index('by_org_user_created', ['organizationId', 'userId', 'createdAt'])
+    .index('by_org_user_dismissed', ['organizationId', 'userId', 'isDismissed'])
+    .index('by_expires', ['expiresAt']),
 
   pushSubscriptions: defineTable({
     organizationId: v.id('organizations'),

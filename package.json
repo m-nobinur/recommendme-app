@@ -82,6 +82,7 @@
     "recharts": "^3.8.0",
     "remark-gfm": "^4.0.1",
     "resend": "^6.9.3",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.0.0",
     "web-push": "^3.6.7",
     "zod": "^4.0.1",
