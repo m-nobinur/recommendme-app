@@ -3,7 +3,7 @@
 > **Comprehensive phased implementation plan for the Unified Memory Architecture**
 > Document Version: 3.1 | Created: February 8, 2026 | Updated: March 12, 2026
 > Branch: `feat/feedback-collection-11a`
-> **Current Status: Phase 8 FULLY COMPLETE — Email delivery live (Resend + react-email), webhook tracking, agent→comms wiring, dashboard→dailyAnalytics wiring. All phases complete.**
+> **Current Status: ALL PHASES COMPLETE (0–12.5) — In-App Notification System with persistent Convex notifications, real-time toasts (sonner), Web Push infrastructure, and notification cleanup cron.**
 
 ---
 
@@ -25,6 +25,7 @@
 14. [Phase 10: Observability, Tracing & Cost Management](#14-phase-10-observability-tracing--cost-management)
 15. [Phase 11: Continuous Improvement & Learning System](#15-phase-11-continuous-improvement--learning-system)
 16. [Phase 12: Memory UI & Admin Dashboard](#16-phase-12-memory-ui--admin-dashboard)
+    - [Phase 12.5: In-App Notification System](#165-phase-125-in-app-notification-system--complete-march-12-2026)
 17. [Dependency Installation Schedule](#17-dependency-installation-schedule)
 18. [Risk Register](#18-risk-register)
 19. [Quality Gates](#19-quality-gates)
@@ -180,8 +181,9 @@ Phase 9: Guardrails & Security ──────── (4-5 days)   ── SECU
 Phase 10a: Observability Foundation ──── (4-5 days)   ── OPERATIONS    [COMPLETE]
 Phase 11: Improvement & Learning ────── (3-4 days)   ── INTELLIGENCE  [COMPLETE]
 Phase 12: Memory UI & Dashboard ─────── (4-5 days)   ── UI/UX         [COMPLETE]
+Phase 12.5: In-App Notifications ────── (1-2 days)   ── UI/UX         [COMPLETE]
                                          ─────────
-                                         ~48-57 days total
+                                         ~49-59 days total
 ```
 
 ### Commit Strategy
@@ -2228,6 +2230,125 @@ Build the frontend components for memory inspection, management, and system heal
 
 ---
 
+## 16.5. Phase 12.5: In-App Notification System — COMPLETE (March 12, 2026)
+
+### Objective
+Replace the ad-hoc approval-only notification pattern with a unified, persistent, real-time in-app notification system covering all significant application events. Add ephemeral toast notifications for immediate action feedback and Web Push infrastructure for native browser notifications.
+
+### Architecture
+Three complementary layers:
+1. **Persistent Notifications** — Convex `notifications` table with real-time `useQuery` subscriptions, powering an enhanced bell dropdown with category filtering, severity icons, and read/unread state.
+2. **Ephemeral Toasts** — Sonner library for brief action confirmations. The `useNotifications` hook auto-fires toasts for new incoming notifications via reactive diff detection.
+3. **Web Push Notifications** — Native browser push via `web-push` library. Subscriptions stored in `pushSubscriptions` table. Dispatched asynchronously after each notification insert.
+
+### 12.5a Persistent Notification Center [COMPLETE]
+**Files created:**
+- `src/convex/notifications.ts` — `create` (internal), `list`, `getUnreadCount`, `markRead`, `markAllRead`, `dismiss` (public), `cleanup` (internal)
+- `src/convex/lib/notify.ts` — `createNotification()` helper for direct `ctx.db.insert` in mutations
+- `src/hooks/useNotifications.ts` — reactive hook with auto-toast for new incoming notifications
+- `src/lib/utils/toast.ts` — `showToast()` / `dismissToast()` wrapping sonner
+
+**Files modified:**
+- `src/convex/schema.ts` — added `notifications` table with 4 indexes (`by_org_user_read_created`, `by_org_user_created`, `by_org_user_dismissed`, `by_expires`)
+- `src/app/providers.tsx` — added `<Toaster />` from sonner with dark theme styling
+- `src/components/layout/NotificationDropdown.tsx` — complete rewrite: category filter tabs, severity icons, Today/Earlier grouping, individual mark-read/dismiss
+- `src/components/dashboard/DashboardHeader.tsx` — integrated `useNotifications` hook, unread count badge on bell icon
+- `src/app/(dashboard)/components/DashboardShell.tsx` — removed legacy approval-only notification logic, passes `organizationId` to header
+- `src/types/index.ts` — added `Notification`, `NotificationCategory`, `NotificationSeverity` types
+- `src/hooks/index.ts` — exported `useNotifications`
+
+**Schema:**
+```
+notifications:
+  organizationId, userId?, category, severity, title, body?,
+  actionUrl?, actionLabel?, referenceType?, referenceId?,
+  isRead, isDismissed, readAt?, expiresAt?, createdAt
+```
+
+**Categories:** approval, agent, crm, memory, budget, communication, system
+**Severity levels:** info, success, warning, error
+
+### 12.5b Backend Notification Integrations [COMPLETE]
+**Files modified:**
+- `src/convex/approvalQueue.ts` — notification on `enqueueBatch` (dynamic severity by risk level)
+- `src/convex/agentRunner.ts` — notification on agent completion (success) and failure (error)
+- `src/convex/leads.ts` — notification when lead status changes to Booked or Closed
+- `src/convex/appointments.ts` — notification on appointment create and completion
+- `src/convex/invoices.ts` — notification when invoice marked as paid
+- `src/convex/qualityMonitor.ts` — notification on memory quality alert trigger
+- `src/convex/communicationQueue.ts` — notification on email bounce/complaint
+
+### 12.5c Toast Calls in UI Actions [COMPLETE]
+**Files modified:**
+- `src/components/agents/ApprovalCard.tsx` — toast on approve/reject
+- `src/app/(dashboard)/settings/components/SettingsForm.tsx` — toast on save success/failure
+- `src/components/memory/MemoryEditor.tsx` — toast on memory create/update
+- `src/components/memory/MemoryViewer.tsx` — toast on memory archive/delete
+
+### 12.5d Real-Time Toast for Incoming Notifications [COMPLETE]
+**Implementation:**
+- `useNotifications` hook tracks known notification IDs via `useRef<Set<string>>`
+- On each reactive Convex query update, diffs current vs. known IDs
+- New unread notifications fire a sonner toast with severity-matched type and body as description
+- First load seeds the known set without toasting (prevents toast flood on page load)
+- `suppressToasts` option available for consumers that only need data
+
+### 12.5e Web Push Notification Infrastructure [COMPLETE]
+**Files created:**
+- `src/convex/pushSubscriptions.ts` — `subscribe`, `unsubscribe`, `getMySubscription` (public); `getByUser`, `getByOrg`, `removeStaleSubscriptions` (internal)
+- `src/convex/pushDispatch.ts` — `sendPush` internal action (`'use node'`, uses `web-push` library)
+- `public/sw.js` — service worker for push events, notification click navigation, subscription rotation
+- `src/hooks/usePushNotifications.ts` — service worker registration, permission requests, subscription lifecycle
+- `src/app/(dashboard)/settings/components/PushNotificationToggle.tsx` — enable/disable toggle with permission state handling
+
+**Files modified:**
+- `src/convex/schema.ts` — added `pushSubscriptions` table with `by_user`, `by_org`, `by_endpoint` indexes
+- `src/convex/notifications.ts` — `create` mutation schedules `pushDispatch.sendPush` via `ctx.scheduler.runAfter(0, ...)`
+- `src/hooks/index.ts` — exported `usePushNotifications`
+- `src/app/(dashboard)/settings/page.tsx` — added Notifications section with `PushNotificationToggle`
+
+**Push flow:** notification insert → `ctx.scheduler.runAfter(0, pushDispatch.sendPush)` → query subscriptions → `webpush.sendNotification()` per endpoint → auto-cleanup stale 410/404 subscriptions
+
+**Environment variables (push):**
+```
+VAPID_PUBLIC_KEY        # Convex env
+VAPID_PRIVATE_KEY       # Convex env
+VAPID_SUBJECT           # Convex env (mailto:...)
+NEXT_PUBLIC_VAPID_PUBLIC_KEY  # Next.js client env
+```
+Push silently skips when VAPID keys are not configured.
+
+### 12.5f Communication Worker Refactor [COMPLETE]
+Split `communicationWorker.ts` to comply with Convex's `'use node'` restriction (actions only):
+- `src/convex/communicationQueue.ts` (new) — all mutations and queries (`enqueue`, `claimMessage`, `markSent`, `markFailed`, `markSkipped`, `updateDeliveryStatus`, `getPendingBatch`, `listByOrg`, `getStats`)
+- `src/convex/communicationWorker.ts` — `processQueue` action and Node.js delivery helpers only
+- Updated all callers: `http.ts`, `agentRunner.ts`, `crons.ts`
+
+### 12.5g Cron Addition
+- `notification cleanup` — daily 05:00 UTC (`internal.notifications.cleanup`): removes expired notifications and 30-day-old read/dismissed entries
+
+### Acceptance Criteria
+- [x] Persistent notifications stored in Convex `notifications` table with read/unread state
+- [x] Real-time notification count badge on bell icon via reactive `useQuery`
+- [x] Enhanced dropdown with category filtering, severity icons, Today/Earlier grouping
+- [x] Individual mark-read on click, dismiss via X, mark-all-as-read footer
+- [x] Backend integrations emit notifications for all 7 categories (approval, agent, crm, memory, budget, communication, system)
+- [x] Sonner toasts for immediate UI action feedback (approve, save, create, delete, archive)
+- [x] Real-time toasts auto-fire for new incoming notifications (no polling)
+- [x] Web Push subscription infrastructure with opt-in toggle in settings
+- [x] Service worker handles push events, notification clicks, subscription rotation
+- [x] Push dispatch auto-cleans stale endpoints (410/404)
+- [x] Daily notification cleanup cron at 05:00 UTC
+- [x] `bun run check:all` passes (typecheck + lint)
+- [x] All 438 tests pass
+
+### Dependencies Added
+- `sonner` — toast notification library
+- `web-push` 3.6.7 — Web Push API (server-side)
+- `@types/web-push` 3.6.4 — TypeScript types
+
+---
+
 ## 17. Dependency Installation Schedule
 
 ### Phase 0 (No new deps) - DONE
@@ -2257,6 +2378,13 @@ bun add langfuse  # LLM observability
 ### Phase 12 (UI) - DONE
 ```bash
 bun add recharts  # Analytics charts — INSTALLED
+```
+
+### Phase 12.5 (Notifications) - DONE
+```bash
+bun add sonner        # Toast notifications — INSTALLED
+bun add web-push      # Web Push API (server-side) — INSTALLED
+bun add -D @types/web-push  # TypeScript types — INSTALLED
 ```
 
 ---
@@ -2300,8 +2428,8 @@ bun add recharts  # Analytics charts — INSTALLED
 
 ---
 
-*Document Version: 3.0*
+*Document Version: 3.1*
 *Created: February 8, 2026*
 *Last Updated: March 12, 2026*
 *Author: RecommendMe AI Team*
-*Status: ALL PHASES COMPLETE (Phases 0–12) — Communication worker (8.7) queue implemented, email/SMS adapters scaffolded*
+*Status: ALL PHASES COMPLETE (Phases 0–12.5) — In-App Notification System with persistent real-time notifications, sonner toasts, Web Push infrastructure, and daily cleanup cron*
