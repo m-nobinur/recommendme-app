@@ -1,0 +1,6 @@
+export type { SalesAgentSettings } from './config'
+export { DEFAULT_SALES_SETTINGS, SALES_CONFIG } from './config'
+export { SalesHandler } from './handler'
+export type { SalesLeadData, SalesMemoryData, SalesPipelineStats } from './prompt'
+export { buildSalesUserPrompt, SALES_SYSTEM_PROMPT } from './prompt'
+export { executeSalesAction, SALES_ACTIONS } from './tools'

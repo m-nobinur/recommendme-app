@@ -1,24 +1,30 @@
 'use client'
 
-import { Bell } from 'lucide-react'
-import { useState } from 'react'
+import type { Id } from '@convex/_generated/dataModel'
+import { Bell, Brain, MessageSquare } from 'lucide-react'
+import type { Route } from 'next'
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { memo, useState } from 'react'
 import NotificationDropdown from '@/components/layout/NotificationDropdown'
 import { Logo } from '@/components/ui/Logo'
-import { useClickOutside } from '@/hooks'
-import { Z_INDEX } from '@/lib/constants'
-import type { Notification } from '@/types'
+import { useClickOutside, useNotifications } from '@/hooks'
+import { ROUTES, Z_INDEX } from '@/lib/constants'
+import { cn } from '@/lib/utils/cn'
 
 interface DashboardHeaderProps {
   isVisible: boolean
-  notifications: Notification[]
-  onMarkAllRead: () => void
+  organizationId: Id<'organizations'> | undefined
 }
 
-export function DashboardHeader({ isVisible, notifications, onMarkAllRead }: DashboardHeaderProps) {
+function DashboardHeaderInner({ isVisible, organizationId }: DashboardHeaderProps) {
+  const pathname = usePathname()
   const [showNotifications, setShowNotifications] = useState(false)
   const notificationRef = useClickOutside<HTMLDivElement>(() => setShowNotifications(false))
 
-  const hasUnread = notifications.some((n) => !n.read)
+  const { notifications, unreadCount, markRead, markAllRead, dismiss } = useNotifications({
+    organizationId,
+  })
 
   return (
     <div className="group">
@@ -48,8 +54,34 @@ export function DashboardHeader({ isVisible, notifications, onMarkAllRead }: Das
           </div>
         </div>
 
-        {/* Right: Notification Bell */}
+        {/* Right: Navigation + Notification Bell */}
         <div className="flex items-center gap-3 relative" ref={notificationRef}>
+          <Link
+            href={ROUTES.CHAT as Route}
+            className={cn(
+              'w-9 h-9 flex items-center justify-center rounded-full transition-all duration-300',
+              pathname === ROUTES.CHAT
+                ? 'bg-surface-muted text-white'
+                : 'text-text-muted hover:text-brand hover:bg-surface-elevated'
+            )}
+            aria-label="Go to chat"
+          >
+            <MessageSquare className="w-5 h-5" />
+          </Link>
+
+          <Link
+            href={ROUTES.MEMORY as Route}
+            className={cn(
+              'w-9 h-9 flex items-center justify-center rounded-full transition-all duration-300',
+              pathname === ROUTES.MEMORY
+                ? 'bg-surface-muted text-white'
+                : 'text-text-muted hover:text-brand hover:bg-surface-elevated'
+            )}
+            aria-label="Go to memory dashboard"
+          >
+            <Brain className="w-5 h-5" />
+          </Link>
+
           <div className="relative">
             <button
               type="button"
@@ -62,14 +94,18 @@ export function DashboardHeader({ isVisible, notifications, onMarkAllRead }: Das
               aria-label="Notifications"
             >
               <Bell className="w-5 h-5" />
-              {hasUnread && (
-                <span className="absolute top-2 right-2.5 w-1.5 h-1.5 bg-brand rounded-full shadow-[0_0_8px_var(--color-brand-muted)]" />
+              {unreadCount > 0 && (
+                <span className="absolute top-1 right-1 min-w-[16px] h-4 bg-brand rounded-full text-[10px] font-bold text-white flex items-center justify-center px-1 shadow-[0_0_8px_var(--color-brand-muted)]">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
               )}
             </button>
             {showNotifications && (
               <NotificationDropdown
                 notifications={notifications}
-                onMarkAllRead={onMarkAllRead}
+                onMarkRead={markRead}
+                onMarkAllRead={markAllRead}
+                onDismiss={dismiss}
                 onClose={() => setShowNotifications(false)}
               />
             )}
@@ -79,3 +115,5 @@ export function DashboardHeader({ isVisible, notifications, onMarkAllRead }: Das
     </div>
   )
 }
+
+export const DashboardHeader = memo(DashboardHeaderInner)

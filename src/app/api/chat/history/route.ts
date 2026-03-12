@@ -29,6 +29,10 @@ interface HistoryMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
   parts: HistoryMessagePart[]
+  metadata?: {
+    createdAt: number
+    retrievalTrace?: unknown
+  }
   createdAt: Date
 }
 
@@ -137,11 +141,15 @@ export async function GET(req: Request) {
     })
 
     // Convert Convex documents to UIMessage-compatible format for the Vercel AI SDK
-    const uiMessages: HistoryMessage[] = result.messages.map((msg) => ({
+    const uiMessages: HistoryMessage[] = result.messages.map((msg: Doc<'messages'>) => ({
       id: (msg.messageId && msg.messageId.length > 0 ? msg.messageId : null) ?? msg._id,
       role: msg.role,
       content: msg.content,
       parts: buildParts(msg),
+      metadata: {
+        createdAt: msg.createdAt,
+        retrievalTrace: msg.metadata?.retrievalTrace,
+      },
       createdAt: new Date(msg.createdAt),
     }))
 

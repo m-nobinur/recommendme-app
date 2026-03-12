@@ -63,6 +63,8 @@ const aiConfigSchema = z.object({
     requestTimeout: z.number().min(1000).max(300000).default(60000),
     enableCaching: z.boolean().default(false),
     cacheTTL: z.number().min(60).max(86400).default(3600),
+    memoryEmbeddingCacheTTL: z.number().min(10).max(3600).default(120),
+    memoryRetrievalCacheTTL: z.number().min(10).max(3600).default(60),
   }),
 })
 
@@ -113,6 +115,8 @@ const ENV_VAR_MAP = {
   AI_REQUEST_TIMEOUT: 'performance.requestTimeout',
   AI_ENABLE_CACHING: 'performance.enableCaching',
   AI_CACHE_TTL: 'performance.cacheTTL',
+  AI_MEMORY_EMBEDDING_CACHE_TTL: 'performance.memoryEmbeddingCacheTTL',
+  AI_MEMORY_RETRIEVAL_CACHE_TTL: 'performance.memoryRetrievalCacheTTL',
 
   // Debug
   AI_DEBUG: 'debug',
@@ -164,6 +168,8 @@ const DEFAULT_CONFIG: AIConfig = {
     requestTimeout: 60000, // 60 seconds
     enableCaching: false,
     cacheTTL: 3600, // 1 hour
+    memoryEmbeddingCacheTTL: 120, // 2 minutes
+    memoryRetrievalCacheTTL: 60, // 1 minute
   },
 }
 
@@ -237,6 +243,8 @@ const TYPE_HINTS: Record<string, 'string' | 'number' | 'boolean'> = {
   AI_REQUEST_TIMEOUT: 'number',
   AI_ENABLE_CACHING: 'boolean',
   AI_CACHE_TTL: 'number',
+  AI_MEMORY_EMBEDDING_CACHE_TTL: 'number',
+  AI_MEMORY_RETRIEVAL_CACHE_TTL: 'number',
   AI_DEBUG: 'boolean',
 }
 
@@ -258,7 +266,7 @@ function loadConfigFromEnv(): AIConfig {
     }
   }
 
-  if (process.env.NODE_ENV === 'development' && config.debug === undefined) {
+  if (process.env.NODE_ENV === 'development' && !config.debug) {
     config.debug = true
   }
 

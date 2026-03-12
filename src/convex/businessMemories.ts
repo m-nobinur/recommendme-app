@@ -2,7 +2,8 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, mutation, query } from './_generated/server'
-import { validateBusinessMemoryInput } from './memoryValidation'
+import { assertAuthenticatedUserInOrganization } from './lib/auth'
+import { applyMemoryLayerPiiPolicy, validateBusinessMemoryInput } from './memoryValidation'
 
 /**
  * Business Memory CRUD (Organization-Specific)
@@ -104,8 +105,11 @@ export const create = mutation({
     expiresAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
+    const contentPolicy = applyMemoryLayerPiiPolicy(args.content, 'business')
     validateBusinessMemoryInput({
-      content: args.content,
+      content: contentPolicy.content,
       confidence: args.confidence,
       importance: args.importance,
     })
@@ -116,7 +120,7 @@ export const create = mutation({
       organizationId: args.organizationId,
       userId: args.userId,
       type: args.type,
-      content: args.content,
+      content: contentPolicy.content,
       subjectType: args.subjectType,
       subjectId: args.subjectId,
       importance: args.importance,
@@ -137,7 +141,8 @@ export const create = mutation({
     await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
       tableName: 'businessMemories' as const,
       documentId: id,
-      content: args.content,
+      content: contentPolicy.content,
+      organizationId: args.organizationId,
     })
 
     return id
@@ -153,6 +158,7 @@ export const get = query({
     organizationId: v.id('organizations'),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
     const memory = await ctx.db.get(args.id)
     if (!memory || memory.organizationId !== args.organizationId) {
       return null
@@ -175,6 +181,8 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const pageSize = Math.min(args.limit ?? 50, 100)
     const activeOnly = args.activeOnly ?? true
     const includeArchived = args.includeArchived ?? false
@@ -232,6 +240,72 @@ export const list = query({
 })
 
 /**
+ * Server-side aggregated memory statistics for the analytics dashboard.
+ * Replaces client-side aggregation over a capped list.
+ */
+export const getStats = query({
+  args: {
+    organizationId: v.id('organizations'),
+  },
+  handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
+    const activeMemories = await ctx.db
+      .query('businessMemories')
+      .withIndex('by_org_active', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isActive', true)
+      )
+      .take(500)
+
+    const archivedMemories = await ctx.db
+      .query('businessMemories')
+      .withIndex('by_org_archived', (q) =>
+        q.eq('organizationId', args.organizationId).eq('isArchived', true)
+      )
+      .take(200)
+
+    const allMemories = [...activeMemories, ...archivedMemories]
+    const total = allMemories.length
+    const totalActive = activeMemories.length
+    const totalArchived = archivedMemories.length
+
+    const typeCounts: Record<string, number> = {}
+    const decayBands: Record<string, number> = {
+      '0–20%': 0,
+      '20–40%': 0,
+      '40–60%': 0,
+      '60–80%': 0,
+      '80–100%': 0,
+    }
+
+    let sumDecay = 0
+    for (const m of allMemories) {
+      typeCounts[m.type] = (typeCounts[m.type] ?? 0) + 1
+      const decay = m.decayScore ?? 0
+      sumDecay += decay
+
+      if (decay < 0.2) decayBands['0–20%']++
+      else if (decay < 0.4) decayBands['20–40%']++
+      else if (decay < 0.6) decayBands['40–60%']++
+      else if (decay < 0.8) decayBands['60–80%']++
+      else decayBands['80–100%']++
+    }
+
+    const avgDecay = total > 0 ? Math.round((sumDecay / total) * 100) : 0
+
+    return {
+      total,
+      totalActive,
+      totalArchived,
+      avgDecay,
+      typeCounts,
+      decayBands,
+      capped: activeMemories.length >= 500 || archivedMemories.length >= 200,
+    }
+  },
+})
+
+/**
  * List active business memories sorted by importance (for context retrieval).
  */
 export const listByImportance = query({
@@ -240,6 +314,7 @@ export const listByImportance = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
     const pageSize = Math.min(args.limit ?? 20, 100)
 
     const candidates = await ctx.db
@@ -272,6 +347,8 @@ export const update = mutation({
     expiresAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const { id, organizationId, ...updates } = args
     const existing = await ctx.db.get(id)
 
@@ -279,12 +356,22 @@ export const update = mutation({
       throw new Error('Business memory not found or access denied')
     }
 
+    const normalizedContent =
+      updates.content !== undefined
+        ? applyMemoryLayerPiiPolicy(updates.content, 'business').content
+        : undefined
+    const normalizedUpdates = {
+      ...updates,
+      content: normalizedContent,
+    }
+
     const filteredUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([_, val]) => val !== undefined)
+      Object.entries(normalizedUpdates).filter(([_, val]) => val !== undefined)
     )
 
-    const newVersion = updates.content !== undefined ? existing.version + 1 : existing.version
-    const contentChanged = updates.content !== undefined
+    const newVersion =
+      normalizedUpdates.content !== undefined ? existing.version + 1 : existing.version
+    const contentChanged = normalizedUpdates.content !== undefined
 
     if (Object.keys(filteredUpdates).length > 0) {
       await ctx.db.patch(id, {
@@ -295,11 +382,12 @@ export const update = mutation({
       })
     }
 
-    if (contentChanged && updates.content) {
+    if (contentChanged && normalizedUpdates.content) {
       await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
         tableName: 'businessMemories' as const,
         documentId: id,
-        content: updates.content,
+        content: normalizedUpdates.content,
+        organizationId,
       })
     }
 
@@ -346,6 +434,8 @@ export const softDelete = mutation({
     organizationId: v.id('organizations'),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const existing = await ctx.db.get(args.id)
     if (!existing || existing.organizationId !== args.organizationId) {
       throw new Error('Business memory not found or access denied')
@@ -369,6 +459,8 @@ export const archive = mutation({
     organizationId: v.id('organizations'),
   },
   handler: async (ctx, args) => {
+    await assertAuthenticatedUserInOrganization(ctx, args.organizationId)
+
     const existing = await ctx.db.get(args.id)
     if (!existing || existing.organizationId !== args.organizationId) {
       throw new Error('Business memory not found or access denied')

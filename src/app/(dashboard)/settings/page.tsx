@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { Suspense } from 'react'
+import { PushNotificationToggle } from './components/PushNotificationToggle'
 import { SettingsForm } from './components/SettingsForm'
 import { SettingsSkeleton } from './components/SettingsSkeleton'
 
@@ -27,6 +28,11 @@ export default function SettingsPage() {
           <Suspense fallback={<SettingsSkeleton />}>
             <SettingsForm />
           </Suspense>
+
+          <div className="mt-8">
+            <h2 className="mb-4 font-semibold text-lg text-white">Notifications</h2>
+            <PushNotificationToggle />
+          </div>
         </div>
       </div>
 

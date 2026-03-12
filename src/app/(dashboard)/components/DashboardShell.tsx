@@ -1,38 +1,112 @@
 'use client'
 
+import { api } from '@convex/_generated/api'
+import { useQuery } from 'convex/react'
 import { useRouter } from 'next/navigation'
 import type { ReactNode } from 'react'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader'
 import { DashboardSidebarToggle } from '@/components/dashboard/DashboardSidebarToggle'
 import { DashboardView } from '@/components/dashboard/DashboardView'
 import { useHeader } from '@/contexts'
 import { signOut } from '@/lib/auth/client'
 import { ROUTES, UI, Z_INDEX } from '@/lib/constants'
-import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, Notification, User } from '@/types'
+import { useDevModeStore } from '@/stores'
+import type { AppointmentDisplay, InvoiceDisplay, LeadDisplay, User } from '@/types'
 
 interface DashboardShellProps {
   children: ReactNode
   user: User
-  leads?: LeadDisplay[]
-  appointments?: AppointmentDisplay[]
-  invoices?: InvoiceDisplay[]
-  notifications?: Notification[]
 }
 
-export function DashboardShell({
-  children,
-  user,
-  leads = [],
-  appointments = [],
-  invoices = [],
-  notifications: initialNotifications = [],
-}: DashboardShellProps) {
+export function DashboardShell({ children, user }: DashboardShellProps) {
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarDataActivated, setSidebarDataActivated] = useState(false)
   const [isSigningOut, setIsSigningOut] = useState(false)
-  const [notifications, setNotifications] = useState<Notification[]>(initialNotifications)
   const { isHeaderVisible } = useHeader()
+
+  const isDev = process.env.NODE_ENV === 'development'
+  const { authMode } = useDevModeStore()
+  const isDevMode = isDev && authMode === 'dev'
+
+  useEffect(() => {
+    if (sidebarOpen && !sidebarDataActivated) {
+      setSidebarDataActivated(true)
+    }
+  }, [sidebarOpen, sidebarDataActivated])
+
+  const authUser = useQuery(api.auth.getCurrentUser)
+  const needsDevFallback = isDevMode && !authUser
+  const devAppUser = useQuery(api.appUsers.getDevAppUser, needsDevFallback ? {} : 'skip')
+  const resolvedAuthId = authUser?._id ?? (isDevMode ? devAppUser?.authUserId : undefined)
+
+  const appUser = useQuery(
+    api.appUsers.getAppUserByAuthId,
+    resolvedAuthId ? { authUserId: resolvedAuthId } : 'skip'
+  )
+
+  const organizationId = appUser?.organizationId
+
+  const leadsData = useQuery(
+    api.leads.list,
+    appUser && sidebarDataActivated
+      ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 50 }
+      : 'skip'
+  )
+
+  const appointmentsData = useQuery(
+    api.appointments.list,
+    appUser && sidebarDataActivated
+      ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 }
+      : 'skip'
+  )
+
+  const invoicesData = useQuery(
+    api.invoices.list,
+    appUser && sidebarDataActivated
+      ? { userId: appUser._id, organizationId: appUser.organizationId, limit: 30 }
+      : 'skip'
+  )
+
+  const leads: LeadDisplay[] = useMemo(
+    () =>
+      (leadsData ?? []).map((lead) => ({
+        id: lead._id,
+        name: lead.name,
+        phone: lead.phone,
+        email: lead.email,
+        status: lead.status,
+        value: lead.value,
+        tags: lead.tags,
+        notes: lead.notes,
+      })),
+    [leadsData]
+  )
+
+  const appointments: AppointmentDisplay[] = useMemo(
+    () =>
+      (appointmentsData ?? []).map((appt) => ({
+        id: appt._id,
+        title: appt.title ?? 'Appointment',
+        date: appt.date,
+        time: appt.time,
+        leadName: appt.leadName,
+        status: appt.status,
+      })),
+    [appointmentsData]
+  )
+
+  const invoices: InvoiceDisplay[] = useMemo(
+    () =>
+      (invoicesData ?? []).map((inv) => ({
+        id: inv._id,
+        leadName: inv.leadName,
+        amount: inv.amount,
+        status: inv.status,
+      })),
+    [invoicesData]
+  )
 
   const handleSignOut = useCallback(async () => {
     setIsSigningOut(true)
@@ -49,18 +123,10 @@ export function DashboardShell({
     setSidebarOpen((prev) => !prev)
   }, [])
 
-  const handleMarkAllRead = useCallback(() => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })))
-  }, [])
-
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-surface-primary text-text-primary font-sans selection:bg-brand/30 relative">
       {/* Header */}
-      <DashboardHeader
-        isVisible={isHeaderVisible}
-        notifications={notifications}
-        onMarkAllRead={handleMarkAllRead}
-      />
+      <DashboardHeader isVisible={isHeaderVisible} organizationId={organizationId} />
 
       {/* Sidebar */}
       <div

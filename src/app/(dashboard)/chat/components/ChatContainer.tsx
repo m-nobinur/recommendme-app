@@ -8,12 +8,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ChatInput from '@/components/chat/ChatInput'
 import MessageBubble from '@/components/chat/MessageBubble'
 import TypingIndicator from '@/components/chat/TypingIndicator'
+import { ContextInspector } from '@/components/memory/ContextInspector'
 import { IconButton } from '@/components/ui/IconButton'
 import { Logo } from '@/components/ui/Logo'
 import { useHeader } from '@/contexts/HeaderContext'
+import type { InspectorData } from '@/lib/ai/memory/retrieval'
 import { API, UI, Z_INDEX } from '@/lib/constants'
 import { useChatStore, useModelStore } from '@/stores'
-import type { MessagePart } from '@/types'
+import type { FeedbackRating, MessagePart } from '@/types'
 import { ChatHistorySkeleton } from './ChatSkeleton'
 
 const TIME_FORMAT: Intl.DateTimeFormatOptions = { hour: '2-digit', minute: '2-digit' }
@@ -24,6 +26,8 @@ const SUGGESTIONS = [
   'Create an invoice for $500',
   'List all my leads',
 ] as const
+
+const STREAMING_RENDER_WINDOW = 160
 
 const InlineUserMessage = memo(function InlineUserMessage({
   content,
@@ -91,6 +95,31 @@ function extractTextFromParts(parts: Array<{ type?: string; text?: string }> | u
     })
     .filter(Boolean)
     .join('')
+}
+
+function isInspectorData(value: unknown): value is InspectorData {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    Array.isArray(v.memories) &&
+    typeof v.tokenBudget === 'number' &&
+    typeof v.tokensUsed === 'number'
+  )
+}
+
+function mergeOlderMessages(prev: UIMessage[], older: UIMessage[]): UIMessage[] {
+  if (older.length === 0) {
+    return prev
+  }
+
+  const existingIds = new Set(prev.map((msg) => msg.id))
+  const uniqueOlder = older.filter((msg) => !existingIds.has(msg.id))
+
+  if (uniqueOlder.length === 0) {
+    return prev
+  }
+
+  return [...uniqueOlder, ...prev]
 }
 
 type ViewState = 'hydrating' | 'loading_history' | 'ready'
@@ -166,6 +195,79 @@ export function ChatContainer() {
   const isLoading = status === 'submitted' || status === 'streaming'
   const showTypingIndicator = status === 'submitted'
 
+  const [feedbackMap, setFeedbackMap] = useState<Record<string, FeedbackRating>>({})
+  const feedbackMapRef = useRef<Record<string, FeedbackRating>>({})
+  const feedbackInFlightRef = useRef<Set<string>>(new Set())
+  const [feedbackError, setFeedbackError] = useState<string | null>(null)
+  const feedbackErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const updateFeedbackMap = useCallback((next: Record<string, FeedbackRating>) => {
+    feedbackMapRef.current = next
+    setFeedbackMap(next)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (feedbackErrorTimerRef.current) clearTimeout(feedbackErrorTimerRef.current)
+    }
+  }, [])
+
+  const showFeedbackError = useCallback((msg: string) => {
+    setFeedbackError(msg)
+    if (feedbackErrorTimerRef.current) clearTimeout(feedbackErrorTimerRef.current)
+    feedbackErrorTimerRef.current = setTimeout(() => setFeedbackError(null), 4000)
+  }, [])
+
+  const handleFeedback = useCallback(
+    async (messageId: string, rating: FeedbackRating) => {
+      if (!activeConversationId) {
+        return
+      }
+
+      if (feedbackInFlightRef.current.has(messageId)) {
+        return
+      }
+
+      if (feedbackMapRef.current[messageId]) {
+        return
+      }
+
+      feedbackInFlightRef.current.add(messageId)
+
+      const nextMap = {
+        ...feedbackMapRef.current,
+        [messageId]: rating,
+      }
+      updateFeedbackMap(nextMap)
+
+      try {
+        const res = await fetch('/api/feedback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messageId,
+            conversationId: activeConversationId,
+            rating,
+          }),
+        })
+        if (!res.ok) {
+          const rollbackMap = { ...feedbackMapRef.current }
+          delete rollbackMap[messageId]
+          updateFeedbackMap(rollbackMap)
+          showFeedbackError('Failed to save feedback. Please try again.')
+        }
+      } catch {
+        const rollbackMap = { ...feedbackMapRef.current }
+        delete rollbackMap[messageId]
+        updateFeedbackMap(rollbackMap)
+        showFeedbackError('Failed to save feedback. Please try again.')
+      } finally {
+        feedbackInFlightRef.current.delete(messageId)
+      }
+    },
+    [activeConversationId, updateFeedbackMap, showFeedbackError]
+  )
+
   const [historyCursor, setHistoryCursor] = useState<number | null>(null)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const shouldScrollAfterHistory = useRef(false)
@@ -230,8 +332,14 @@ export function ChatContainer() {
       .then((data: { messages?: UIMessage[]; nextCursor?: number | null }) => {
         const older = data.messages
         if (older && older.length > 0) {
-          setMessages((prev) => [...older, ...prev])
-          historyMessageCount.current += older.length
+          setMessages((prev) => {
+            const merged = mergeOlderMessages(prev, older)
+            const addedCount = merged.length - prev.length
+            if (addedCount > 0) {
+              historyMessageCount.current += addedCount
+            }
+            return merged
+          })
         }
         setHistoryCursor(data.nextCursor ?? null)
       })
@@ -384,6 +492,18 @@ export function ChatContainer() {
 
   const errorMessage = error?.message
 
+  const lastAssistantTrace = useMemo<InspectorData | undefined>(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i]
+      if (m.role !== 'assistant') continue
+      const meta = m.metadata as Record<string, unknown> | undefined
+      if (!meta) continue
+      const trace = (meta as { retrievalTrace?: unknown }).retrievalTrace
+      if (isInspectorData(trace)) return trace
+    }
+    return undefined
+  }, [messages])
+
   return (
     <div className="relative flex h-full flex-col overflow-hidden">
       <div
@@ -426,13 +546,21 @@ export function ChatContainer() {
               <MessageList
                 messages={messages}
                 historyCount={historyMessageCount.current}
+                isStreaming={status === 'streaming'}
                 onSuggestionClick={handleSend}
+                onFeedback={handleFeedback}
+                feedbackMap={feedbackMap}
               />
 
               {showTypingIndicator && <TypingIndicator />}
               {errorMessage && (
                 <div className="mb-4 rounded-xl border border-status-error/20 bg-status-error/10 p-4 text-status-error text-sm">
                   Error: {errorMessage}
+                </div>
+              )}
+              {feedbackError && (
+                <div className="mb-4 rounded-xl border border-status-error/20 bg-status-error/10 p-4 text-status-error text-sm">
+                  {feedbackError}
                 </div>
               )}
 
@@ -469,6 +597,15 @@ export function ChatContainer() {
           <ChatInput onSend={handleSend} disabled={false} isLoading={isLoading} />
         </div>
       </div>
+
+      {/* Context Inspector — dev-only, fixed-position overlay */}
+      {lastAssistantTrace && (
+        <ContextInspector
+          memories={lastAssistantTrace.memories}
+          tokenBudget={lastAssistantTrace.tokenBudget}
+          tokensUsed={lastAssistantTrace.tokensUsed}
+        />
+      )}
     </div>
   )
 }
@@ -476,46 +613,97 @@ export function ChatContainer() {
 interface MessageListProps {
   messages: UIMessage[]
   historyCount: number
+  isStreaming: boolean
   onSuggestionClick: (suggestion: string) => void
+  onFeedback: (messageId: string, rating: FeedbackRating) => void
+  feedbackMap: Record<string, FeedbackRating>
+}
+
+interface RenderableMessage {
+  message: UIMessage
+  key: string
+  content: string
+  createdAt: Date
+  isFromHistory: boolean
+  previousUserMessage?: string
 }
 
 const MessageList = memo(function MessageList({
   messages,
   historyCount,
+  isStreaming,
   onSuggestionClick,
+  onFeedback,
+  feedbackMap,
 }: MessageListProps) {
-  const { deduped, lastAssistantIdx } = useMemo(() => {
+  const renderable = useMemo(() => {
     const seen = new Set<string>()
-    let lastAst = -1
-    const items = messages.reduce<Array<{ msg: UIMessage; idx: number }>>((acc, msg, idx) => {
+    const items: RenderableMessage[] = []
+    let lastUserMessageText: string | undefined
+
+    for (let idx = 0; idx < messages.length; idx++) {
+      const msg = messages[idx]
       const key = msg.id || `msg-${idx}`
-      if (seen.has(key)) return acc
+      if (seen.has(key)) continue
       seen.add(key)
-      if (msg.role === 'assistant') lastAst = idx
-      acc.push({ msg, idx })
-      return acc
-    }, [])
-    return { deduped: items, lastAssistantIdx: lastAst }
-  }, [messages])
+
+      const content = extractTextFromParts(msg.parts)
+      const createdAt =
+        msg.metadata && typeof msg.metadata === 'object' && 'createdAt' in msg.metadata
+          ? new Date(msg.metadata.createdAt as number)
+          : new Date()
+
+      items.push({
+        message: msg,
+        key: msg.id ? `${msg.id}-${idx}` : `msg-${idx}`,
+        content,
+        createdAt,
+        isFromHistory: idx < historyCount,
+        previousUserMessage: msg.role === 'assistant' ? lastUserMessageText : undefined,
+      })
+
+      if (msg.role === 'user' && content) {
+        lastUserMessageText = content
+      }
+    }
+
+    return items
+  }, [messages, historyCount])
+
+  const displayMessages = useMemo(() => {
+    if (!isStreaming || renderable.length <= STREAMING_RENDER_WINDOW) {
+      return renderable
+    }
+    return renderable.slice(-STREAMING_RENDER_WINDOW)
+  }, [renderable, isStreaming])
+
+  const lastAssistantIdx = useMemo(() => {
+    for (let i = displayMessages.length - 1; i >= 0; i--) {
+      if (displayMessages[i].message.role === 'assistant') {
+        return i
+      }
+    }
+    return -1
+  }, [displayMessages])
+
+  const isWindowingActive = isStreaming && renderable.length > STREAMING_RENDER_WINDOW
 
   return (
     <>
-      {deduped.map(({ msg: message, idx: index }) => {
-        const content = extractTextFromParts(message.parts)
-        const messageKey = message.id ? `${message.id}-${index}` : `msg-${index}`
-        const isFromHistory = index < historyCount
+      {isWindowingActive && (
+        <div className="mb-3 rounded-lg border border-border bg-surface-secondary/70 px-3 py-2 text-center text-[11px] text-text-muted">
+          Showing latest {STREAMING_RENDER_WINDOW} messages while streaming for smoother
+          performance.
+        </div>
+      )}
 
-        const createdAt =
-          message.metadata &&
-          typeof message.metadata === 'object' &&
-          'createdAt' in message.metadata
-            ? new Date(message.metadata.createdAt as number)
-            : new Date()
+      {displayMessages.map((entry, index) => {
+        const { message, content, createdAt, isFromHistory, previousUserMessage } = entry
 
         if (message.role === 'user') {
           return (
             <InlineUserMessage
-              key={messageKey}
+              key={entry.key}
               content={content}
               createdAt={createdAt}
               animate={!isFromHistory}
@@ -523,17 +711,9 @@ const MessageList = memo(function MessageList({
           )
         }
 
-        let previousUserMessage: string | undefined
-        for (let i = index - 1; i >= 0; i--) {
-          if (messages[i].role === 'user') {
-            previousUserMessage = extractTextFromParts(messages[i].parts)
-            break
-          }
-        }
-
         return (
           <MessageBubble
-            key={messageKey}
+            key={entry.key}
             message={{
               id: message.id,
               role: message.role as 'user' | 'assistant',
@@ -545,6 +725,8 @@ const MessageList = memo(function MessageList({
             onSuggestionClick={onSuggestionClick}
             isLastAssistantMessage={index === lastAssistantIdx}
             animate={!isFromHistory}
+            onFeedback={onFeedback}
+            feedbackState={feedbackMap[message.id] ?? null}
           />
         )
       })}

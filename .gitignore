@@ -64,3 +64,6 @@ Thumbs.db
 src/convex/_generated/
 
 .ignore/
+docs/reviews/
+docs/plans/
+.cursor/plans/

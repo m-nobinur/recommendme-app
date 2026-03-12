@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import type { AIProvider, ModelTier } from '@/lib/ai/providers/types'
 import { Z_INDEX } from '@/lib/constants'
 import { cn } from '@/lib/utils/cn'
+import { showToast } from '@/lib/utils/toast'
 import { BRAIN_TIERS, PROVIDERS, useModelStore } from '@/stores'
 
 // Provider icons
@@ -75,9 +76,11 @@ export function SettingsForm() {
       await new Promise((resolve) => setTimeout(resolve, 800))
 
       setSaveSuccess(true)
+      showToast('success', 'Settings saved')
       setTimeout(() => setSaveSuccess(false), 3000)
     } catch (error) {
       console.error('Failed to save settings:', error)
+      showToast('error', 'Failed to save settings')
     } finally {
       setIsSaving(false)
     }

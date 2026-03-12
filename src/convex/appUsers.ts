@@ -89,6 +89,18 @@ export const upsertAppUser = mutation({
 })
 
 /**
+ * Get the first available app user (dev mode only).
+ * Returns null in production to prevent data leakage.
+ */
+export const getDevAppUser = query({
+  args: {},
+  handler: async (ctx) => {
+    if (process.env.NODE_ENV === 'production') return null
+    return await ctx.db.query('appUsers').first()
+  },
+})
+
+/**
  * Update app user settings
  */
 export const updateAppUserSettings = mutation({

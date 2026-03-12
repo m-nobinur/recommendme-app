@@ -1,8 +1,19 @@
-import { ConvexError, v } from 'convex/values'
+import { v } from 'convex/values'
+import { estimateCost } from '../lib/cost/pricing'
+import {
+  detectPatterns,
+  type PatternEvent,
+  patternToMemoryContent,
+  shouldAutoLearn,
+} from '../lib/learning/patternDetection'
+import type { DetectedPattern } from '../types/learning'
 import { internal } from './_generated/api'
 import type { Doc, Id } from './_generated/dataModel'
 import { internalAction, internalMutation, internalQuery } from './_generated/server'
 import { isEmbeddingConfigured } from './embedding'
+import { isCronDisabled } from './lib/cronGuard'
+import { type ResolvedLLMProvider, resolveLLMProvider } from './llmProvider'
+import { applyMemoryLayerPiiPolicy } from './memoryValidation'
 
 /**
  * Memory Extraction Pipeline
@@ -35,10 +46,22 @@ const DEBUG = process.env.DEBUG_MEMORY === 'true'
 
 const EXTRACTION_BATCH_SIZE = 5
 const MAX_MESSAGES_FOR_EXTRACTION = 30
-const DEDUP_SIMILARITY_THRESHOLD = 0.85
+const DEDUP_SIMILARITY_THRESHOLD = 0.92
 const DEDUP_SEARCH_LIMIT = 10
 const MAX_LLM_RETRIES = 2
 const MAX_EVENT_RETRIES = 3
+
+/**
+ * Normalize a subject name for use as `subjectId`.
+ * Until entity resolution is implemented (Phase 8+), the LLM-extracted
+ * display name is stored as the ID. Normalizing ensures consistent
+ * matching across extractions (e.g. "Sarah Johnson" and "sarah johnson"
+ * resolve to the same subject).
+ */
+function normalizeSubjectName(name: string | undefined): string | undefined {
+  if (!name) return undefined
+  return name.trim().toLowerCase()
+}
 
 // TTL defaults (mirrored from src/lib/memory/ttl.ts for Convex runtime)
 const TTL_MS_PER_DAY = 86_400_000
@@ -54,47 +77,6 @@ function computeTTLExpiresAt(type: string, createdAt: number): number | undefine
   const days = TTL_DAYS[type]
   if (days === null || days === undefined) return undefined
   return createdAt + days * TTL_MS_PER_DAY
-}
-
-const LLM_PROVIDERS = {
-  openrouter: {
-    url: 'https://openrouter.ai/api/v1/chat/completions',
-    envVar: 'OPENROUTER_API_KEY',
-    model: 'openai/gpt-4o-mini',
-    name: 'OpenRouter',
-  },
-  openai: {
-    url: 'https://api.openai.com/v1/chat/completions',
-    envVar: 'OPENAI_API_KEY',
-    model: 'gpt-4o-mini',
-    name: 'OpenAI',
-  },
-} as const
-
-type LLMProviderKey = keyof typeof LLM_PROVIDERS
-
-interface ResolvedLLMProvider {
-  url: string
-  apiKey: string
-  model: string
-  name: string
-}
-
-function resolveLLMProvider(): ResolvedLLMProvider {
-  const order: LLMProviderKey[] = ['openrouter', 'openai']
-
-  for (const key of order) {
-    const provider = LLM_PROVIDERS[key]
-    const apiKey = process.env[provider.envVar]
-    if (apiKey && apiKey.trim().length > 0) {
-      return { url: provider.url, apiKey, model: provider.model, name: provider.name }
-    }
-  }
-
-  throw new ConvexError({
-    code: 'CONFIGURATION_ERROR',
-    message: 'No LLM provider configured for extraction. Set OPENROUTER_API_KEY or OPENAI_API_KEY.',
-  })
 }
 
 const EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction engine for a CRM assistant called "Reme".
@@ -180,11 +162,20 @@ interface ExtractionResult {
   }>
 }
 
+interface ExtractionLLMResult {
+  extraction: ExtractionResult
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  latencyMs: number
+  exactCostUsd?: number
+}
+
 async function callExtractionLLM(
   provider: ResolvedLLMProvider,
   conversationText: string,
   existingMemories: string[]
-): Promise<ExtractionResult> {
+): Promise<ExtractionLLMResult> {
   let userPrompt = `## Conversation Transcript\n\n${conversationText}`
 
   if (existingMemories.length > 0) {
@@ -197,8 +188,10 @@ async function callExtractionLLM(
   userPrompt += '\nExtract all relevant memories from the conversation above. Return JSON only.'
 
   let lastError: Error | null = null
+  const callStartMs = Date.now()
 
   for (let attempt = 0; attempt <= MAX_LLM_RETRIES; attempt++) {
+    const attemptStartMs = Date.now()
     try {
       const response = await fetch(provider.url, {
         method: 'POST',
@@ -237,12 +230,26 @@ async function callExtractionLLM(
         throw new Error('Empty response from extraction LLM')
       }
 
+      const usage = data.usage ?? {}
+      const inputTokens = usage.prompt_tokens ?? 0
+      const outputTokens = usage.completion_tokens ?? 0
+      const latencyMs = Date.now() - attemptStartMs
+      const rawCost = usage.total_cost ?? data.total_cost
+      const exactCostUsd = typeof rawCost === 'number' && rawCost > 0 ? rawCost : undefined
+
       const parsed = JSON.parse(content) as ExtractionResult
       return {
-        businessMemories: Array.isArray(parsed.businessMemories) ? parsed.businessMemories : [],
-        agentMemories: Array.isArray(parsed.agentMemories) ? parsed.agentMemories : [],
-        relations: Array.isArray(parsed.relations) ? parsed.relations : [],
-        corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
+        extraction: {
+          businessMemories: Array.isArray(parsed.businessMemories) ? parsed.businessMemories : [],
+          agentMemories: Array.isArray(parsed.agentMemories) ? parsed.agentMemories : [],
+          relations: Array.isArray(parsed.relations) ? parsed.relations : [],
+          corrections: Array.isArray(parsed.corrections) ? parsed.corrections : [],
+        },
+        inputTokens,
+        outputTokens,
+        totalTokens: usage.total_tokens ?? inputTokens + outputTokens,
+        latencyMs,
+        exactCostUsd,
       }
     } catch (error) {
       if (error instanceof SyntaxError) {
@@ -262,7 +269,21 @@ async function callExtractionLLM(
     provider: provider.name,
     error: lastError?.message,
   })
-  return { businessMemories: [], agentMemories: [], relations: [], corrections: [] }
+  return {
+    extraction: { businessMemories: [], agentMemories: [], relations: [], corrections: [] },
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    latencyMs: Date.now() - callStartMs,
+  }
+}
+
+interface ToolSummaryUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+  latencyMs: number
+  exactCostUsd?: number
 }
 
 async function summarizeToolOutcome(
@@ -271,10 +292,11 @@ async function summarizeToolOutcome(
   isSuccess: boolean,
   argsStr: string,
   resultStr: string
-): Promise<string> {
+): Promise<{ summary: string; usage?: ToolSummaryUsage }> {
   const fallback = isSuccess
     ? `Tool "${toolName}" succeeded: ${argsStr.slice(0, 100)}`
     : `Tool "${toolName}" failed: ${resultStr.slice(0, 100)}`
+  const startMs = Date.now()
 
   try {
     const response = await fetch(provider.url, {
@@ -304,15 +326,31 @@ async function summarizeToolOutcome(
     if (response.ok) {
       const data = await response.json()
       const content = data.choices?.[0]?.message?.content?.trim()
+      const usage = data.usage ?? {}
+      const inputTokens = usage.prompt_tokens ?? 0
+      const outputTokens = usage.completion_tokens ?? 0
+      const totalTokens = usage.total_tokens ?? inputTokens + outputTokens
+      const rawCost = usage.total_cost ?? data.total_cost
+      const exactCostUsd = typeof rawCost === 'number' && rawCost > 0 ? rawCost : undefined
+      const usageData: ToolSummaryUsage | undefined =
+        totalTokens > 0
+          ? {
+              inputTokens,
+              outputTokens,
+              totalTokens,
+              latencyMs: Date.now() - startMs,
+              exactCostUsd,
+            }
+          : undefined
       if (content && content.length >= 10 && content.length <= 500) {
-        return content
+        return { summary: content, usage: usageData }
       }
     }
   } catch {
     // Use fallback
   }
 
-  return fallback.slice(0, 500)
+  return { summary: fallback.slice(0, 500) }
 }
 
 export const getConversationMessages = internalQuery({
@@ -351,6 +389,12 @@ export const getExistingMemoryContents = internalQuery({
   },
 })
 
+// NOTE: This query fetches events globally (across all orgs) using the
+// by_created index. A high-volume tenant can temporarily dominate the batch,
+// causing other orgs to wait longer. The preferred path is to pass an
+// organizationId to the caller (processMemoryEventsBatch), which routes to
+// memoryEvents.listUnprocessedInternal (uses by_org_unprocessed index).
+// Task: implement per-org round-robin scheduling to fully resolve starvation.
 export const getNextUnprocessedBatch = internalQuery({
   args: { limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
@@ -359,7 +403,7 @@ export const getNextUnprocessedBatch = internalQuery({
       .query('memoryEvents')
       .withIndex('by_created')
       .order('asc')
-      .filter((q) => q.eq(q.field('processed'), false))
+      .filter((q) => q.and(q.eq(q.field('processed'), false), q.eq(q.field('status'), 'pending')))
       .take(pageSize)
   },
 })
@@ -568,6 +612,7 @@ export const updateBusinessMemoryVersion = internalMutation({
       subjectId: existing.subjectId,
       source: 'extraction',
       sourceMessageId: existing.sourceMessageId,
+      expiresAt: computeTTLExpiresAt(existing.type, now),
       decayScore: 1.0,
       accessCount: 0,
       lastAccessedAt: now,
@@ -638,6 +683,7 @@ export const supersedeBusinessMemory = internalMutation({
       subjectId: args.subjectId ?? existing.subjectId,
       source: args.source,
       sourceMessageId: args.sourceMessageId ?? existing.sourceMessageId,
+      expiresAt: computeTTLExpiresAt(existing.type, now),
       decayScore: 1.0,
       accessCount: existing.accessCount,
       lastAccessedAt: now,
@@ -675,11 +721,12 @@ export const insertAgentMemory = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now()
-    return await ctx.db.insert('agentMemories', {
+    const normalizedContent = applyMemoryLayerPiiPolicy(args.content, 'agent').content
+    const id = await ctx.db.insert('agentMemories', {
       organizationId: args.organizationId,
       agentType: args.agentType,
       category: args.category,
-      content: args.content,
+      content: normalizedContent,
       confidence: args.confidence,
       useCount: 0,
       successRate: 0.0,
@@ -689,6 +736,10 @@ export const insertAgentMemory = internalMutation({
       createdAt: now,
       updatedAt: now,
     })
+    return {
+      id,
+      content: normalizedContent,
+    }
   },
 })
 
@@ -831,7 +882,7 @@ async function createExtractedMemories(
           confidence: mem.confidence,
           importance: mem.importance,
           subjectType: mem.subjectType,
-          subjectId: mem.subjectName,
+          subjectId: normalizeSubjectName(mem.subjectName),
           reason: correctionForThisMem.reason,
           source: 'extraction' as const,
           sourceMessageId: sourceId,
@@ -841,6 +892,7 @@ async function createExtractedMemories(
           tableName: 'businessMemories' as const,
           documentId: newId,
           content: mem.content,
+          organizationId,
         })
 
         correctionMatches = correctionMatches.filter((c) => c !== correctionForThisMem)
@@ -885,6 +937,7 @@ async function createExtractedMemories(
             tableName: 'businessMemories' as const,
             documentId: newId,
             content: mem.content,
+            organizationId,
           })
 
           memoriesCreated++
@@ -902,12 +955,18 @@ async function createExtractedMemories(
     try {
       const id = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
         organizationId,
-        type: mem.type as any,
+        type: mem.type as
+          | 'fact'
+          | 'preference'
+          | 'instruction'
+          | 'context'
+          | 'relationship'
+          | 'episodic',
         content: mem.content,
         importance: mem.importance,
         confidence: mem.confidence,
         subjectType: mem.subjectType,
-        subjectId: mem.subjectName,
+        subjectId: normalizeSubjectName(mem.subjectName),
         source: 'extraction' as const,
         sourceMessageId: sourceId,
       })
@@ -916,6 +975,7 @@ async function createExtractedMemories(
         tableName: 'businessMemories' as const,
         documentId: id,
         content: mem.content,
+        organizationId,
       })
 
       memoriesCreated++
@@ -955,18 +1015,19 @@ async function createExtractedMemories(
     if (!isValidAgentMemory(mem)) continue
 
     try {
-      const id = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
+      const inserted = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
         organizationId,
         agentType: mem.agentType,
-        category: mem.category as any,
+        category: mem.category as 'pattern' | 'preference' | 'success' | 'failure',
         content: mem.content,
         confidence: mem.confidence,
       })
 
       await ctx.runAction(internal.embedding.generateAndStore, {
         tableName: 'agentMemories' as const,
-        documentId: id,
-        content: mem.content,
+        documentId: inserted.id,
+        content: inserted.content,
+        organizationId,
       })
 
       memoriesCreated++
@@ -987,10 +1048,15 @@ async function createExtractedMemories(
       await ctx.runMutation(internal.memoryExtraction.insertRelation, {
         organizationId,
         sourceType: rel.sourceType,
-        sourceId: rel.sourceName,
+        sourceId: normalizeSubjectName(rel.sourceName) ?? rel.sourceName,
         targetType: rel.targetType,
-        targetId: rel.targetName,
-        relationType: rel.relationType as any,
+        targetId: normalizeSubjectName(rel.targetName) ?? rel.targetName,
+        relationType: rel.relationType as
+          | 'prefers'
+          | 'related_to'
+          | 'leads_to'
+          | 'requires'
+          | 'conflicts_with',
         strength: rel.strength,
         evidence: rel.evidence.slice(0, 200),
       })
@@ -1045,9 +1111,121 @@ async function processConversationEnd(
   }
 
   const conversationText = formatConversation(messages)
-  const extraction = await callExtractionLLM(provider, conversationText, existingMemories)
+  const llmResult = await callExtractionLLM(provider, conversationText, existingMemories)
+  if (llmResult.totalTokens > 0) {
+    try {
+      await ctx.runMutation(internal.llmUsage.record, {
+        organizationId: event.organizationId,
+        traceId: conversationId,
+        model: provider.model,
+        provider: provider.providerId,
+        inputTokens: llmResult.inputTokens,
+        outputTokens: llmResult.outputTokens,
+        totalTokens: llmResult.totalTokens,
+        estimatedCostUsd:
+          llmResult.exactCostUsd ??
+          estimateCost(provider.model, llmResult.inputTokens, llmResult.outputTokens),
+        purpose: 'extraction' as const,
+        cached: false,
+        latencyMs: llmResult.latencyMs,
+      })
+    } catch {
+      // Non-critical: swallow usage recording failures.
+    }
+  }
 
-  return createExtractedMemories(ctx, event.organizationId, extraction, event.sourceId)
+  const extractionResult = await createExtractedMemories(
+    ctx,
+    event.organizationId,
+    llmResult.extraction,
+    event.sourceId
+  )
+
+  // Phase 11.2: Run pattern detection on user messages from this conversation.
+  // Auto-learnable patterns are stored as businessMemories so future retrievals
+  // surface them in system context without requiring another LLM extraction call.
+  try {
+    const userMessages = (messages as Doc<'messages'>[]).filter((m) => m.role === 'user')
+    if (userMessages.length >= 2) {
+      const patternEvents: PatternEvent[] = userMessages.map((m) => ({
+        type: 'user_message',
+        content: m.content,
+        timestamp: m.createdAt ?? Date.now(),
+      }))
+
+      // Fetch existing pattern memories (content only) to seed the accumulator.
+      const existingPatternContents: string[] = (existingMemories as string[]).filter((c) =>
+        c.startsWith('[Pattern:')
+      )
+      const existingPatterns = existingPatternContents.map((c) => {
+        // Reconstruct a minimal DetectedPattern from the stored content string so
+        // the accumulator can merge new events with prior observations.
+        const typeMatch = c.match(/\[Pattern:(\w+)\]/)
+        const occMatch = c.match(/occurrences: (\d+)/)
+        const confMatch = c.match(/confidence: ([\d.]+)/)
+        return {
+          type: (typeMatch?.[1] ?? 'time_preference') as PatternEvent['type'],
+          description: c,
+          occurrences: occMatch ? parseInt(occMatch[1], 10) : 1,
+          confidence: confMatch ? parseFloat(confMatch[1]) : 0,
+          firstSeen: Date.now(),
+          lastSeen: Date.now(),
+          autoLearned: false,
+          evidence: [],
+        }
+      })
+
+      const detectionResult = detectPatterns(patternEvents, existingPatterns as any)
+
+      for (const pattern of detectionResult.patterns) {
+        if (!shouldAutoLearn(pattern)) continue
+
+        const memContent = patternToMemoryContent(pattern)
+        const piiSafe = applyMemoryLayerPiiPolicy(memContent, 'business').content
+        const now = Date.now()
+        try {
+          const insertedId = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
+            organizationId: event.organizationId,
+            type: 'preference' as const,
+            content: piiSafe.slice(0, 500),
+            importance: Math.min(0.95, pattern.confidence),
+            confidence: pattern.confidence,
+            source: 'extraction' as const,
+            sourceMessageId: event.sourceId,
+          })
+          await ctx.runAction(internal.embedding.generateAndStore, {
+            tableName: 'businessMemories' as const,
+            documentId: insertedId,
+            content: piiSafe.slice(0, 500),
+            organizationId: event.organizationId,
+          })
+          extractionResult.memoriesCreated++
+        } catch {
+          // Non-critical: swallow individual pattern storage failures.
+        }
+      }
+
+      if (DEBUG && detectionResult.totalEventsAnalyzed > 0) {
+        console.log('[Extraction] Pattern detection complete:', {
+          eventsAnalyzed: detectionResult.totalEventsAnalyzed,
+          newPatterns: detectionResult.newPatterns,
+          reinforcedPatterns: detectionResult.reinforcedPatterns,
+          autoLearnedPatterns: detectionResult.patterns.filter(
+            (p: DetectedPattern) => p.autoLearned
+          ).length,
+          organizationId: String(event.organizationId),
+        })
+      }
+    }
+  } catch (patternError) {
+    // Non-critical: pattern detection failure must not block extraction results.
+    console.warn('[Extraction] Pattern detection failed (non-fatal):', {
+      error: patternError instanceof Error ? patternError.message : 'Unknown',
+      organizationId: String(event.organizationId),
+    })
+  }
+
+  return extractionResult
 }
 
 async function processToolOutcome(
@@ -1070,14 +1248,47 @@ async function processToolOutcome(
   const argsStr = (eventData.args as string) ?? ''
   const resultStr = (eventData.result as string) ?? (eventData.error as string) ?? ''
 
-  const summary = await summarizeToolOutcome(provider, toolName, isSuccess, argsStr, resultStr)
+  const summaryResult = await summarizeToolOutcome(
+    provider,
+    toolName,
+    isSuccess,
+    argsStr,
+    resultStr
+  )
+  const summary = summaryResult.summary
 
   if (summary.length < 10) {
     return { memoriesCreated: 0, relationsCreated: 0 }
   }
 
+  if (summaryResult.usage && summaryResult.usage.totalTokens > 0) {
+    try {
+      await ctx.runMutation(internal.llmUsage.record, {
+        organizationId: event.organizationId,
+        traceId: event.sourceId,
+        model: provider.model,
+        provider: provider.providerId,
+        inputTokens: summaryResult.usage.inputTokens,
+        outputTokens: summaryResult.usage.outputTokens,
+        totalTokens: summaryResult.usage.totalTokens,
+        estimatedCostUsd:
+          summaryResult.usage.exactCostUsd ??
+          estimateCost(
+            provider.model,
+            summaryResult.usage.inputTokens,
+            summaryResult.usage.outputTokens
+          ),
+        purpose: 'summary' as const,
+        cached: false,
+        latencyMs: summaryResult.usage.latencyMs,
+      })
+    } catch {
+      // Non-critical: swallow usage recording failures.
+    }
+  }
+
   try {
-    const id = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
+    const inserted = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
       organizationId: event.organizationId,
       agentType,
       category: category as 'pattern' | 'preference' | 'success' | 'failure',
@@ -1087,8 +1298,9 @@ async function processToolOutcome(
 
     await ctx.runAction(internal.embedding.generateAndStore, {
       tableName: 'agentMemories' as const,
-      documentId: id,
-      content: summary.slice(0, 500),
+      documentId: inserted.id,
+      content: inserted.content,
+      organizationId: event.organizationId,
     })
 
     return { memoriesCreated: 1, relationsCreated: 0 }
@@ -1102,6 +1314,288 @@ async function processToolOutcome(
     return { memoriesCreated: 0, relationsCreated: 0 }
   }
 }
+
+/**
+ * Process a `user_correction` event through the full supersede pipeline.
+ *
+ * When the event carries `originalContent` (the old fact the user is correcting),
+ * we embed it and search for the matching memory. If a high-confidence match is
+ * found (score ≥ 0.8) we supersede it so history is preserved and the stale
+ * memory is deactivated. If no match is found we fall back to inserting the new
+ * content as a standalone `preference` memory so no information is lost.
+ */
+async function processUserCorrectionEvent(
+  ctx: {
+    runMutation: (...args: any[]) => Promise<any>
+    runAction: (...args: any[]) => Promise<any>
+  },
+  event: Doc<'memoryEvents'>
+): Promise<{ memoriesCreated: number; relationsCreated: number }> {
+  const eventData = event.data as Record<string, any>
+  const newContent = (eventData.content as string | undefined)?.trim()
+  const originalContent = (eventData.originalContent as string | undefined)?.trim()
+
+  if (!newContent || newContent.length < 10 || newContent.length > 500) {
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+
+  try {
+    if (originalContent && originalContent.length >= 5) {
+      const embedding: number[] = await ctx.runAction(internal.embedding.generateEmbedding, {
+        text: originalContent,
+      })
+
+      const results: Array<{ document: Doc<'businessMemories'>; score: number }> =
+        await ctx.runAction(internal.vectorSearch.searchBusinessMemories, {
+          embedding,
+          organizationId: event.organizationId,
+          limit: 3,
+        })
+
+      const best = results.find((r) => r.score >= 0.8)
+      if (best) {
+        const newId = await ctx.runMutation(internal.memoryExtraction.supersedeBusinessMemory, {
+          oldId: best.document._id,
+          organizationId: event.organizationId,
+          content: newContent.slice(0, 500),
+          importance: 0.9,
+          confidence: 1.0,
+          source: 'explicit' as const,
+          sourceMessageId: event.sourceId,
+          reason: 'Superseded by explicit user correction',
+        })
+        await ctx.runAction(internal.embedding.generateAndStore, {
+          tableName: 'businessMemories' as const,
+          documentId: newId,
+          content: newContent.slice(0, 500),
+          organizationId: event.organizationId,
+        })
+        return { memoriesCreated: 1, relationsCreated: 0 }
+      }
+    }
+
+    const id = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
+      organizationId: event.organizationId,
+      type: 'preference' as const,
+      content: newContent.slice(0, 500),
+      importance: 0.9,
+      confidence: 1.0,
+      source: 'explicit' as const,
+      sourceMessageId: event.sourceId,
+    })
+    await ctx.runAction(internal.embedding.generateAndStore, {
+      tableName: 'businessMemories' as const,
+      documentId: id,
+      content: newContent.slice(0, 500),
+      organizationId: event.organizationId,
+    })
+    return { memoriesCreated: 1, relationsCreated: 0 }
+  } catch (error) {
+    console.error('[Extraction] Failed to process user correction event:', {
+      organizationId: String(event.organizationId),
+      eventId: event._id,
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+}
+
+async function processUserInputEvent(
+  ctx: {
+    runMutation: (...args: any[]) => Promise<any>
+    runAction: (...args: any[]) => Promise<any>
+  },
+  event: Doc<'memoryEvents'>,
+  memoryType: 'instruction' | 'context',
+  importance: number,
+  confidence: number
+): Promise<{ memoriesCreated: number; relationsCreated: number }> {
+  const eventData = event.data as Record<string, any>
+  const content = (eventData.content as string | undefined)?.trim()
+  if (!content || content.length < 10 || content.length > 500) {
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+
+  try {
+    const id = await ctx.runMutation(internal.memoryExtraction.insertBusinessMemory, {
+      organizationId: event.organizationId,
+      type: memoryType,
+      content: content.slice(0, 500),
+      importance,
+      confidence,
+      source: 'explicit' as const,
+      sourceMessageId: event.sourceId,
+    })
+
+    await ctx.runAction(internal.embedding.generateAndStore, {
+      tableName: 'businessMemories' as const,
+      documentId: id,
+      content: content.slice(0, 500),
+      organizationId: event.organizationId,
+    })
+
+    return { memoriesCreated: 1, relationsCreated: 0 }
+  } catch (error) {
+    console.error('[Extraction] Failed to process user input event:', {
+      organizationId: String(event.organizationId),
+      eventId: event._id,
+      eventType: event.eventType,
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+}
+
+async function processFeedbackOrApprovalEvent(
+  ctx: {
+    runMutation: (...args: any[]) => Promise<any>
+    runAction: (...args: any[]) => Promise<any>
+  },
+  event: Doc<'memoryEvents'>
+): Promise<{ memoriesCreated: number; relationsCreated: number }> {
+  const eventData = event.data as Record<string, any>
+  const agentTypeFromEvent =
+    typeof eventData.agentType === 'string' && eventData.agentType.trim().length > 0
+      ? eventData.agentType.trim().slice(0, 50)
+      : 'chat'
+
+  let content = ''
+  let confidence = 0.75
+  let feedbackDirection: 'up' | 'down' | null = null
+
+  if (event.eventType === 'feedback') {
+    const rating = typeof eventData.rating === 'number' ? eventData.rating : undefined
+    const comment = typeof eventData.comment === 'string' ? eventData.comment : ''
+    content = rating
+      ? `User feedback received (rating: ${rating}${comment ? `, comment: ${comment}` : ''})`
+      : `User feedback received${comment ? `: ${comment}` : ''}`
+    confidence = 0.7
+
+    if (rating !== undefined) {
+      feedbackDirection = rating >= 3 ? 'up' : 'down'
+    }
+  } else {
+    const approved = event.eventType === 'approval_granted'
+    const actionDescription = (eventData.actionDescription as string | undefined) ?? 'agent action'
+    const reason = (eventData.reason as string | undefined) ?? ''
+    content = approved
+      ? `Approval granted for ${actionDescription}${reason ? ` (${reason})` : ''}`
+      : `Approval rejected for ${actionDescription}${reason ? ` (${reason})` : ''}`
+    confidence = 0.85
+
+    feedbackDirection = approved ? 'up' : 'down'
+  }
+
+  const normalized = content.trim().slice(0, 500)
+  if (normalized.length < 10) {
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+
+  try {
+    const inserted = await ctx.runMutation(internal.memoryExtraction.insertAgentMemory, {
+      organizationId: event.organizationId,
+      agentType: agentTypeFromEvent,
+      category: event.eventType === 'approval_rejected' ? 'failure' : 'pattern',
+      content: normalized,
+      confidence,
+    })
+
+    await ctx.runAction(internal.embedding.generateAndStore, {
+      tableName: 'agentMemories' as const,
+      documentId: inserted.id,
+      content: inserted.content,
+      organizationId: event.organizationId,
+    })
+
+    if (feedbackDirection) {
+      try {
+        await ctx.runMutation(internal.memoryExtraction.adjustFeedbackScores, {
+          organizationId: event.organizationId,
+          rating: feedbackDirection,
+        })
+      } catch (scoreError) {
+        console.warn('[Extraction] Score adjustment failed (non-fatal):', {
+          organizationId: String(event.organizationId),
+          eventId: event._id,
+          error: scoreError instanceof Error ? scoreError.message : 'Unknown',
+        })
+      }
+    }
+
+    return { memoriesCreated: 1, relationsCreated: 0 }
+  } catch (error) {
+    console.error('[Extraction] Failed to process feedback/approval event:', {
+      organizationId: String(event.organizationId),
+      eventId: event._id,
+      eventType: event.eventType,
+      error: error instanceof Error ? error.message : 'Unknown',
+    })
+    return { memoriesCreated: 0, relationsCreated: 0 }
+  }
+}
+
+// Keep in sync with CONFIDENCE_DELTA_PER_UNIT / DECAY_DELTA_PER_UNIT in
+// src/lib/learning/feedback.ts — shared via convention, not import, because
+// Convex functions cannot import from src/lib at runtime.
+const FEEDBACK_CONFIDENCE_DELTA = 0.05
+const FEEDBACK_DECAY_DELTA = 0.1
+// Narrow window: only memories accessed in the last 5 minutes are candidates.
+// This minimises blast radius when no specific memoryIds are supplied.
+// TODO(phase-12): pass explicit memoryIds from the retrieval trace so only
+// the memories that actually contributed to the response are adjusted.
+const FEEDBACK_WINDOW_MS = 5 * 60 * 1000
+const FEEDBACK_MAX_ADJUST = 10
+
+export const adjustFeedbackScores = internalMutation({
+  args: {
+    organizationId: v.id('organizations'),
+    rating: v.union(v.literal('up'), v.literal('down')),
+    // When provided, only these specific memories are adjusted.
+    // When absent, falls back to recently-accessed memories within the window.
+    memoryIds: v.optional(v.array(v.id('businessMemories'))),
+  },
+  handler: async (ctx, args) => {
+    const weight = args.rating === 'up' ? 1.0 : -1.0
+    const confDelta = weight * FEEDBACK_CONFIDENCE_DELTA
+    const decayDelta = weight * FEEDBACK_DECAY_DELTA
+
+    let memories: Doc<'businessMemories'>[]
+
+    if (args.memoryIds && args.memoryIds.length > 0) {
+      const fetched = await Promise.all(args.memoryIds.map((id) => ctx.db.get(id)))
+      memories = fetched.filter(
+        (m): m is Doc<'businessMemories'> =>
+          m !== null && m.organizationId === args.organizationId && m.isActive
+      )
+    } else {
+      const cutoff = Date.now() - FEEDBACK_WINDOW_MS
+      memories = await ctx.db
+        .query('businessMemories')
+        .withIndex('by_org_active', (q: any) =>
+          q.eq('organizationId', args.organizationId).eq('isActive', true)
+        )
+        .order('desc')
+        .filter((q: any) => q.gte(q.field('lastAccessedAt'), cutoff))
+        .take(FEEDBACK_MAX_ADJUST)
+    }
+
+    let adjusted = 0
+    for (const memory of memories) {
+      const newConf = Math.max(0.1, Math.min(1.0, memory.confidence + confDelta))
+      const newDecay = Math.max(0.0, Math.min(1.0, memory.decayScore + decayDelta))
+      if (newConf !== memory.confidence || newDecay !== memory.decayScore) {
+        await ctx.db.patch(memory._id, {
+          confidence: newConf,
+          decayScore: newDecay,
+          updatedAt: Date.now(),
+        })
+        adjusted++
+      }
+    }
+
+    return { adjusted, total: memories.length }
+  },
+})
 
 export const processExtractionBatch = internalAction({
   args: {
@@ -1117,6 +1611,10 @@ export const processExtractionBatch = internalAction({
     relationsCreated: number
     errors: number
   }> => {
+    if (isCronDisabled()) {
+      return { processed: 0, memoriesCreated: 0, relationsCreated: 0, errors: 0 }
+    }
+
     const batchSize = Math.min(args.batchSize ?? EXTRACTION_BATCH_SIZE, 20)
 
     let events: Doc<'memoryEvents'>[]
@@ -1137,6 +1635,7 @@ export const processExtractionBatch = internalAction({
     }
 
     const batchStartMs = Date.now()
+    const batchId = `${batchStartMs}-${Math.random().toString(36).slice(2, 8)}`
     let totalProcessed = 0
     let totalMemoriesCreated = 0
     let totalRelationsCreated = 0
@@ -1145,6 +1644,14 @@ export const processExtractionBatch = internalAction({
     const provider = resolveLLMProvider()
 
     for (const event of events) {
+      const lockResult = await ctx.runMutation(internal.memoryEvents.markProcessing, {
+        id: event._id,
+        organizationId: event.organizationId,
+      })
+      if (!lockResult.success) {
+        continue
+      }
+
       try {
         let result = { memoriesCreated: 0, relationsCreated: 0 }
 
@@ -1152,6 +1659,23 @@ export const processExtractionBatch = internalAction({
           result = await processConversationEnd(ctx, event, provider)
         } else if (event.eventType === 'tool_success' || event.eventType === 'tool_failure') {
           result = await processToolOutcome(ctx, event, provider)
+        } else if (event.eventType === 'user_correction') {
+          result = await processUserCorrectionEvent(ctx, event)
+        } else if (event.eventType === 'explicit_instruction') {
+          result = await processUserInputEvent(ctx, event, 'instruction', 0.95, 1.0)
+        } else if (
+          event.eventType === 'approval_granted' ||
+          event.eventType === 'approval_rejected' ||
+          event.eventType === 'feedback'
+        ) {
+          result = await processFeedbackOrApprovalEvent(ctx, event)
+        } else {
+          console.warn('[Extraction] Unrecognized event type — skipping:', {
+            batchId,
+            eventId: event._id,
+            eventType: event.eventType,
+            organizationId: String(event.organizationId),
+          })
         }
 
         totalMemoriesCreated += result.memoriesCreated
@@ -1164,30 +1688,41 @@ export const processExtractionBatch = internalAction({
         })
       } catch (error) {
         totalErrors++
+        const errorMessage = error instanceof Error ? error.message : 'Unknown'
         console.error('[Extraction] Failed to process event:', {
+          batchId,
           organizationId: String(event.organizationId),
           eventId: event._id,
           eventType: event.eventType,
-          error: error instanceof Error ? error.message : 'Unknown',
+          error: errorMessage,
         })
 
-        const eventAgeMs = Date.now() - event.createdAt
-        const maxRetryWindowMs = MAX_EVENT_RETRIES * 2 * 60 * 1000
-        if (eventAgeMs > maxRetryWindowMs) {
-          await ctx.runMutation(internal.memoryEvents.markProcessed, {
-            id: event._id,
-            organizationId: event.organizationId,
-          })
-          console.warn('[Extraction] Event exceeded retry window, marking processed:', {
-            eventId: event._id,
-            ageMinutes: Math.round(eventAgeMs / 60000),
-          })
-        }
+        await ctx.runMutation(internal.memoryEvents.markFailed, {
+          id: event._id,
+          organizationId: event.organizationId,
+          error: errorMessage,
+          maxRetries: MAX_EVENT_RETRIES,
+        })
+      }
+    }
+
+    const attempted = totalProcessed + totalErrors
+    if (attempted > 0) {
+      const failureRate = totalErrors / attempted
+      if (failureRate > 0.2) {
+        console.warn('[Reme:SLO] Extraction failure-rate breach', {
+          batchId,
+          processed: totalProcessed,
+          errors: totalErrors,
+          failureRate,
+          threshold: 0.2,
+        })
       }
     }
 
     if (DEBUG && (totalProcessed > 0 || totalErrors > 0)) {
       console.log('[Extraction] Batch complete:', {
+        batchId,
         processed: totalProcessed,
         memoriesCreated: totalMemoriesCreated,
         relationsCreated: totalRelationsCreated,
@@ -1195,6 +1730,16 @@ export const processExtractionBatch = internalAction({
         durationMs: Date.now() - batchStartMs,
         provider: provider.name,
       })
+    }
+
+    // Phase 11: Schedule learning pipeline after extraction so pattern
+    // detection and failure learning process freshly extracted data.
+    if (totalProcessed > 0) {
+      try {
+        await ctx.runMutation(internal.learningPipeline.scheduleLearningAfterExtraction, {})
+      } catch {
+        // Non-critical: learning pipeline scheduling failure must not affect extraction.
+      }
     }
 
     return {
@@ -1294,12 +1839,14 @@ export const deduplicateMemories = internalAction({
 export const getAllActiveBusinessMemories = internalQuery({
   args: { organizationId: v.id('organizations') },
   handler: async (ctx, args) => {
+    // Capped at 500 to prevent unbounded reads in Convex queries.
+    // Callers that need full coverage should paginate using getActiveBusinessBatch.
     return await ctx.db
       .query('businessMemories')
       .withIndex('by_org_active', (q) =>
         q.eq('organizationId', args.organizationId).eq('isActive', true)
       )
-      .collect()
+      .take(500)
   },
 })
 
@@ -1356,23 +1903,44 @@ export const reExtractConversation = internalAction({
     }
 
     const conversationText = formatConversation(messages)
-    const extraction = await callExtractionLLM(provider, conversationText, existingMemories)
+    const llmResult = await callExtractionLLM(provider, conversationText, existingMemories)
 
     if (DEBUG) {
       console.log('[Extraction] reExtractConversation LLM result:', {
         conversationId: args.conversationId,
-        businessMemories: extraction.businessMemories.length,
-        agentMemories: extraction.agentMemories.length,
-        relations: extraction.relations.length,
+        businessMemories: llmResult.extraction.businessMemories.length,
+        agentMemories: llmResult.extraction.agentMemories.length,
+        relations: llmResult.extraction.relations.length,
       })
     }
 
     const result = await createExtractedMemories(
       ctx,
       args.organizationId,
-      extraction,
+      llmResult.extraction,
       args.conversationId
     )
+
+    if (llmResult.totalTokens > 0) {
+      try {
+        await ctx.runMutation(internal.llmUsage.record, {
+          organizationId: args.organizationId,
+          model: provider.model,
+          provider: provider.providerId,
+          inputTokens: llmResult.inputTokens,
+          outputTokens: llmResult.outputTokens,
+          totalTokens: llmResult.totalTokens,
+          estimatedCostUsd:
+            llmResult.exactCostUsd ??
+            estimateCost(provider.model, llmResult.inputTokens, llmResult.outputTokens),
+          purpose: 'extraction' as const,
+          cached: false,
+          latencyMs: llmResult.latencyMs,
+        })
+      } catch {
+        // Non-critical: swallow usage recording failures
+      }
+    }
 
     return { ...result, messageCount: messages.length }
   },

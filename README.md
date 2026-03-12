@@ -9,6 +9,12 @@ An AI-powered assistant with a natural language interface for lead management, a
 - **Appointment Scheduling**: Book and manage appointments seamlessly
 - **Invoice Generation**: Create and send invoices via chat commands
 - **Multi-Provider AI**: Choose from 5 AI providers (Gateway, Gemini, OpenAI, OpenRouter, Groq)
+- **4-Layer Memory System**: Adaptive memory with extraction, decay, consolidation, and cross-org pattern promotion
+- **AI Agents**: Followup, Reminder, Invoice, and Sales agents with risk assessment and approval workflows
+- **In-App Notifications**: Real-time notification center with category filtering, severity levels, and persistent read/unread state
+- **Web Push Notifications**: Native browser push via Web Push API with opt-in toggle in settings
+- **Email Delivery**: Automated agent-triggered emails via Resend with react-email templates and delivery tracking
+- **Pre-computed Analytics**: Daily snapshots powering Agent, Cost, and Memory analytics dashboards
 - **Real-time Database**: Powered by Convex for instant data sync
 - **Modern Auth**: Secure authentication with better-auth
 - **Dark Mode UI**: Beautiful amber/orange themed dark interface
@@ -21,6 +27,7 @@ An AI-powered assistant with a natural language interface for lead management, a
 - **AI**: [Vercel AI SDK 6.0.68](https://sdk.vercel.ai/) with streaming
 - **Auth**: [better-auth 1.4.18](https://better-auth.com/)
 - **Styling**: [Tailwind CSS 4.0.0](https://tailwindcss.com/)
+- **Email**: [Resend](https://resend.com/) + [@react-email/components](https://react.email/)
 - **Linter/Formatter**: [Biome 2.3.13](https://biomejs.dev/)
 - **Language**: TypeScript 5.7.0
 - **Runtime**: Node.js 20.9.0+
@@ -78,6 +85,7 @@ Create a `.env.local` file with the following variables:
 # Convex (required)
 NEXT_PUBLIC_CONVEX_URL=https://your-deployment.convex.cloud
 CONVEX_DEPLOYMENT=your-deployment-name
+MEMORY_API_TOKEN=replace-with-random-secret
 
 # Authentication (required)
 BETTER_AUTH_SECRET=your-secret-key-at-least-32-characters-long
@@ -89,6 +97,17 @@ OPENAI_API_KEY=sk-your-openai-api-key                  # OpenAI GPT models
 OPENROUTER_API_KEY=sk-or-v1-your-openrouter-api-key    # OpenRouter (100+ models)
 GROQ_API_KEY=gsk_your-groq-api-key                     # Groq (ultra-fast)
 AI_GATEWAY_API_KEY=your-gateway-api-key                # Vercel AI Gateway (optional)
+
+# Email Delivery (optional — emails skipped if not configured)
+RESEND_API_KEY=re_your_resend_api_key           # Resend email delivery
+RESEND_FROM_EMAIL=notifications@yourdomain.com  # Sender address (domain must be verified)
+RESEND_WEBHOOK_SECRET=whsec_your_webhook_secret # Resend webhook signing secret
+
+# Web Push Notifications (optional — push skipped if not configured)
+# Generate keys with: npx web-push generate-vapid-keys
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key  # Also set in Convex env as VAPID_PUBLIC_KEY
+VAPID_PRIVATE_KEY=your_vapid_private_key            # Set in Convex env only
+VAPID_SUBJECT=mailto:you@yourdomain.com             # Set in Convex env only
 
 # Application URL (optional)
 NEXT_PUBLIC_APP_URL=http://localhost:3000
@@ -133,17 +152,41 @@ AI_DEBUG=true                        # Auto-enabled in development
 
 All AI settings are optional with sensible defaults. The application will work out-of-the-box with just the provider API keys.
 
+### Memory API Token (Required in Production)
+
+`MEMORY_API_TOKEN` protects public Convex memory retrieval/event endpoints.
+
+- Generate a token:
+
+   ```bash
+   python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+   ```
+
+- Set the same value in:
+   - `.env.local` as `MEMORY_API_TOKEN=...`
+   - Convex env:
+
+      ```bash
+      npx convex env set MEMORY_API_TOKEN 'your-token'
+      ```
+
+- Behavior:
+   - Production: token is required (fail-closed)
+   - Development: if missing, access is allowed only when `DISABLE_AUTH_IN_DEV=true`; otherwise requests fail closed
+
 ### Getting API Keys
 
 | Provider              | How to Get                                                      |
 | --------------------- | --------------------------------------------------------------- |
 | **Convex**            | Run `bun dev` and follow prompts on first run                   |
 | **better-auth**       | Generate with `openssl rand -base64 32`                         |
+| **Memory API Token**  | Generate with `python3 -c "import secrets; print(secrets.token_urlsafe(48))"` |
 | **Google Gemini**     | Get key from [Google AI Studio](https://aistudio.google.com/)   |
 | **OpenAI**            | Sign up at [platform.openai.com](https://platform.openai.com/)  |
 | **OpenRouter**        | Sign up at [openrouter.ai](https://openrouter.ai/)              |
 | **Groq**              | Sign up at [console.groq.com](https://console.groq.com/)        |
 | **Vercel AI Gateway** | Configure at [vercel.com](https://vercel.com/) (auto-auth)      |
+| **Resend**            | Sign up at [resend.com](https://resend.com/) (free tier: 3k/month) |
 
 ## Project Structure
 
@@ -159,23 +202,34 @@ recommendme-app/
 │   │   └── actions/            # Server actions
 │   ├── components/
 │   │   ├── chat/               # Chat UI (MessageBubble, ChatInput, etc.)
+│   │   ├── layout/             # NotificationDropdown, navigation
 │   │   ├── ui/                 # Reusable UI (Button, Form, etc.)
 │   │   └── dashboard/          # Dashboard components
+│   ├── hooks/                  # Custom hooks (useNotifications, usePushNotifications, etc.)
 │   ├── convex/                 # Convex backend (separate tsconfig)
 │   │   ├── schema.ts           # Database schema
+│   │   ├── notifications.ts    # Notification CRUD + cleanup
+│   │   ├── pushSubscriptions.ts # Web Push subscription management
+│   │   ├── pushDispatch.ts     # Web Push delivery action (use node)
+│   │   ├── communicationQueue.ts # Outbound message queue mutations/queries
+│   │   ├── communicationWorker.ts # Email/SMS delivery action (use node)
 │   │   ├── leads.ts            # Lead mutations/queries
 │   │   ├── appointments.ts     # Appointment mutations/queries
 │   │   ├── invoices.ts         # Invoice mutations/queries
 │   │   └── auth.ts             # Better Auth integration
 │   ├── lib/
 │   │   ├── ai/
+│   │   │   ├── agents/         # Agent framework (core, followup, registry)
+│   │   │   ├── memory/         # Retrieval, summaries, extraction prompts, validation
+│   │   │   ├── shared/         # Shared Convex helpers and typed ID adapters
 │   │   │   ├── config/         # Configuration constants & versions
 │   │   │   ├── config.ts       # Centralized AI config with Zod
-│   │   │   ├── providers/      # Multi-provider factory (5 providers)
+│   │   │   ├── providers/      # Multi-provider factory
 │   │   │   ├── services/       # AI services (suggestions, etc.)
 │   │   │   ├── utils/          # Monitoring, retry, rate-limit
-│   │   │   ├── tools/          # CRM tool definitions
+│   │   │   ├── tools/          # CRM + memory tool definitions
 │   │   │   └── prompts/        # System & suggestion prompts
+│   │   ├── email/              # React-email templates (followup, reminder, invoice, generic)
 │   │   ├── auth/               # Auth helpers (client/server)
 │   │   └── env.ts              # Environment validation
 │   ├── stores/                 # Zustand state management
@@ -184,7 +238,7 @@ recommendme-app/
 │   └── workflows/
 │       ├── ci.yml              # CI pipeline (lint, test, build)
 │       └── deploy.yml          # CD pipeline (Convex + Vercel)
-├── public/                     # Static assets
+├── public/                     # Static assets + sw.js (push notification service worker)
 ├── .env.ai.example             # AI configuration examples
 ├── biome.json                  # Biome configuration
 ├── convex.json                 # Convex configuration
@@ -299,6 +353,11 @@ Vercel automatically deploys your application when you push to GitHub:
 - [ ] Enable email verification in better-auth (optional, see SECURITY.md)
 - [ ] Review security headers in `next.config.ts`
 - [ ] Monitor Convex logs via `bun convex:logs`
+- [ ] Configure Resend: set `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `RESEND_WEBHOOK_SECRET` in Convex env
+- [ ] Verify sending domain DNS in [Resend dashboard](https://resend.com/domains)
+- [ ] Set Resend webhook URL to `https://<convex-url>/webhooks/resend`
+- [ ] Add CAN-SPAM unsubscribe headers before sending to real recipients
+- [ ] Configure Web Push (optional): generate VAPID keys (`npx web-push generate-vapid-keys`), set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` in Convex env and `NEXT_PUBLIC_VAPID_PUBLIC_KEY` in Vercel env
 
 ## Code Quality
 

@@ -114,6 +114,7 @@ export const ROUTES = {
   LOGIN: '/login',
   REGISTER: '/register',
   CHAT: '/chat',
+  MEMORY: '/memory',
   SETTINGS: '/settings',
   API_AUTH: '/api/auth',
   API_CHAT: '/api/chat',
@@ -161,6 +162,14 @@ export const STORAGE_KEYS = {
   THEME: 'reme-theme',
   SIDEBAR_STATE: 'reme-sidebar-state',
   CHAT_STATE: 'reme-chat-state',
+  DEV_MODE: 'reme-dev-mode',
+} as const
+
+// === Cookie Names ===
+export const COOKIES = {
+  DEV_AUTH_MODE: 'reme-auth-mode',
+  SESSION: 'better-auth.session_token',
+  SESSION_SECURE: '__Secure-better-auth.session_token',
 } as const
 
 // === Z-Index Layers ===
@@ -183,6 +192,7 @@ export const HTTP_STATUS = {
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,
   FORBIDDEN: 403,
+  TOO_MANY_REQUESTS: 429,
   NOT_FOUND: 404,
   INTERNAL_SERVER_ERROR: 500,
   BAD_GATEWAY: 502,
@@ -196,6 +206,12 @@ export const RATE_LIMIT = {
   WINDOW_SECONDS: 60,
   AUTH_MAX_REQUESTS: 30,
   AUTH_WINDOW_SECONDS: 60,
+} as const
+
+export const SECURITY_RATE_LIMIT = {
+  CHAT_REQUESTS_PER_MINUTE: 60,
+  APPROVAL_REVIEWS_PER_MINUTE: 20,
+  FEEDBACK_SUBMISSIONS_PER_MINUTE: 20,
 } as const
 
 // === Session & Auth (seconds) ===

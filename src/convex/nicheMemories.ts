@@ -2,6 +2,7 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import type { Doc } from './_generated/dataModel'
 import { internalMutation, query } from './_generated/server'
+import { applyMemoryLayerPiiPolicy } from './memoryValidation'
 
 /**
  * Niche Memory CRUD (Industry Vertical)
@@ -51,12 +52,13 @@ export const create = internalMutation({
     contributorCount: v.number(),
   },
   handler: async (ctx, args) => {
+    const contentPolicy = applyMemoryLayerPiiPolicy(args.content, 'niche')
     const now = Date.now()
 
     const id = await ctx.db.insert('nicheMemories', {
       nicheId: args.nicheId,
       category: args.category,
-      content: args.content,
+      content: contentPolicy.content,
       confidence: args.confidence,
       contributorCount: args.contributorCount,
       isActive: true,
@@ -67,7 +69,7 @@ export const create = internalMutation({
     await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
       tableName: 'nicheMemories' as const,
       documentId: id,
-      content: args.content,
+      content: contentPolicy.content,
     })
 
     return id
@@ -168,11 +170,20 @@ export const update = internalMutation({
       throw new Error('Niche memory not found')
     }
 
+    const normalizedContent =
+      updates.content !== undefined
+        ? applyMemoryLayerPiiPolicy(updates.content, 'niche').content
+        : undefined
+    const normalizedUpdates = {
+      ...updates,
+      content: normalizedContent,
+    }
+
     const filteredUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([_, val]) => val !== undefined)
+      Object.entries(normalizedUpdates).filter(([_, val]) => val !== undefined)
     )
 
-    const contentChanged = updates.content !== undefined
+    const contentChanged = normalizedUpdates.content !== undefined
 
     if (Object.keys(filteredUpdates).length > 0) {
       await ctx.db.patch(id, {
@@ -181,11 +192,11 @@ export const update = internalMutation({
       })
     }
 
-    if (contentChanged && updates.content) {
+    if (contentChanged && normalizedUpdates.content) {
       await ctx.scheduler.runAfter(0, internal.embedding.generateAndStore, {
         tableName: 'nicheMemories' as const,
         documentId: id,
-        content: updates.content,
+        content: normalizedUpdates.content,
       })
     }
 

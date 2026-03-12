@@ -19,6 +19,17 @@ export interface AppUser {
 
 export type UserRole = 'owner' | 'admin' | 'member'
 
+// Business Memory types (mirrors src/convex/businessMemories.ts validator unions)
+export type MemoryType =
+  | 'fact'
+  | 'preference'
+  | 'instruction'
+  | 'context'
+  | 'relationship'
+  | 'episodic'
+
+export type MemorySource = 'extraction' | 'explicit' | 'tool' | 'system'
+
 export interface UserSettings {
   aiProvider?: string
   modelTier?: string
@@ -36,7 +47,9 @@ export interface Organization {
 export interface OrganizationSettings {
   defaultAiProvider?: string
   modelTier?: string
+  budgetTier?: 'free' | 'starter' | 'pro' | 'enterprise'
   nicheId?: string
+  timezone?: string
 }
 
 export type LeadStatus = 'New' | 'Contacted' | 'Qualified' | 'Proposal' | 'Booked' | 'Closed'
@@ -253,21 +266,14 @@ export interface NicheMemory {
   updatedAt: number
 }
 
-export type BusinessMemoryType =
-  | 'fact'
-  | 'preference'
-  | 'instruction'
-  | 'context'
-  | 'relationship'
-  | 'episodic'
-
-export type MemorySource = 'extraction' | 'explicit' | 'tool' | 'system'
+// Alias kept for backward compatibility; canonical type is MemoryType (defined above)
+export type BusinessMemoryType = MemoryType
 
 export interface BusinessMemory {
   _id: Id<'businessMemories'>
   organizationId: Id<'organizations'>
   userId?: string
-  type: BusinessMemoryType
+  type: MemoryType
   content: string
   embedding?: number[]
   subjectType?: string
@@ -357,11 +363,102 @@ export interface MemoryEvent {
   createdAt: number
 }
 
+// ============================================
+// AGENT FRAMEWORK TYPES
+// ============================================
+
+export type { AgentConfig, AgentHandler } from '@/lib/ai/agents/core'
+export type {
+  ActionResult,
+  AgentAction,
+  AgentContext,
+  AgentPlan,
+  AgentType,
+  ExecutionStatus,
+  ExecutionSummary,
+  MemoryLayer,
+  PlanPrompt,
+  RiskAssessment,
+  RiskLevel,
+  TriggerType,
+} from '@/lib/ai/agents/core/types'
+export {
+  AGENT_TYPES,
+  EXECUTION_STATUSES,
+  MEMORY_LAYERS,
+  RISK_LEVELS,
+  TRIGGER_TYPES,
+} from '@/lib/ai/agents/core/types'
+
+// ============================================
+// FEEDBACK & LEARNING TYPES
+// ============================================
+
+export type FeedbackRating = 'up' | 'down'
+
+export type ExplicitSignalType = 'thumbs_up' | 'thumbs_down' | 'correction' | 'instruction'
+
+export type ImplicitSignalType = 'follow_up_question' | 'rephrase' | 'task_complete' | 'tool_retry'
+
+export type FeedbackSignalType = ExplicitSignalType | ImplicitSignalType
+
+export interface FeedbackSignalWeight {
+  type: FeedbackSignalType
+  weight: number
+  action: 'reinforce' | 'penalize' | 'update' | 'create'
+}
+
+export interface ScoreAdjustment {
+  confidenceDelta: number
+  decayScoreDelta: number
+}
+
+// ============================================
+// PATTERN DETECTION / FAILURE LEARNING / QUALITY MONITORING TYPES
+// Re-exported from src/types/learning.ts (Convex-dependency-free)
+// ============================================
+
+export type {
+  DetectedPattern,
+  FailureCategory,
+  FailureCheckResult,
+  FailureLearningResult,
+  FailureRecord,
+  PatternDetectionConfig,
+  PatternDetectionResult,
+  PatternType,
+  QualityAlert,
+  QualityMetric,
+  QualityMetricName,
+  QualitySnapshot,
+} from './learning'
+
+export type NotificationCategory =
+  | 'approval'
+  | 'agent'
+  | 'crm'
+  | 'memory'
+  | 'budget'
+  | 'communication'
+  | 'system'
+
+export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error'
+
 export interface Notification {
-  id: string
+  _id: string
+  organizationId: string
+  userId?: string
+  category: NotificationCategory
+  severity: NotificationSeverity
   title: string
-  time: string
-  read: boolean
-  type?: 'info' | 'success' | 'warning' | 'error'
-  link?: string
+  body?: string
+  actionUrl?: string
+  actionLabel?: string
+  referenceType?: string
+  referenceId?: string
+  isRead: boolean
+  isDismissed: boolean
+  readAt?: number
+  expiresAt?: number
+  createdAt: number
 }

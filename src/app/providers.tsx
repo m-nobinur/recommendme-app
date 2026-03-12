@@ -3,6 +3,7 @@
 import { ConvexBetterAuthProvider } from '@convex-dev/better-auth/react'
 import { ConvexReactClient } from 'convex/react'
 import { type ReactNode, useMemo } from 'react'
+import { Toaster } from 'sonner'
 import { HeaderProvider } from '@/contexts'
 import { authClient } from '@/lib/auth/client'
 
@@ -32,12 +33,36 @@ export function Providers({
   }, [])
 
   if (!convex) {
-    return <HeaderProvider>{children}</HeaderProvider>
+    return (
+      <HeaderProvider>
+        {children}
+        <Toaster
+          theme="dark"
+          position="bottom-right"
+          toastOptions={{
+            className: 'bg-surface-tertiary border-border text-text-primary',
+          }}
+          richColors
+          closeButton
+        />
+      </HeaderProvider>
+    )
   }
 
   return (
     <ConvexBetterAuthProvider client={convex} authClient={authClient} initialToken={initialToken}>
-      <HeaderProvider>{children}</HeaderProvider>
+      <HeaderProvider>
+        {children}
+        <Toaster
+          theme="dark"
+          position="bottom-right"
+          toastOptions={{
+            className: 'bg-surface-tertiary border-border text-text-primary',
+          }}
+          richColors
+          closeButton
+        />
+      </HeaderProvider>
     </ConvexBetterAuthProvider>
   )
 }

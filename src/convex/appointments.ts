@@ -1,5 +1,10 @@
 import { v } from 'convex/values'
+import { internal } from './_generated/api'
+import type { Doc } from './_generated/dataModel'
 import { mutation, query } from './_generated/server'
+import { assertUserInOrganization } from './lib/auth'
+import { createNotification } from './lib/notify'
+import { resolveTimezone, todayInTimezone } from './lib/timezone'
 
 const appointmentStatusValues = v.union(
   v.literal('scheduled'),
@@ -22,19 +27,37 @@ export const create = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const lead = await ctx.db.get(args.leadId)
+    if (!lead || lead.organizationId !== args.organizationId) {
+      throw new Error('Lead not found or access denied')
+    }
+
     const now = Date.now()
     const appointmentId = await ctx.db.insert('appointments', {
       organizationId: args.organizationId,
       leadId: args.leadId,
-      leadName: args.leadName,
+      leadName: lead.name,
       date: args.date,
       time: args.time,
-      title: args.title || `Appointment with ${args.leadName}`,
+      title: args.title || `Appointment with ${lead.name}`,
       notes: args.notes,
       status: 'scheduled',
       createdAt: now,
       createdBy: args.userId,
       updatedAt: now,
+    })
+
+    await createNotification(ctx, {
+      organizationId: args.organizationId,
+      userId: args.userId,
+      category: 'crm',
+      severity: 'success',
+      title: `Appointment scheduled with ${lead.name}`,
+      body: `${args.date} at ${args.time}`,
+      referenceType: 'appointment',
+      referenceId: String(appointmentId),
     })
 
     return appointmentId
@@ -55,10 +78,12 @@ export const createByLeadName = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
     const leads = await ctx.db
       .query('leads')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+      .take(500)
 
     const searchTerm = args.leadName.toLowerCase()
     const lead = leads.find((l) => l.name.toLowerCase().includes(searchTerm))
@@ -106,6 +131,8 @@ export const createByLeadName = mutation({
  */
 export const update = mutation({
   args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
     id: v.id('appointments'),
     status: v.optional(appointmentStatusValues),
     date: v.optional(v.string()),
@@ -114,7 +141,15 @@ export const update = mutation({
     notes: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { id, ...updates } = args
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const appointment = await ctx.db.get(args.id)
+    if (!appointment || appointment.organizationId !== args.organizationId) {
+      throw new Error('Appointment not found or access denied')
+    }
+
+    const previousStatus = appointment.status
+    const { id, userId: _userId, organizationId: _organizationId, ...updates } = args
     const filteredUpdates = Object.fromEntries(
       Object.entries(updates).filter(([_, val]) => val !== undefined)
     )
@@ -126,6 +161,23 @@ export const update = mutation({
       })
     }
 
+    if (args.status === 'completed' && previousStatus !== 'completed') {
+      await ctx.scheduler.runAfter(0, internal.agentRunner.runInvoiceAgentForAppointment, {
+        organizationId: args.organizationId,
+        appointmentId: args.id,
+      })
+
+      await createNotification(ctx, {
+        organizationId: args.organizationId,
+        userId: args.userId,
+        category: 'crm',
+        severity: 'success',
+        title: `Appointment with ${appointment.leadName} completed`,
+        referenceType: 'appointment',
+        referenceId: String(args.id),
+      })
+    }
+
     return { success: true }
   },
 })
@@ -134,8 +186,19 @@ export const update = mutation({
  * Delete an appointment
  */
 export const remove = mutation({
-  args: { id: v.id('appointments') },
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    id: v.id('appointments'),
+  },
   handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const appointment = await ctx.db.get(args.id)
+    if (!appointment || appointment.organizationId !== args.organizationId) {
+      throw new Error('Appointment not found or access denied')
+    }
+
     await ctx.db.delete(args.id)
     return { success: true }
   },
@@ -145,9 +208,19 @@ export const remove = mutation({
  * Get a single appointment
  */
 export const get = query({
-  args: { id: v.id('appointments') },
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    id: v.id('appointments'),
+  },
   handler: async (ctx, args) => {
-    return await ctx.db.get(args.id)
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const appointment = await ctx.db.get(args.id)
+    if (!appointment || appointment.organizationId !== args.organizationId) {
+      return null
+    }
+    return appointment
   },
 })
 
@@ -156,6 +229,7 @@ export const get = query({
  */
 export const list = query({
   args: {
+    userId: v.id('appUsers'),
     organizationId: v.id('organizations'),
     startDate: v.optional(v.string()),
     endDate: v.optional(v.string()),
@@ -163,35 +237,75 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const appointments = await ctx.db
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const hasDateRange = args.startDate !== undefined || args.endDate !== undefined
+    const status = args.status
+    const hasStatus = status !== undefined
+    const effectiveLimit = args.limit !== undefined ? Math.max(1, args.limit) : 500
+
+    if (hasStatus && !hasDateRange) {
+      return await ctx.db
+        .query('appointments')
+        .withIndex('by_org_status', (q) =>
+          q.eq('organizationId', args.organizationId).eq('status', status)
+        )
+        .order('desc')
+        .take(effectiveLimit)
+    }
+
+    const queryByDate = () =>
+      ctx.db
+        .query('appointments')
+        .withIndex('by_org_date', (q) => {
+          if (args.startDate !== undefined && args.endDate !== undefined) {
+            return q
+              .eq('organizationId', args.organizationId)
+              .gte('date', args.startDate)
+              .lte('date', args.endDate)
+          }
+          if (args.startDate !== undefined) {
+            return q.eq('organizationId', args.organizationId).gte('date', args.startDate)
+          }
+          if (args.endDate !== undefined) {
+            return q.eq('organizationId', args.organizationId).lte('date', args.endDate)
+          }
+          return q.eq('organizationId', args.organizationId)
+        })
+        .order('desc')
+
+    if (!hasStatus && hasDateRange) {
+      return await queryByDate().take(effectiveLimit)
+    }
+
+    if (hasStatus && hasDateRange) {
+      const scopedByDate = queryByDate()
+      const targetLimit = effectiveLimit
+      const pageSize = Math.max(effectiveLimit * 3, 50)
+      const matches: Doc<'appointments'>[] = []
+      let cursor: string | null = null
+      let done = false
+
+      while (!done && matches.length < targetLimit) {
+        const page = await scopedByDate.paginate({ numItems: pageSize, cursor })
+        for (const appointment of page.page) {
+          if (appointment.status === status) {
+            matches.push(appointment)
+            if (matches.length >= targetLimit) break
+          }
+        }
+        done = page.isDone
+        cursor = page.continueCursor
+      }
+
+      return matches
+    }
+
+    return await ctx.db
       .query('appointments')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
       .order('desc')
-      .collect()
-
-    let filtered = appointments
-
-    // Filter by date range
-    if (args.startDate !== undefined) {
-      const startDate = args.startDate
-      filtered = filtered.filter((a) => a.date >= startDate)
-    }
-    if (args.endDate !== undefined) {
-      const endDate = args.endDate
-      filtered = filtered.filter((a) => a.date <= endDate)
-    }
-
-    // Filter by status
-    if (args.status) {
-      filtered = filtered.filter((a) => a.status === args.status)
-    }
-
-    // Apply limit
-    if (args.limit) {
-      filtered = filtered.slice(0, args.limit)
-    }
-
-    return filtered
+      .take(effectiveLimit)
   },
 })
 
@@ -199,33 +313,217 @@ export const list = query({
  * Get appointments for a specific lead
  */
 export const listByLead = query({
-  args: { leadId: v.id('leads') },
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    leadId: v.id('leads'),
+  },
   handler: async (ctx, args) => {
-    return await ctx.db
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const lead = await ctx.db.get(args.leadId)
+    if (!lead || lead.organizationId !== args.organizationId) {
+      return []
+    }
+
+    const appointments = await ctx.db
       .query('appointments')
       .withIndex('by_lead', (q) => q.eq('leadId', args.leadId))
       .order('desc')
-      .collect()
+      .take(200)
+
+    return appointments.filter((a) => a.organizationId === args.organizationId)
   },
 })
 
 /**
- * Get upcoming appointments (next 7 days)
+ * Add a reminder note to an appointment. Uses the same `[Reminder ...]` marker
+ * as the cron-based Reminder Agent so both paths are idempotent.
  */
-export const getUpcoming = query({
-  args: { organizationId: v.id('organizations') },
+export const setReminderNote = mutation({
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    appointmentId: v.id('appointments'),
+    reminderMessage: v.string(),
+    timezone: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    const today = new Date()
-    const todayStr = today.toISOString().split('T')[0]
-    const nextWeek = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
-    const nextWeekStr = nextWeek.toISOString().split('T')[0]
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const appointment = await ctx.db.get(args.appointmentId)
+    if (!appointment || appointment.organizationId !== args.organizationId) {
+      return { success: false, error: 'Appointment not found or access denied' }
+    }
+
+    if (appointment.status !== 'scheduled') {
+      return {
+        success: false,
+        error: `Cannot set reminder for ${appointment.status} appointment`,
+      }
+    }
+
+    const tz = resolveTimezone(args.timezone)
+    const timestamp = todayInTimezone(tz)
+    const existing = appointment.notes ?? ''
+    const marker = `[Reminder ${timestamp}] ${args.reminderMessage}`
+
+    const updatedNotes = existing ? `${existing}\n${marker}` : marker
+
+    await ctx.db.patch(args.appointmentId, {
+      notes: updatedNotes,
+      updatedAt: Date.now(),
+    })
+
+    return {
+      success: true,
+      appointmentId: args.appointmentId,
+      leadName: appointment.leadName,
+      date: appointment.date,
+      time: appointment.time,
+      message: `Reminder set for appointment with ${appointment.leadName} on ${appointment.date} at ${appointment.time}`,
+    }
+  },
+})
+
+/**
+ * Find an appointment by lead name and set a reminder note on it.
+ * Used by the chat tool when the user doesn't provide an appointment ID.
+ */
+export const setReminderByLeadName = mutation({
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    leadName: v.string(),
+    date: v.optional(v.string()),
+    reminderMessage: v.string(),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const tz = resolveTimezone(args.timezone)
+    const searchTerm = args.leadName.toLowerCase()
+    const todayStr = todayInTimezone(tz)
 
     const appointments = await ctx.db
       .query('appointments')
       .withIndex('by_org_date', (q) =>
         q.eq('organizationId', args.organizationId).gte('date', todayStr)
       )
-      .collect()
+      .take(200)
+
+    const scheduled = appointments
+      .filter((a) => {
+        if (a.status !== 'scheduled') return false
+        if (!a.leadName.toLowerCase().includes(searchTerm)) return false
+        if (args.date && a.date !== args.date) return false
+        return true
+      })
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date)
+        return a.time.localeCompare(b.time)
+      })
+
+    if (scheduled.length === 0) {
+      return {
+        success: false,
+        error: args.date
+          ? `No scheduled appointment found with ${args.leadName} on ${args.date}`
+          : `No upcoming scheduled appointment found with ${args.leadName}`,
+      }
+    }
+
+    const appointment = scheduled[0]
+    const timestamp = todayInTimezone(tz)
+    const existing = appointment.notes ?? ''
+    const marker = `[Reminder ${timestamp}] ${args.reminderMessage}`
+    const updatedNotes = existing ? `${existing}\n${marker}` : marker
+
+    await ctx.db.patch(appointment._id, {
+      notes: updatedNotes,
+      updatedAt: Date.now(),
+    })
+
+    return {
+      success: true,
+      appointmentId: appointment._id,
+      leadName: appointment.leadName,
+      date: appointment.date,
+      time: appointment.time,
+      title: appointment.title,
+      message: `Reminder set for appointment with ${appointment.leadName} on ${appointment.date} at ${appointment.time}`,
+    }
+  },
+})
+
+/**
+ * Get appointments that have reminder notes, scoped to upcoming scheduled ones.
+ */
+export const getAppointmentsWithReminders = query({
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    now: v.number(),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const tz = resolveTimezone(args.timezone)
+    const todayStr = todayInTimezone(tz, args.now)
+
+    const appointments = await ctx.db
+      .query('appointments')
+      .withIndex('by_org_date', (q) =>
+        q.eq('organizationId', args.organizationId).gte('date', todayStr)
+      )
+      .take(200)
+
+    return appointments
+      .filter((a) => a.status === 'scheduled' && a.notes?.includes('[Reminder'))
+      .sort((a, b) => {
+        if (a.date !== b.date) return a.date.localeCompare(b.date)
+        return a.time.localeCompare(b.time)
+      })
+      .map((a) => ({
+        id: a._id,
+        leadName: a.leadName,
+        date: a.date,
+        time: a.time,
+        title: a.title,
+        notes: a.notes,
+        status: a.status,
+      }))
+  },
+})
+
+/**
+ * Get upcoming appointments (next 7 days).
+ * Accepts `now` as an argument to avoid Date.now() inside a query,
+ * which would break Convex's deterministic query caching.
+ */
+export const getUpcoming = query({
+  args: {
+    userId: v.id('appUsers'),
+    organizationId: v.id('organizations'),
+    now: v.number(),
+    timezone: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await assertUserInOrganization(ctx, args.userId, args.organizationId)
+
+    const tz = resolveTimezone(args.timezone)
+    const todayStr = todayInTimezone(tz, args.now)
+    const nextWeekMs = args.now + 7 * 24 * 60 * 60 * 1000
+    const nextWeekStr = todayInTimezone(tz, nextWeekMs)
+
+    const appointments = await ctx.db
+      .query('appointments')
+      .withIndex('by_org_date', (q) =>
+        q.eq('organizationId', args.organizationId).gte('date', todayStr)
+      )
+      .take(200)
 
     return appointments
       .filter((a) => a.date <= nextWeekStr && a.status === 'scheduled')

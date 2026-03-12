@@ -29,6 +29,27 @@ export const save = mutation({
         tokenCount: v.optional(v.number()),
         latencyMs: v.optional(v.number()),
         finishReason: v.optional(v.string()),
+        retrievalTrace: v.optional(
+          v.object({
+            memories: v.array(
+              v.object({
+                id: v.string(),
+                content: v.string(),
+                type: v.string(),
+                layer: v.union(
+                  v.literal('platform'),
+                  v.literal('niche'),
+                  v.literal('business'),
+                  v.literal('agent')
+                ),
+                score: v.number(),
+                included: v.boolean(),
+              })
+            ),
+            tokenBudget: v.number(),
+            tokensUsed: v.number(),
+          })
+        ),
       })
     ),
   },
@@ -66,25 +87,59 @@ export const getByConversation = query({
   handler: async (ctx, args) => {
     const pageSize = Math.min(args.limit ?? 50, 100)
 
-    const allMessages = await ctx.db
+    const baseQuery = ctx.db
       .query('messages')
       .withIndex('by_org_conversation', (q) =>
         q.eq('organizationId', args.organizationId).eq('conversationId', args.conversationId)
       )
-      .order('asc')
-      .collect()
+      .order('desc')
 
-    // If cursor provided, only return messages older than the cursor
-    const cursorTs = args.cursor
-    const filtered =
-      cursorTs !== undefined ? allMessages.filter((m) => m.createdAt < cursorTs) : allMessages
+    const q =
+      typeof args.cursor === 'number'
+        ? baseQuery.filter((query) => query.lt(query.field('createdAt'), args.cursor as number))
+        : baseQuery
 
-    const hasMore = filtered.length > pageSize
-    const page = hasMore ? filtered.slice(filtered.length - pageSize) : filtered
+    const batch = await q.take(pageSize + 1)
+    const hasMore = batch.length > pageSize
+    const page = hasMore ? batch.slice(0, pageSize) : batch
+
+    page.reverse()
 
     return {
       messages: page,
       nextCursor: hasMore ? page[0].createdAt : null,
+    }
+  },
+})
+
+/**
+ * Fetch minimal metadata for a specific messageId within an organization conversation.
+ * Used by feedback ingestion to validate ownership and message role.
+ */
+export const getByMessageId = query({
+  args: {
+    conversationId: v.string(),
+    organizationId: v.id('organizations'),
+    messageId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query('messages')
+      .withIndex('by_org_conversation_message', (q) =>
+        q
+          .eq('organizationId', args.organizationId)
+          .eq('conversationId', args.conversationId)
+          .eq('messageId', args.messageId)
+      )
+      .first()
+
+    if (!row) return null
+
+    return {
+      userId: row.userId,
+      role: row.role,
+      messageId: row.messageId,
+      conversationId: row.conversationId,
     }
   },
 })
@@ -120,13 +175,13 @@ export const getConversations = query({
   handler: async (ctx, args) => {
     const maxResults = Math.min(args.limit ?? 20, 100)
 
+    const scanLimit = maxResults * 20
     const messages = await ctx.db
       .query('messages')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
       .order('desc')
-      .collect()
+      .take(scanLimit)
 
-    // Group by conversation and get latest message (only for this user's messages)
     const conversationMap = new Map<
       string,
       { conversationId: string; lastMessage: string; createdAt: number }
@@ -164,9 +219,8 @@ export const deleteConversation = mutation({
       .withIndex('by_org_conversation', (q) =>
         q.eq('organizationId', args.organizationId).eq('conversationId', args.conversationId)
       )
-      .collect()
+      .take(500)
 
-    // Only delete messages owned by the requesting user within this org
     const ownedMessages = messages.filter((m) => m.userId === args.userId)
 
     for (const msg of ownedMessages) {
@@ -189,7 +243,7 @@ export const clearUserMessages = mutation({
     const messages = await ctx.db
       .query('messages')
       .withIndex('by_org', (q) => q.eq('organizationId', args.organizationId))
-      .collect()
+      .take(1000)
 
     let deletedCount = 0
     for (const msg of messages) {
