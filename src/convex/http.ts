@@ -63,7 +63,7 @@ const resendWebhook = httpAction(async (ctx, request) => {
     return new Response('OK', { status: 200 })
   }
 
-  await ctx.runMutation(internal.communicationWorker.updateDeliveryStatus, {
+  await ctx.runMutation(internal.communicationQueue.updateDeliveryStatus, {
     externalMessageId: emailId,
     deliveryStatus: deliveryStatus as
       | 'sent'

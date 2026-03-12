@@ -2579,7 +2579,7 @@ async function enqueueAgentCommunications(
       const subject = buildSubjectLine(agentType, lead.name, result)
       const bodyText = result.message
 
-      await ctx.runMutation(internal.communicationWorker.enqueue, {
+      await ctx.runMutation(internal.communicationQueue.enqueue, {
         organizationId: orgId,
         channel: 'email' as const,
         recipientType: 'lead' as const,
