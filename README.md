@@ -11,6 +11,8 @@ An AI-powered assistant with a natural language interface for lead management, a
 - **Multi-Provider AI**: Choose from 5 AI providers (Gateway, Gemini, OpenAI, OpenRouter, Groq)
 - **4-Layer Memory System**: Adaptive memory with extraction, decay, consolidation, and cross-org pattern promotion
 - **AI Agents**: Followup, Reminder, Invoice, and Sales agents with risk assessment and approval workflows
+- **In-App Notifications**: Real-time notification center with category filtering, severity levels, and persistent read/unread state
+- **Web Push Notifications**: Native browser push via Web Push API with opt-in toggle in settings
 - **Email Delivery**: Automated agent-triggered emails via Resend with react-email templates and delivery tracking
 - **Pre-computed Analytics**: Daily snapshots powering Agent, Cost, and Memory analytics dashboards
 - **Real-time Database**: Powered by Convex for instant data sync
@@ -100,6 +102,12 @@ AI_GATEWAY_API_KEY=your-gateway-api-key                # Vercel AI Gateway (opti
 RESEND_API_KEY=re_your_resend_api_key           # Resend email delivery
 RESEND_FROM_EMAIL=notifications@yourdomain.com  # Sender address (domain must be verified)
 RESEND_WEBHOOK_SECRET=whsec_your_webhook_secret # Resend webhook signing secret
+
+# Web Push Notifications (optional — push skipped if not configured)
+# Generate keys with: npx web-push generate-vapid-keys
+NEXT_PUBLIC_VAPID_PUBLIC_KEY=your_vapid_public_key  # Also set in Convex env as VAPID_PUBLIC_KEY
+VAPID_PRIVATE_KEY=your_vapid_private_key            # Set in Convex env only
+VAPID_SUBJECT=mailto:you@yourdomain.com             # Set in Convex env only
 
 # Application URL (optional)
 NEXT_PUBLIC_APP_URL=http://localhost:3000
@@ -194,10 +202,17 @@ recommendme-app/
 │   │   └── actions/            # Server actions
 │   ├── components/
 │   │   ├── chat/               # Chat UI (MessageBubble, ChatInput, etc.)
+│   │   ├── layout/             # NotificationDropdown, navigation
 │   │   ├── ui/                 # Reusable UI (Button, Form, etc.)
 │   │   └── dashboard/          # Dashboard components
+│   ├── hooks/                  # Custom hooks (useNotifications, usePushNotifications, etc.)
 │   ├── convex/                 # Convex backend (separate tsconfig)
 │   │   ├── schema.ts           # Database schema
+│   │   ├── notifications.ts    # Notification CRUD + cleanup
+│   │   ├── pushSubscriptions.ts # Web Push subscription management
+│   │   ├── pushDispatch.ts     # Web Push delivery action (use node)
+│   │   ├── communicationQueue.ts # Outbound message queue mutations/queries
+│   │   ├── communicationWorker.ts # Email/SMS delivery action (use node)
 │   │   ├── leads.ts            # Lead mutations/queries
 │   │   ├── appointments.ts     # Appointment mutations/queries
 │   │   ├── invoices.ts         # Invoice mutations/queries
@@ -223,7 +238,7 @@ recommendme-app/
 │   └── workflows/
 │       ├── ci.yml              # CI pipeline (lint, test, build)
 │       └── deploy.yml          # CD pipeline (Convex + Vercel)
-├── public/                     # Static assets
+├── public/                     # Static assets + sw.js (push notification service worker)
 ├── .env.ai.example             # AI configuration examples
 ├── biome.json                  # Biome configuration
 ├── convex.json                 # Convex configuration
@@ -342,6 +357,7 @@ Vercel automatically deploys your application when you push to GitHub:
 - [ ] Verify sending domain DNS in [Resend dashboard](https://resend.com/domains)
 - [ ] Set Resend webhook URL to `https://<convex-url>/webhooks/resend`
 - [ ] Add CAN-SPAM unsubscribe headers before sending to real recipients
+- [ ] Configure Web Push (optional): generate VAPID keys (`npx web-push generate-vapid-keys`), set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` in Convex env and `NEXT_PUBLIC_VAPID_PUBLIC_KEY` in Vercel env
 
 ## Code Quality
 

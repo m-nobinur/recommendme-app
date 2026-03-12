@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — In-App Notification System
+
+#### Persistent Notification Center — `src/convex/notifications.ts`
+- New `notifications` Convex table with indexes for org+user, read state, dismissal, and expiration
+- Full CRUD: `create` (internal), `list`, `getUnreadCount`, `markRead`, `markAllRead`, `dismiss` (public), `cleanup` (internal)
+- Category-based filtering: approval, agent, crm, memory, budget, communication, system
+- Severity levels: info, success, warning, error
+- Org-wide and user-targeted notification support
+- Daily cleanup cron at 05:00 UTC removes expired and 30-day-old read/dismissed notifications
+
+#### Real-Time Toast Notifications — `src/hooks/useNotifications.ts`
+- Reactive Convex `useQuery` subscriptions push notification updates instantly to all connected clients
+- `useEffect`-based diffing detects new unread notifications and fires sonner toasts automatically
+- `suppressToasts` option for consumers that only need data without popups
+- `showToast` utility (`src/lib/utils/toast.ts`) wrapping sonner for consistent success/error/warning/info toasts
+
+#### Notification Center UI — `src/components/layout/NotificationDropdown.tsx`
+- Enhanced dropdown with category filter tabs, severity icons, Today/Earlier grouping
+- Individual mark-as-read on click, dismiss via X button, mark-all-as-read footer action
+- Unread count badge on the bell icon in `DashboardHeader`
+- Animated entrance with staggered slide-in per item
+
+#### Backend Notification Integrations
+- `src/convex/approvalQueue.ts` — notifications on new approval requests (dynamic severity by risk level)
+- `src/convex/agentRunner.ts` — notifications on agent completion and failure
+- `src/convex/leads.ts` — notifications when leads reach Booked or Closed status
+- `src/convex/appointments.ts` — notifications on appointment scheduling and completion
+- `src/convex/invoices.ts` — notifications when invoices are marked as paid
+- `src/convex/qualityMonitor.ts` — notifications on memory quality alert triggers
+- `src/convex/communicationWorker.ts` — notifications on email bounce/complaint delivery failures
+
+#### Toast Calls in UI Components
+- `ApprovalCard` — toast on approve/reject success and failure
+- `SettingsForm` — toast on settings save success and failure
+- `MemoryEditor` — toast on memory create/update success and failure
+- `MemoryViewer` — toast on memory archive/delete success and failure
+
+#### Web Push Notification Infrastructure
+- `pushSubscriptions` Convex table with user, org, and endpoint indexes
+- `src/convex/pushSubscriptions.ts` — subscribe/unsubscribe mutations, internal queries for push dispatch
+- `src/convex/pushDispatch.ts` — `'use node'` action using `web-push` to send native push notifications
+- `public/sw.js` — service worker handling push events, notification clicks, and subscription rotation
+- `src/hooks/usePushNotifications.ts` — manages service worker registration, permission requests, and subscription lifecycle
+- `src/app/(dashboard)/settings/components/PushNotificationToggle.tsx` — enable/disable toggle with permission state handling
+- Auto-cleanup of stale push subscriptions (410/404 responses)
+- Activates with `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` env vars (generate via `npx web-push generate-vapid-keys`)
+
+#### Schema Changes
+- Added `notifications` table with `by_org_user_read_created`, `by_org_user_created`, `by_org_user_dismissed`, `by_expires` indexes
+- Added `pushSubscriptions` table with `by_user`, `by_org`, `by_endpoint` indexes
+
+#### Dependencies
+- `sonner` — toast notification library
+- `web-push` 3.6.7 + `@types/web-push` — Web Push API for native push notifications
+
+### Changed — Communication Worker Refactor
+- Split `communicationWorker.ts` into two files to comply with Convex's `'use node'` restriction (actions only):
+  - `communicationQueue.ts` — all mutations and queries (enqueue, claim, mark, stats)
+  - `communicationWorker.ts` — `processQueue` action and Node.js delivery helpers (Resend, Twilio)
+- Updated all callers (`http.ts`, `agentRunner.ts`) to reference `communicationQueue.*` for mutations/queries
+- Fixed `appointments.test.ts` mock to handle multi-table insert from notification integration
+
 ### Added (Phase 8 — Worker Architecture & Background Jobs)
 
 #### Memory Consolidation Worker (8.4) — `src/convex/memoryConsolidation.ts`
